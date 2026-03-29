@@ -1,0 +1,19 @@
+# Dados locais (transcrições, uploads — não vão pro repositório)
+.whisper_data/
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+
+# Editor
+.vscode/
+.idea/

@@ -1,0 +1,1535 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Whisper Transcritor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --blue:      #2563EB;
+      --blue-dk:   #1D4ED8;
+      --blue-lt:   #3B82F6;
+      --blue-50:   #EFF6FF;
+      --blue-100:  #DBEAFE;
+      --blue-200:  #BFDBFE;
+      --slate-900: #0F172A;
+      --slate-800: #1E293B;
+      --slate-700: #334155;
+      --slate-600: #475569;
+      --slate-500: #64748B;
+      --slate-400: #94A3B8;
+      --slate-300: #CBD5E1;
+      --slate-200: #E2E8F0;
+      --slate-100: #F1F5F9;
+      --slate-50:  #F8FAFC;
+      --green:     #16A34A;
+      --green-lt:  #DCFCE7;
+      --red:       #DC2626;
+      --red-lt:    #FEE2E2;
+      --white:     #FFFFFF;
+      --r-sm: 6px; --r-md: 10px; --r-lg: 14px; --r-xl: 18px;
+      --sh-sm: 0 1px 3px rgba(0,0,0,.07), 0 1px 2px rgba(0,0,0,.04);
+      --sh-md: 0 4px 20px rgba(0,0,0,.09), 0 1px 6px rgba(0,0,0,.05);
+      --sh-lg: 0 12px 48px rgba(0,0,0,.14), 0 4px 14px rgba(0,0,0,.07);
+      --ease: cubic-bezier(0.4,0,0.2,1);
+      --t: 170ms;
+    }
+
+    html { scroll-behavior: smooth; }
+    body { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; background: var(--slate-100);
+           color: var(--slate-800); min-height: 100dvh; display: flex; flex-direction: column; }
+
+    /* STATS */
+    .stats-row { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; margin-bottom: 20px; }
+    .stat-card { background: var(--white); border-radius: var(--r-lg); padding: 20px 22px;
+                 box-shadow: var(--sh-sm); display: flex; flex-direction: column; gap: 4px; }
+    .stat-label { font-size: 11.5px; font-weight: 700; color: var(--slate-400);
+                  letter-spacing: .6px; text-transform: uppercase; }
+    .stat-value { font-size: 30px; font-weight: 800; color: var(--slate-900);
+                  letter-spacing: -0.5px; line-height: 1.1; }
+    .stat-sub { font-size: 12px; color: var(--slate-400); margin-top: 1px; }
+    @media (max-width:600px) { .stats-row { grid-template-columns:1fr 1fr; } }
+    @media (max-width:400px) { .stats-row { grid-template-columns:1fr; } }
+
+    /* LAYOUT */
+    .page { flex:1; padding:36px 28px 48px; max-width:1040px; margin:0 auto; width:100%; }
+
+    /* MODE BADGE */
+    .mode-badge { display:inline-flex; align-items:center; padding:2px 8px; border-radius:20px;
+                  background:var(--slate-100); font-size:11.5px; font-weight:700;
+                  color:var(--slate-600); letter-spacing:.2px; white-space:nowrap; }
+
+    /* BUTTONS */
+    .btn { display:inline-flex; align-items:center; justify-content:center; gap:7px;
+           border:none; cursor:pointer; font-family:inherit; font-weight:700;
+           transition:background var(--t) var(--ease), box-shadow var(--t) var(--ease),
+                       transform var(--t) var(--ease), color var(--t) var(--ease),
+                       border-color var(--t) var(--ease); }
+    .btn:active { transform:scale(0.97); }
+    .btn:focus-visible { outline:3px solid var(--blue); outline-offset:2px; }
+
+    .btn-primary { background:var(--blue); color:var(--white); font-size:13px;
+                   letter-spacing:.5px; padding:9px 18px; border-radius:var(--r-sm); }
+    .btn-primary:hover { background:var(--blue-dk); box-shadow:var(--sh-md); }
+
+    .btn-primary-lg { background:var(--blue); color:var(--white); font-size:14px;
+                      letter-spacing:.6px; padding:13px 24px; border-radius:var(--r-md); width:100%; }
+    .btn-primary-lg:hover { background:var(--blue-dk); box-shadow:var(--sh-md); }
+    .btn-primary-lg:disabled { opacity:.55; cursor:not-allowed; transform:none; box-shadow:none; }
+
+    .btn-ghost { background:transparent; color:var(--slate-600); font-size:13px;
+                 padding:7px 14px; border-radius:var(--r-sm); border:1.5px solid var(--slate-200); }
+    .btn-ghost:hover { background:var(--slate-100); border-color:var(--slate-300); color:var(--slate-800); }
+
+    /* CARD */
+    .card { background:var(--white); border-radius:var(--r-xl); box-shadow:var(--sh-md); overflow:hidden; }
+
+    /* ICON BUTTON */
+    .icon-btn { width:36px; height:36px; border-radius:var(--r-sm); border:none;
+                background:transparent; color:var(--slate-500); display:inline-flex;
+                align-items:center; justify-content:center; cursor:pointer;
+                transition:background var(--t) var(--ease), color var(--t) var(--ease); flex-shrink:0; }
+    .icon-btn:hover { background:var(--slate-100); color:var(--slate-800); }
+    .icon-btn:focus-visible { outline:3px solid var(--blue); outline-offset:1px; }
+    .icon-btn.active { background:var(--blue-50); color:var(--blue); }
+
+    /* CARD HEADER */
+    .card-header { display:flex; align-items:center; gap:12px; padding:20px 24px 18px;
+                   border-bottom:1px solid var(--slate-100); }
+    .card-title { display:flex; align-items:center; gap:9px; font-size:16px; font-weight:800;
+                  color:var(--slate-900); letter-spacing:-0.2px; }
+    .card-title svg { color:var(--slate-500); }
+    .card-actions { margin-left:auto; display:flex; align-items:center; gap:6px; }
+
+    .transcribe-btn { background:var(--blue); color:var(--white); font-family:inherit;
+                      font-weight:700; font-size:12.5px; letter-spacing:.5px; padding:8px 16px;
+                      border-radius:var(--r-sm); border:none; cursor:pointer; display:flex;
+                      align-items:center; gap:7px; white-space:nowrap;
+                      transition:background var(--t) var(--ease), box-shadow var(--t) var(--ease),
+                                  transform var(--t) var(--ease); }
+    .transcribe-btn:hover { background:var(--blue-dk); box-shadow:var(--sh-sm); }
+    .transcribe-btn:active { transform:scale(0.97); }
+
+    /* SEARCH */
+    .search-bar { overflow:hidden; max-height:0; transition:max-height 220ms var(--ease),
+                  padding 220ms var(--ease); border-bottom:1px solid transparent; }
+    .search-bar.open { max-height:64px; padding:10px 24px; border-bottom-color:var(--slate-100); }
+    .search-wrap { position:relative; }
+    .search-wrap svg { position:absolute; left:11px; top:50%; transform:translateY(-50%);
+                       color:var(--slate-400); pointer-events:none; }
+    .search-input { width:100%; height:38px; padding:0 12px 0 36px; border:1.5px solid var(--slate-200);
+                    border-radius:var(--r-sm); font-family:inherit; font-size:13.5px;
+                    color:var(--slate-800); outline:none; transition:border-color var(--t) var(--ease);
+                    background:var(--slate-50); }
+    .search-input:focus { border-color:var(--blue); background:var(--white); }
+    .search-input::placeholder { color:var(--slate-400); }
+
+    /* BULK BAR */
+    .bulk-bar { display:flex; align-items:center; gap:10px; padding:10px 24px;
+                background:var(--blue); color:var(--white); font-size:13px; font-weight:600;
+                overflow:hidden; max-height:0; opacity:0; padding-top:0; padding-bottom:0;
+                transition:max-height 200ms var(--ease), opacity 200ms var(--ease),
+                            padding 200ms var(--ease); }
+    .bulk-bar.show { max-height:52px; opacity:1; padding-top:10px; padding-bottom:10px; }
+    .bulk-actions { margin-left:auto; display:flex; gap:6px; }
+    .bulk-btn { background:rgba(255,255,255,.15); border:1px solid rgba(255,255,255,.2);
+                color:var(--white); font-family:inherit; font-size:12px; font-weight:700;
+                padding:5px 12px; border-radius:var(--r-sm); cursor:pointer; display:flex;
+                align-items:center; gap:5px; transition:background var(--t) var(--ease); }
+    .bulk-btn:hover { background:rgba(255,255,255,.25); }
+    .bulk-btn.danger { background:var(--red); border-color:var(--red); }
+    .bulk-btn.danger:hover { background:#B91C1C; border-color:#B91C1C; }
+
+    /* PROGRESS */
+    .progress-item { display:flex; align-items:center; gap:14px; padding:12px 24px;
+                     background:var(--blue-50); border-bottom:1px solid var(--blue-100);
+                     animation:slideIn 200ms var(--ease); }
+    @keyframes slideIn { from { opacity:0; transform:translateY(-6px); } }
+    .progress-info { flex:1; min-width:0; }
+    .progress-label { font-size:13px; font-weight:600; color:var(--slate-800); margin-bottom:6px;
+                      overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .progress-track { height:4px; background:var(--blue-100); border-radius:2px; overflow:hidden; }
+    .progress-fill { height:100%; background:var(--blue); border-radius:2px;
+                     transition:width 350ms var(--ease); }
+    .progress-pct { font-size:11.5px; font-weight:700; color:var(--blue); margin-top:4px; }
+
+    /* TABLE */
+    .files-table { width:100%; border-collapse:collapse; }
+    .files-table thead tr { border-bottom:1px solid var(--slate-100); }
+    .files-table th { padding:10px 14px; text-align:left; font-size:11.5px; font-weight:700;
+                      color:var(--slate-400); letter-spacing:.7px; text-transform:uppercase;
+                      white-space:nowrap; user-select:none; }
+    .files-table th.col-check { width:44px; padding-left:24px; }
+    .files-table th.col-date  { width:195px; }
+    .files-table th.col-dur   { width:100px; }
+    .files-table th.col-mode  { width:80px; text-align:center; }
+    .files-table th.col-status { width:110px; text-align:center; }
+    .files-table th.col-actions { width:44px; }
+    .files-table tbody tr { border-bottom:1px solid var(--slate-100);
+                            transition:background var(--t) var(--ease); cursor:pointer; }
+    .files-table tbody tr:last-child { border-bottom:none; }
+    .files-table tbody tr:hover { background:var(--slate-50); }
+    .files-table td { padding:13px 14px; font-size:13.5px; color:var(--slate-600);
+                      vertical-align:middle; }
+    .files-table td.col-check { padding-left:24px; }
+    .files-table td.col-mode, .files-table td.col-status,
+    .files-table td.col-actions { text-align:center; }
+    .file-name { font-weight:600; color:var(--slate-900); font-size:13.5px; line-height:1.3; }
+    .file-date { font-size:12.5px; color:var(--slate-400); }
+    .file-dur  { font-size:13px; font-weight:600; color:var(--slate-600); font-variant-numeric:tabular-nums; }
+
+    /* CHECKBOX */
+    .checkbox { width:16px; height:16px; accent-color:var(--blue); cursor:pointer; }
+
+    /* STATUS */
+    .status-badge { display:inline-flex; align-items:center; gap:5px; padding:3px 9px;
+                    border-radius:20px; font-size:11.5px; font-weight:700; white-space:nowrap; }
+    .status-badge.done       { background:#DCFCE7; color:#15803D; }
+    .status-badge.queued     { background:var(--slate-100); color:var(--slate-500); }
+    .status-badge.processing { background:var(--blue-50); color:var(--blue); }
+    .status-badge.failed     { background:#FEE2E2; color:#B91C1C; }
+    .status-badge.error      { background:#FEE2E2; color:#B91C1C; cursor:pointer; }
+    .status-badge.error:hover{ background:#FECACA; }
+    .status-badge.cancelled  { background:#FEF9C3; color:#854D0E; }
+    .status-dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
+    .status-badge.done .status-dot       { background:#16A34A; }
+    .status-badge.queued .status-dot     { background:var(--slate-400); }
+    .status-badge.processing .status-dot { background:var(--blue);
+                                           animation:pulse 1.2s ease-in-out infinite; }
+    .status-badge.failed .status-dot     { background:#DC2626; }
+    .status-badge.error .status-dot      { background:#DC2626; }
+    .status-badge.cancelled .status-dot  { background:#CA8A04; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+    .status-spinner { width:22px; height:22px; border:2.5px solid var(--blue-100);
+                      border-top-color:var(--blue); border-radius:50%;
+                      animation:spin .75s linear infinite; display:inline-block; flex-shrink:0; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+
+    /* ACTION MENU */
+    .action-wrap { position:relative; display:inline-flex; }
+    .dots-btn { width:30px; height:30px; border-radius:var(--r-sm); border:none;
+                background:transparent; color:var(--slate-400); cursor:pointer;
+                display:inline-flex; align-items:center; justify-content:center;
+                transition:background var(--t) var(--ease), color var(--t) var(--ease); }
+    .dots-btn:hover { background:var(--slate-100); color:var(--slate-700); }
+    .dots-btn[aria-expanded="true"] { background:var(--slate-100); color:var(--slate-700); }
+    .dropdown { position:absolute; right:0; top:calc(100% + 4px); background:var(--white);
+                border:1.5px solid var(--slate-200); border-radius:var(--r-md);
+                box-shadow:var(--sh-lg); min-width:192px; z-index:60; overflow:hidden;
+                opacity:0; transform:translateY(-5px) scale(0.97); pointer-events:none;
+                transition:opacity 140ms var(--ease), transform 140ms var(--ease);
+                transform-origin:top right; }
+    .dropdown.open { opacity:1; transform:none; pointer-events:auto; }
+    .dd-item { display:flex; align-items:center; gap:10px; padding:9px 14px; font-size:13px;
+               font-weight:500; color:var(--slate-700); cursor:pointer; white-space:nowrap;
+               transition:background var(--t) var(--ease); }
+    .dd-item:hover { background:var(--slate-50); }
+    .dd-item svg { color:var(--slate-400); flex-shrink:0; }
+    .dd-item.danger { color:var(--red); }
+    .dd-item.danger svg { color:var(--red); }
+    .dd-item.danger:hover { background:var(--red-lt); }
+    .dd-sep { height:1px; background:var(--slate-100); margin:3px 0; }
+
+    /* EMPTY STATE */
+    .empty-state { padding:72px 32px 80px; text-align:center; display:none;
+                   flex-direction:column; align-items:center; gap:14px; }
+    .empty-icon { width:72px; height:72px; border-radius:50%; background:var(--blue-50);
+                  display:flex; align-items:center; justify-content:center;
+                  color:var(--blue); margin-bottom:4px; }
+    .empty-title { font-size:18px; font-weight:800; color:var(--slate-900); }
+    .empty-sub { font-size:13.5px; color:var(--slate-500); max-width:320px; line-height:1.65; }
+    .tip-row { display:flex; align-items:center; gap:8px; font-size:12.5px;
+               color:var(--slate-400); margin-top:4px; }
+    .tip-tag { background:var(--blue); color:var(--white); font-size:10.5px; font-weight:800;
+               letter-spacing:.5px; padding:2px 8px; border-radius:20px; }
+
+    /* MODAL */
+    .overlay { position:fixed; inset:0; background:rgba(15,23,42,.5); backdrop-filter:blur(4px);
+               z-index:200; display:flex; align-items:center; justify-content:center;
+               padding:16px; opacity:0; pointer-events:none; transition:opacity 180ms var(--ease); }
+    .overlay.open { opacity:1; pointer-events:auto; }
+    .modal { background:var(--white); border-radius:var(--r-xl); box-shadow:var(--sh-lg);
+             width:100%; max-width:500px; max-height:calc(100dvh - 32px);
+             display:flex; flex-direction:column;
+             transform:translateY(14px) scale(0.98); opacity:0;
+             transition:transform 220ms cubic-bezier(0.34,1.5,0.64,1), opacity 180ms var(--ease); }
+    .overlay.open .modal { transform:none; opacity:1; }
+    .modal-head { display:flex; align-items:center; gap:10px; padding:20px 24px 16px;
+                  border-bottom:1px solid var(--slate-100); flex-shrink:0; }
+    .modal-title { font-size:16px; font-weight:800; color:var(--slate-900); letter-spacing:-0.2px; }
+    .modal-close { width:30px; height:30px; border-radius:var(--r-sm); border:none;
+                   background:transparent; color:var(--slate-400); cursor:pointer;
+                   display:flex; align-items:center; justify-content:center; margin-left:auto;
+                   transition:background var(--t) var(--ease), color var(--t) var(--ease); }
+    .modal-close:hover { background:var(--slate-100); color:var(--slate-700); }
+    .modal-body { padding:20px 24px; display:flex; flex-direction:column;
+                  gap:18px; overflow-y:auto; flex:1; }
+    .modal-foot { padding:0 24px 20px; display:flex; flex-direction:column;
+                  gap:10px; flex-shrink:0; }
+    .tos { font-size:11.5px; color:var(--slate-400); text-align:center; line-height:1.55; }
+    .tos a { color:var(--blue); text-decoration:none; font-weight:600; }
+
+    /* SEGMENTED TABS */
+    .seg-tabs { display:flex; gap:3px; background:var(--slate-100); border-radius:var(--r-sm); padding:3px; }
+    .seg-tab { flex:1; display:flex; align-items:center; justify-content:center; gap:6px;
+               padding:7px 10px; border:none; border-radius:4px; font-family:inherit;
+               font-size:12.5px; font-weight:600; color:var(--slate-500); background:transparent;
+               cursor:pointer; transition:background var(--t) var(--ease), color var(--t) var(--ease),
+                                          box-shadow var(--t) var(--ease); }
+    .seg-tab[aria-pressed="true"] { background:var(--white); color:var(--slate-800); box-shadow:var(--sh-sm); }
+    .seg-tab:focus-visible { outline:3px solid var(--blue); outline-offset:1px; }
+
+    /* DROPZONE */
+    .dropzone { border:2px dashed var(--slate-200); border-radius:var(--r-lg);
+                background:var(--slate-50); padding:32px 24px; text-align:center;
+                cursor:pointer; position:relative;
+                transition:border-color var(--t) var(--ease), background var(--t) var(--ease); }
+    .dropzone:hover { border-color:var(--blue-lt); background:var(--blue-50); }
+    .dropzone.drag-over { border-color:var(--blue); background:var(--blue-50); }
+    .dropzone input[type="file"] { position:absolute; inset:0; opacity:0; cursor:pointer;
+                                    width:100%; height:100%; }
+    .dz-icon { width:52px; height:52px; border-radius:50%; background:var(--white);
+               border:1.5px solid var(--slate-200); display:flex; align-items:center;
+               justify-content:center; margin:0 auto 12px; color:var(--blue);
+               box-shadow:var(--sh-sm);
+               transition:border-color var(--t) var(--ease), box-shadow var(--t) var(--ease); }
+    .dropzone:hover .dz-icon { border-color:var(--blue-200); box-shadow:0 0 0 4px var(--blue-50); }
+    .dz-title { font-size:14px; font-weight:700; color:var(--slate-800); margin-bottom:4px; }
+    .dz-formats { font-size:12px; color:var(--slate-400); line-height:1.55; }
+    .dz-or { display:flex; align-items:center; gap:10px; font-size:11.5px;
+              color:var(--slate-400); margin:14px 0; }
+    .dz-or::before,.dz-or::after { content:''; flex:1; height:1px; background:var(--slate-200); }
+    .browse-btn { display:inline-flex; align-items:center; gap:6px; padding:7px 18px;
+                  border:1.5px solid var(--slate-300); border-radius:var(--r-sm);
+                  font-family:inherit; font-size:12px; font-weight:700; letter-spacing:.4px;
+                  color:var(--slate-700); background:var(--white); cursor:pointer;
+                  transition:border-color var(--t) var(--ease), background var(--t) var(--ease); }
+    .browse-btn:hover { border-color:var(--slate-400); background:var(--slate-50); }
+
+    /* FILE CHIP */
+    .file-chip { display:none; align-items:center; gap:12px; padding:12px 14px;
+                 background:var(--blue-50); border:1.5px solid var(--blue-200);
+                 border-radius:var(--r-md); animation:fadeIn 150ms var(--ease); }
+    .file-chip.show { display:flex; }
+    @keyframes fadeIn { from { opacity:0; transform:scale(0.98); } }
+    .file-chip-icon { width:38px; height:38px; border-radius:var(--r-sm); background:var(--blue);
+                      display:flex; align-items:center; justify-content:center;
+                      color:var(--white); flex-shrink:0; }
+    .file-chip-info { flex:1; min-width:0; }
+    .file-chip-name { font-size:13px; font-weight:700; color:var(--slate-800);
+                      overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .file-chip-size { font-size:11.5px; color:var(--slate-500); margin-top:2px; }
+    .file-chip-remove { background:none; border:none; color:var(--slate-400); cursor:pointer;
+                        padding:6px; border-radius:4px; transition:color var(--t) var(--ease);
+                        display:flex; }
+    .file-chip-remove:hover { color:var(--red); }
+
+    /* FIELD */
+    .field-label { display:block; font-size:12.5px; font-weight:700; color:var(--slate-600);
+                   letter-spacing:.2px; margin-bottom:6px; }
+    .select { width:100%; height:40px; padding:0 34px 0 12px;
+              border:1.5px solid var(--slate-200); border-radius:var(--r-sm);
+              font-family:inherit; font-size:13.5px; color:var(--slate-800);
+              background:var(--white) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2394A3B8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E") no-repeat right 11px center;
+              appearance:none; outline:none; cursor:pointer;
+              transition:border-color var(--t) var(--ease); }
+    .select:focus { border-color:var(--blue); }
+
+    /* ADVANCED TOGGLE */
+    .adv-toggle { display:flex; align-items:center; gap:7px; cursor:pointer; font-size:13px;
+                  font-weight:600; color:var(--slate-500); background:none; border:none;
+                  font-family:inherit; padding:0; transition:color var(--t) var(--ease); }
+    .adv-toggle:hover { color:var(--blue); }
+    .adv-chevron { transition:transform var(--t) var(--ease); }
+    .adv-toggle.open .adv-chevron { transform:rotate(180deg); }
+    .adv-panel { display:grid; grid-template-rows:0fr; transition:grid-template-rows 200ms var(--ease); }
+    .adv-panel.open { grid-template-rows:1fr; }
+    .adv-panel-inner { overflow:hidden; }
+    .adv-content { display:flex; flex-direction:column; gap:14px; padding:14px; margin-top:10px;
+                   background:var(--slate-50); border-radius:var(--r-md);
+                   border:1.5px solid var(--slate-100); }
+
+    /* TOGGLE SWITCH */
+    .toggle-row { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+    .toggle-info { flex:1; }
+    .toggle-label { font-size:13px; font-weight:600; color:var(--slate-700); }
+    .toggle-sub { font-size:11.5px; color:var(--slate-400); margin-top:2px; }
+    .switch { position:relative; width:40px; height:22px; flex-shrink:0; cursor:pointer; }
+    .switch input { opacity:0; width:0; height:0; position:absolute; }
+    .switch-track { position:absolute; inset:0; background:var(--slate-200); border-radius:11px;
+                    transition:background var(--t) var(--ease); }
+    .switch input:checked + .switch-track { background:var(--blue); }
+    .switch-thumb { position:absolute; top:3px; left:3px; width:16px; height:16px;
+                    background:var(--white); border-radius:50%; box-shadow:0 1px 3px rgba(0,0,0,.2);
+                    transition:transform var(--t) var(--ease); pointer-events:none; }
+    .switch input:checked ~ .switch-thumb { transform:translateX(18px); }
+
+    /* RECORDING */
+    .rec-area { text-align:center; padding:28px 16px; background:var(--slate-50);
+                border-radius:var(--r-lg); border:1.5px dashed var(--slate-200); }
+    .rec-icon { width:56px; height:56px; border-radius:50%; background:var(--red-lt);
+                display:flex; align-items:center; justify-content:center;
+                margin:0 auto 10px; color:var(--red); transition:all .3s; }
+    .rec-icon.recording { background:var(--red); color:var(--white);
+                          animation:recPulse 1s ease-in-out infinite; }
+    @keyframes recPulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.08)} }
+    .rec-timer { font-size:28px; font-weight:800; color:var(--slate-900);
+                 font-variant-numeric:tabular-nums; letter-spacing:-.5px; margin:8px 0 4px; display:none; }
+    .rec-timer.show { display:block; }
+
+    /* TOAST */
+    .toast-area { position:fixed; bottom:20px; right:20px; display:flex; flex-direction:column;
+                  gap:8px; z-index:500; pointer-events:none; }
+    .toast { display:flex; align-items:center; gap:10px; padding:12px 16px;
+             background:var(--slate-900); color:var(--white); border-radius:var(--r-md);
+             font-size:13px; font-weight:500; box-shadow:var(--sh-lg);
+             animation:toastIn 240ms cubic-bezier(0.34,1.5,0.64,1);
+             max-width:340px; pointer-events:auto; }
+    .toast.success { background:#15803D; }
+    .toast.error   { background:var(--red); }
+    @keyframes toastIn { from { opacity:0; transform:translateX(20px) scale(0.96); } }
+
+    /* VIEWER MODAL */
+    .viewer-modal { max-width:700px; }
+    .viewer-tabs { display:flex; gap:0; border-bottom:1px solid var(--slate-100); padding:0 24px; }
+    .vtab { padding:10px 16px; font-size:13px; font-weight:600; color:var(--slate-500);
+            border:none; background:transparent; cursor:pointer; font-family:inherit;
+            border-bottom:2px solid transparent; margin-bottom:-1px;
+            transition:color var(--t) var(--ease), border-color var(--t) var(--ease); }
+    .vtab.active { color:var(--slate-900); border-bottom-color:var(--blue); }
+    .vtab:focus-visible { outline:3px solid var(--blue); outline-offset:1px; }
+    .viewer-body { padding:20px 24px; flex:1; overflow-y:auto; }
+    .viewer-textarea { width:100%; min-height:340px; border:1.5px solid var(--slate-200);
+                       border-radius:var(--r-md); padding:14px; font-family:inherit;
+                       font-size:13px; line-height:1.75; color:var(--slate-700);
+                       resize:vertical; outline:none; background:var(--slate-50); }
+    .viewer-textarea:focus { border-color:var(--blue); background:var(--white); }
+    .viewer-dl-row { display:flex; gap:8px; flex-wrap:wrap; padding:0 24px 20px; flex-shrink:0; }
+
+    /* RESPONSIVE */
+    @media (max-width:720px) {
+      .page { padding:20px 16px 40px; }
+      .files-table th.col-date, .files-table td.col-date { display:none; }
+      .modal-body { padding:16px 18px; }
+      .modal-head { padding:16px 18px 14px; }
+      .modal-foot { padding:0 18px 16px; }
+    }
+    @media (max-width:480px) {
+      .files-table th.col-dur, .files-table td.col-dur { display:none; }
+      .card-header { flex-wrap:wrap; }
+    }
+    @media (prefers-reduced-motion:reduce) {
+      *,*::before,*::after { animation-duration:.01ms !important; transition-duration:.01ms !important; }
+    }
+    .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px;
+               overflow:hidden; clip:rect(0,0,0,0); border:0; }
+  </style>
+</head>
+<body>
+
+<div class="page">
+
+  <!-- Stats Cards -->
+  <div class="stats-row" role="region" aria-label="Estatísticas de uso">
+    <div class="stat-card">
+      <div class="stat-label">Arquivos transcritos</div>
+      <div class="stat-value" id="stat-count">—</div>
+      <div class="stat-sub">total acumulado</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Horas transcritas</div>
+      <div class="stat-value" id="stat-hours">—</div>
+      <div class="stat-sub">total acumulado</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Créditos restantes</div>
+      <div class="stat-value" style="color:var(--blue)">∞</div>
+      <div class="stat-sub" style="color:var(--blue);font-weight:700">Plano Ilimitado — Local</div>
+    </div>
+  </div>
+
+  <!-- Files Card -->
+  <div class="card" role="region" aria-label="Arquivos transcritos">
+
+    <!-- Bulk bar -->
+    <div class="bulk-bar" id="bulk-bar" role="toolbar" aria-label="Ações em lote" aria-live="polite">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+      <span id="bulk-count">0 selecionados</span>
+      <div class="bulk-actions">
+        <button class="bulk-btn" onclick="downloadSelected()">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Baixar TXT
+        </button>
+        <button class="bulk-btn" onclick="downloadAllZip()">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Baixar ZIP
+        </button>
+        <button class="bulk-btn danger" onclick="deleteSelected()">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+          Excluir
+        </button>
+      </div>
+    </div>
+
+    <!-- Progress bar -->
+    <div class="progress-item" id="progress-item" style="display:none" role="status" aria-live="polite">
+      <div class="status-spinner" aria-hidden="true"></div>
+      <div class="progress-info">
+        <div class="progress-label" id="progress-name">Transcrevendo...</div>
+        <div class="progress-track" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+          <div class="progress-fill" id="progress-fill" style="width:0%"></div>
+        </div>
+        <div class="progress-pct" id="progress-pct">0%</div>
+      </div>
+    </div>
+
+    <!-- Card header -->
+    <div class="card-header">
+      <div class="card-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        Arquivos recentes
+      </div>
+      <div class="card-actions">
+        <button class="icon-btn" id="search-toggle" onclick="toggleSearch()" aria-label="Buscar arquivos" aria-expanded="false" title="Buscar">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </button>
+        <button class="icon-btn" onclick="openModal('rec')" aria-label="Gravar áudio" title="Gravar">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+        </button>
+        <button class="transcribe-btn" onclick="openModal('file')" aria-label="Transcrever arquivos">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+          TRANSCREVER ARQUIVOS
+        </button>
+      </div>
+    </div>
+
+    <!-- Search bar -->
+    <div class="search-bar" id="search-bar" role="search">
+      <div class="search-wrap">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="search" class="search-input" id="search-input"
+          placeholder="Buscar por nome de arquivo..."
+          aria-label="Buscar arquivos"
+          oninput="filterFiles(this.value)" />
+      </div>
+    </div>
+
+    <!-- Table -->
+    <div id="table-wrap">
+      <table class="files-table" aria-label="Lista de arquivos transcritos">
+        <thead>
+          <tr>
+            <th class="col-check" scope="col"><input type="checkbox" class="checkbox" id="check-all" aria-label="Selecionar todos" onchange="toggleAll(this)" /></th>
+            <th class="col-name"   scope="col">Nome</th>
+            <th class="col-date"   scope="col">Enviado</th>
+            <th class="col-dur"    scope="col">Duração</th>
+            <th class="col-mode"   scope="col">Modo</th>
+            <th class="col-status" scope="col">Status</th>
+            <th class="col-actions" scope="col"><span class="sr-only">Ações</span></th>
+          </tr>
+        </thead>
+        <tbody id="files-tbody"></tbody>
+      </table>
+
+      <!-- Empty state -->
+      <div class="empty-state" id="empty-state" role="status" aria-live="polite">
+        <div class="empty-icon" aria-hidden="true">
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </div>
+        <div class="empty-title">Nenhuma transcrição ainda</div>
+        <div class="empty-sub">Envie um áudio ou vídeo e a transcrição fica pronta em minutos.</div>
+        <button class="btn btn-primary-lg" style="max-width:300px" onclick="openModal('file')">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+          Transcrever primeiro arquivo
+        </button>
+        <div class="tip-row">
+          <span class="tip-tag">DICA</span>
+          Arraste e solte arquivos em qualquer parte da tela.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════ UPLOAD MODAL ═══════════════ -->
+<div class="overlay" id="overlay" role="dialog" aria-modal="true" aria-labelledby="modal-title" onclick="handleOverlayClick(event)">
+  <div class="modal" id="modal">
+
+    <div class="modal-head">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+      <h2 class="modal-title" id="modal-title">Transcrever Arquivo</h2>
+      <button class="modal-close" onclick="closeModal()" aria-label="Fechar">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+
+    <div class="modal-body">
+
+      <!-- Tabs -->
+      <div class="seg-tabs" role="group" aria-label="Tipo de entrada">
+        <button id="tab-file" class="seg-tab" aria-pressed="true" onclick="switchTab('file')">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          Arquivo
+        </button>
+        <button id="tab-url" class="seg-tab" aria-pressed="false" onclick="switchTab('url')">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+          URL / Link
+        </button>
+        <button id="tab-rec" class="seg-tab" aria-pressed="false" onclick="switchTab('rec')">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+          Gravar
+        </button>
+      </div>
+
+      <!-- FILE tab -->
+      <div id="content-file">
+        <div class="dropzone" id="dropzone" role="button" tabindex="0"
+          aria-label="Área de upload"
+          ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)">
+          <input type="file" id="file-input" multiple
+            accept="audio/*,video/*,.mp3,.mp4,.m4a,.mov,.aac,.wav,.ogg,.opus,.mpeg,.wma,.wmv"
+            aria-label="Selecionar arquivo" onchange="handleFileSelect(this.files)" />
+          <div class="dz-icon" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+          </div>
+          <div class="dz-title">Arraste e solte aqui</div>
+          <div class="dz-formats">MP3 · MP4 · M4A · MOV · AAC · WAV · OGG · WMA · WMV</div>
+          <div class="dz-or">ou</div>
+          <button class="browse-btn" tabindex="-1" aria-hidden="true">SELECIONAR ARQUIVO</button>
+        </div>
+
+        <div class="file-chip" id="file-chip" role="status" aria-live="polite">
+          <div class="file-chip-icon" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          </div>
+          <div class="file-chip-info">
+            <div class="file-chip-name" id="chip-name">—</div>
+            <div class="file-chip-size" id="chip-size">—</div>
+          </div>
+          <button class="file-chip-remove" onclick="removeFile()" aria-label="Remover arquivo">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- URL tab -->
+      <div id="content-url" style="display:none">
+        <label class="field-label" for="url-input">URL do vídeo ou áudio</label>
+        <input id="url-input" type="url" class="select" style="height:40px;padding:0 12px"
+          placeholder="https://youtube.com/watch?v=..." aria-label="URL do vídeo ou áudio" />
+        <p style="font-size:11.5px;color:var(--slate-400);margin-top:6px">
+          ⚠️ Requer <strong>yt-dlp</strong> instalado — em desenvolvimento.
+        </p>
+      </div>
+
+      <!-- REC tab -->
+      <div id="content-rec" style="display:none">
+        <div class="rec-area" id="rec-area">
+          <div class="rec-icon" id="rec-icon" aria-hidden="true">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+          </div>
+          <div class="rec-timer" id="rec-timer">00:00</div>
+          <p id="rec-label" style="font-size:13.5px;font-weight:700;color:var(--slate-700)">Gravar do microfone</p>
+          <p id="rec-sub" style="font-size:12px;color:var(--slate-400);margin-top:3px">Clique para iniciar a gravação</p>
+          <div style="margin-top:14px;display:flex;gap:8px;justify-content:center">
+            <button class="btn btn-primary" id="rec-start-btn" onclick="startRecording()">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
+              INICIAR
+            </button>
+            <button class="btn btn-ghost" id="rec-stop-btn" onclick="stopRecording()" style="display:none">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>
+              PARAR
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Model -->
+      <div>
+        <label class="field-label" for="mode-select">Modelo de transcrição</label>
+        <select id="mode-select" class="select" aria-label="Modelo de transcrição">
+          <option value="tiny">tiny — mais rápido, menor precisão</option>
+          <option value="base">base — rápido e leve</option>
+          <option value="small">small — boa precisão</option>
+          <option value="medium">medium — excelente precisão</option>
+          <option value="large-v3">large-v3 — máxima precisão</option>
+          <option value="turbo" selected>turbo ✓ recomendado</option>
+        </select>
+      </div>
+
+      <!-- Language -->
+      <div>
+        <label class="field-label" for="lang-select">Idioma do áudio</label>
+        <select id="lang-select" class="select" aria-label="Idioma do áudio">
+          <option value="pt">Português 🇧🇷</option>
+          <option value="en">English 🇺🇸</option>
+          <option value="es">Español 🇪🇸</option>
+          <option value="fr">Français 🇫🇷</option>
+          <option value="de">Deutsch 🇩🇪</option>
+          <option value="it">Italiano 🇮🇹</option>
+          <option value="ja">日本語 🇯🇵</option>
+          <option value="zh">中文 🇨🇳</option>
+          <option value="auto">Detectar automaticamente</option>
+        </select>
+      </div>
+
+      <!-- Advanced -->
+      <div>
+        <button class="adv-toggle" id="adv-toggle" onclick="toggleAdvanced()" aria-expanded="false" aria-controls="adv-panel">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 1.75 2.3M21.17 10.72A9.93 9.93 0 0 1 21 12M19.07 19.07a10 10 0 0 1-2.3 1.75M13.28 21.17A9.93 9.93 0 0 1 12 21M4.93 19.07a10 10 0 0 1-1.75-2.3M2.83 13.28A9.93 9.93 0 0 1 3 12M4.93 4.93a10 10 0 0 1 2.3-1.75M10.72 2.83A9.93 9.93 0 0 1 12 3"/></svg>
+          Configurações avançadas
+          <svg class="adv-chevron" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+
+        <div class="adv-panel" id="adv-panel">
+          <div class="adv-panel-inner">
+            <div class="adv-content">
+
+              <!-- Task type -->
+              <div>
+                <label class="field-label" for="task-select">Modo</label>
+                <select id="task-select" class="select">
+                  <option value="transcribe">Transcrever (manter idioma original)</option>
+                  <option value="translate">Traduzir para inglês</option>
+                </select>
+              </div>
+
+              <div class="toggle-row">
+                <div class="toggle-info">
+                  <div class="toggle-label">Filtrar vícios de linguagem</div>
+                  <div class="toggle-sub">Remove "né", "é...", "hmm", "ã..." etc.</div>
+                </div>
+                <label class="switch" aria-label="Filtrar vícios de linguagem">
+                  <input type="checkbox" id="filter-toggle" />
+                  <span class="switch-track"></span>
+                  <span class="switch-thumb"></span>
+                </label>
+              </div>
+
+              <div class="toggle-row" style="opacity:.5">
+                <div class="toggle-info">
+                  <div class="toggle-label">Identificar falantes</div>
+                  <div class="toggle-sub">Em desenvolvimento — requer pyannote.audio</div>
+                </div>
+                <label class="switch" aria-label="Identificar falantes (indisponível)">
+                  <input type="checkbox" disabled />
+                  <span class="switch-track"></span>
+                  <span class="switch-thumb"></span>
+                </label>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="modal-foot">
+      <button class="btn btn-primary-lg" id="transcribe-btn" onclick="startTranscription()">
+        TRANSCREVER
+      </button>
+      <p class="tos">Processamento 100% local · Seus arquivos não saem do seu computador</p>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════════════════ VIEWER MODAL ═══════════════ -->
+<div class="overlay" id="viewer-overlay" role="dialog" aria-modal="true" aria-labelledby="viewer-title" onclick="handleViewerOverlayClick(event)">
+  <div class="modal viewer-modal" id="viewer-modal">
+
+    <div class="modal-head">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+      <h2 class="modal-title" id="viewer-title">Transcrição</h2>
+      <button class="modal-close" onclick="closeViewer()" aria-label="Fechar" style="margin-left:auto">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+
+    <div class="viewer-tabs" role="tablist">
+      <button class="vtab active" id="vtab-text" role="tab" aria-selected="true"  onclick="switchViewerTab('text')">Texto</button>
+      <button class="vtab"        id="vtab-ts"   role="tab" aria-selected="false" onclick="switchViewerTab('ts')">Timestamps</button>
+      <button class="vtab"        id="vtab-srt"  role="tab" aria-selected="false" onclick="switchViewerTab('srt')">SRT</button>
+    </div>
+
+    <div class="viewer-body">
+      <textarea class="viewer-textarea" id="viewer-text" readonly
+        placeholder="Carregando..."></textarea>
+    </div>
+
+    <div class="viewer-dl-row">
+      <button class="btn btn-primary" onclick="dlViewerFile('txt')">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Baixar TXT
+      </button>
+      <button class="btn btn-ghost" onclick="dlViewerFile('srt')">Baixar SRT</button>
+      <button class="btn btn-ghost" onclick="dlViewerFile('timestamps')">Timestamps</button>
+      <button class="btn btn-ghost" onclick="dlViewerFile('json')">JSON</button>
+    </div>
+
+  </div>
+</div>
+
+<!-- Toast container -->
+<div class="toast-area" id="toast-area" aria-live="polite" aria-label="Notificações"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════════════
+let files    = [];     // [{id, file, name, date, dur, status, mode}]
+let selected = new Set();
+let pendingFiles = []; // File objects queued from input
+let _viewerFile  = null;
+let _viewerData  = {};
+let _pollInterval = null;
+let _autoSyncInterval = null;
+let _syncFingerprint  = '';
+
+// ═══════════════════════════════════════════════════════════════
+//  INIT
+// ═══════════════════════════════════════════════════════════════
+async function init() {
+  await Promise.all([loadHistory(), loadStats()]);
+  await resumeActivePolling();
+  startAutoSync();
+}
+
+async function resumeActivePolling() {
+  try {
+    // 1. Ask server which tasks are still alive in memory
+    const res   = await fetch('/api/active-tasks');
+    const tasks = await res.json(); // { task_id: {status, filename, ...} }
+
+    // 2. Reset items stuck as queued/processing whose task is gone (server restart)
+    const resetRes = await fetch('/api/reset-stale', { method: 'POST' });
+    const resetData = await resetRes.json();
+    if (resetData.reset > 0) {
+      // Reload history to pick up newly "error" items
+      await loadHistory();
+    }
+
+    // 3. Resume polling for any tasks that are still alive
+    for (const [task_id, task] of Object.entries(tasks)) {
+      const filename = task.filename || task.name;
+      if (!filename || _activePolls[task_id]) continue;
+      pollProgressForRow(task_id, filename);
+    }
+  } catch { /* server may not have active tasks */ }
+}
+
+// ─── helpers ─────────────────────────────────────────────────
+function _historyToFiles(data) {
+  return data.map(h => ({
+    id:      h.file,
+    file:    h.file,
+    name:    h.name || h.file.replace(/\.[^.]+$/, ''),
+    date:    h.date    || '—',
+    dur:     h.duration || '—',
+    status:  h.status   || 'done',
+    mode:    h.mode     || 'turbo',
+    lang:    h.lang     || '',
+    words:   h.words    || 0,
+    error:   h.error    || null,
+    task_id: h.task_id  || null,
+  }));
+}
+
+function _makeFingerprint(data) {
+  return data.map(h => `${h.file}|${h.status}|${h.words}|${h.duration}`).join('\n');
+}
+
+async function loadHistory() {
+  try {
+    const res  = await fetch('/api/history');
+    const data = await res.json();
+    files = _historyToFiles(data);
+    _syncFingerprint = _makeFingerprint(data);
+    renderFiles(files);
+  } catch (e) {
+    console.error('loadHistory:', e);
+    renderFiles([]);
+  }
+}
+
+// ─── AUTO-SYNC ───────────────────────────────────────────────
+// Keeps the page live — checks for history changes every 5s
+// and re-renders only if something actually changed.
+function startAutoSync() {
+  if (_autoSyncInterval) return;
+  _autoSyncInterval = setInterval(_autoSyncTick, 5000);
+}
+
+async function _autoSyncTick() {
+  // Active polls already reload history on done/error — skip to avoid double render
+  if (Object.keys(_activePolls).length > 0) return;
+  try {
+    const res  = await fetch('/api/history');
+    const data = await res.json();
+    const fp   = _makeFingerprint(data);
+    if (fp === _syncFingerprint) return; // nothing changed
+    _syncFingerprint = fp;
+    files = _historyToFiles(data);
+    renderFiles(files);
+    loadStats();
+    // Restart polling for any active tasks discovered (e.g. uploaded from another tab)
+    files.forEach(f => {
+      if ((f.status === 'queued' || f.status === 'processing') && f.task_id && !_activePolls[f.task_id]) {
+        pollProgressForRow(f.task_id, f.file);
+      }
+    });
+  } catch { /* network blip — ignore */ }
+}
+
+async function loadStats() {
+  try {
+    const res  = await fetch('/api/stats');
+    const data = await res.json();
+    document.getElementById('stat-count').textContent = data.total ?? '0';
+    document.getElementById('stat-hours').textContent = data.duration || '0m';
+  } catch { /* ignore */ }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  RENDER
+// ═══════════════════════════════════════════════════════════════
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+const STATUS_MAP = {
+  done:       { label:'Concluído',   cls:'done'       },
+  processing: { label:'Processando', cls:'processing'  },
+  queued:     { label:'Aguardando',  cls:'queued'      },
+  failed:     { label:'Falhou',      cls:'failed'      },
+  error:      { label:'Erro',        cls:'error'       },
+  cancelled:  { label:'Cancelado',   cls:'cancelled'   },
+};
+
+function renderStatus(status) {
+  const s = STATUS_MAP[status] || STATUS_MAP.queued;
+  const extra = status === 'error' ? ' title="Clique para ver o erro"' : '';
+  return `<span class="status-badge ${s.cls}" role="img" aria-label="${s.label}"${extra}>
+    <span class="status-dot"></span>${s.label}
+  </span>`;
+}
+
+function renderFiles(data) {
+  const tbody = document.getElementById('files-tbody');
+  const empty = document.getElementById('empty-state');
+  const table = tbody.closest('table');
+  tbody.innerHTML = '';
+
+  if (!data.length) {
+    table.style.display = 'none';
+    empty.style.display = 'flex';
+    return;
+  }
+  table.style.display = '';
+  empty.style.display = 'none';
+
+  data.forEach(f => {
+    const tr = document.createElement('tr');
+    tr.dataset.id = f.id;
+    tr.innerHTML = `
+      <td class="col-check">
+        <input type="checkbox" class="checkbox" aria-label="Selecionar ${esc(f.name)}"
+          ${selected.has(f.id)?'checked':''}
+          onclick="event.stopPropagation()" onchange="toggleSelect('${esc(f.id)}',this)" />
+      </td>
+      <td><div class="file-name">${esc(f.name)}</div></td>
+      <td class="col-date"><div class="file-date">${esc(f.date)}</div></td>
+      <td class="col-dur"><div class="file-dur">${esc(f.dur)}</div></td>
+      <td class="col-mode"><span class="mode-badge">${esc(f.mode)}</span></td>
+      <td class="col-status">${renderStatus(f.status)}</td>
+      <td class="col-actions">
+        <div class="action-wrap">
+          <button class="dots-btn" aria-label="Ações — ${esc(f.name)}" aria-haspopup="true" aria-expanded="false"
+            onclick="toggleDD('${esc(f.id)}',this,event)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="19" r="1" fill="currentColor"/></svg>
+          </button>
+          <div class="dropdown" id="dd-${esc(f.id)}" role="menu">
+            ${f.status === 'error' ? `
+            <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="viewError('${esc(f.id)}')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              Ver log de erro
+            </div>
+            <div class="dd-sep"></div>` : `
+            <div class="dd-item" role="menuitem" tabindex="-1" onclick="viewFile('${esc(f.id)}')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              Ver transcrição
+            </div>`}
+            <div class="dd-item" role="menuitem" tabindex="-1" onclick="dlFile('${esc(f.id)}','txt')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Baixar TXT
+            </div>
+            <div class="dd-item" role="menuitem" tabindex="-1" onclick="dlFile('${esc(f.id)}','srt')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+              Baixar SRT (legendas)
+            </div>
+            <div class="dd-item" role="menuitem" tabindex="-1" onclick="dlFile('${esc(f.id)}','timestamps')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              Baixar Timestamps
+            </div>
+            <div class="dd-item" role="menuitem" tabindex="-1" onclick="dlFile('${esc(f.id)}','json')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              Baixar JSON
+            </div>
+            <div class="dd-sep"></div>
+            <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="deleteFile('${esc(f.id)}')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+              Excluir arquivo
+            </div>
+          </div>
+        </div>
+      </td>`;
+    tbody.appendChild(tr);
+  });
+
+  // Event delegation — one listener on tbody survives re-renders
+  tbody.onclick = e => {
+    const tr = e.target.closest('tr');
+    if (!tr) return;
+    if (e.target.closest('.action-wrap') || e.target.closest('input[type="checkbox"]')) return;
+    const id = tr.dataset.id;
+    if (!id) return;
+    // Clicking the error badge opens error viewer
+    if (e.target.closest('.status-badge.error')) { viewError(id); return; }
+    const f = files.find(x => x.id === id);
+    if (f && f.status === 'error') { viewError(id); return; }
+    if (f && (f.status === 'queued' || f.status === 'processing')) return;
+    viewFile(id);
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SEARCH
+// ═══════════════════════════════════════════════════════════════
+function toggleSearch() {
+  const bar = document.getElementById('search-bar');
+  const btn = document.getElementById('search-toggle');
+  const open = bar.classList.toggle('open');
+  btn.classList.toggle('active', open);
+  btn.setAttribute('aria-expanded', open);
+  if (open) document.getElementById('search-input').focus();
+  else { document.getElementById('search-input').value = ''; renderFiles(files); }
+}
+
+function filterFiles(q) {
+  renderFiles(q ? files.filter(f => f.name.toLowerCase().includes(q.toLowerCase())) : files);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SELECTION
+// ═══════════════════════════════════════════════════════════════
+function toggleSelect(id, cb) {
+  cb.checked ? selected.add(id) : selected.delete(id);
+  syncBulkBar();
+  syncHeaderCheck();
+}
+
+function toggleAll(cb) {
+  files.forEach(f => cb.checked ? selected.add(f.id) : selected.delete(f.id));
+  renderFiles(files);
+  syncBulkBar();
+}
+
+function syncHeaderCheck() {
+  const cb = document.getElementById('check-all');
+  cb.checked = selected.size === files.length && files.length > 0;
+  cb.indeterminate = selected.size > 0 && selected.size < files.length;
+}
+
+function syncBulkBar() {
+  const bar = document.getElementById('bulk-bar');
+  document.getElementById('bulk-count').textContent =
+    `${selected.size} selecionado${selected.size !== 1 ? 's' : ''}`;
+  bar.classList.toggle('show', selected.size > 0);
+  syncHeaderCheck();
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  DROPDOWNS
+// ═══════════════════════════════════════════════════════════════
+function toggleDD(id, btn, e) {
+  e.stopPropagation();
+  const dd   = document.getElementById('dd-' + id);
+  const open = dd.classList.contains('open');
+  closeAllDDs();
+  if (!open) {
+    dd.classList.add('open');
+    btn.setAttribute('aria-expanded', 'true');
+  }
+}
+
+function closeAllDDs() {
+  document.querySelectorAll('.dropdown.open').forEach(d => d.classList.remove('open'));
+  document.querySelectorAll('.dots-btn[aria-expanded="true"]').forEach(b => b.setAttribute('aria-expanded','false'));
+}
+
+document.addEventListener('click', closeAllDDs);
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closeAllDDs(); closeModal(); closeViewer(); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  FILE ACTIONS
+// ═══════════════════════════════════════════════════════════════
+async function viewFile(id) {
+  const f = files.find(x => x.id === id);
+  if (!f) return;
+  if (f.status === 'error')      { viewError(id); return; }
+  if (f.status === 'queued')     { showToast('Aguardando na fila…', ''); return; }
+  if (f.status === 'processing') { showToast('Transcrição em andamento…', ''); return; }
+  try {
+    const res  = await fetch(`/api/result/${encodeURIComponent(f.file)}`);
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    openViewer(f, data);
+  } catch {
+    showToast('Não foi possível carregar a transcrição.', 'error');
+  }
+}
+
+function viewError(id) {
+  closeAllDDs();
+  const f = files.find(x => x.id === id);
+  if (!f) return;
+  const msg = f.error || 'Nenhuma mensagem de erro registrada.';
+  // Reuse viewer modal to show the error log
+  _viewerFile = f;
+  _viewerData = {
+    text: `❌ ERRO NA TRANSCRIÇÃO\n${'─'.repeat(50)}\nArquivo : ${f.file}\nModelo  : ${f.mode}\nData    : ${f.date}\n${'─'.repeat(50)}\n\n${msg}`,
+    timestamped: '', srt: ''
+  };
+  document.getElementById('viewer-title').textContent = `Erro — ${f.name}`;
+  // Hide tabs that aren't relevant for errors
+  document.getElementById('vtab-ts').style.display  = 'none';
+  document.getElementById('vtab-srt').style.display = 'none';
+  switchViewerTab('text');
+  document.getElementById('viewer-overlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+
+function dlFile(id, fmt) {
+  closeAllDDs();
+  const f = files.find(x => x.id === id);
+  if (!f) return;
+  window.location = `/api/download/${encodeURIComponent(f.file)}/${fmt}`;
+}
+
+async function deleteFile(id) {
+  closeAllDDs();
+  const f = files.find(x => x.id === id);
+  if (!f) return;
+  if (!confirm(`Excluir "${f.name}"?`)) return;
+  try {
+    await fetch(`/api/delete/${encodeURIComponent(f.file)}`, { method: 'DELETE' });
+    files.splice(files.findIndex(x => x.id === id), 1);
+    selected.delete(id);
+    renderFiles(files);
+    syncBulkBar();
+    await loadStats();
+    showToast('Arquivo excluído.', 'error');
+  } catch {
+    showToast('Erro ao excluir.', 'error');
+  }
+}
+
+async function downloadSelected() {
+  if (!selected.size) return;
+  for (const id of selected) {
+    const f = files.find(x => x.id === id);
+    if (f && f.status === 'done') {
+      const a = document.createElement('a');
+      a.href = `/api/download/${encodeURIComponent(f.file)}/txt`;
+      a.download = f.name + '.txt';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      await new Promise(r => setTimeout(r, 300));
+    }
+  }
+  showToast(`${selected.size} arquivo(s) baixado(s).`, 'success');
+}
+
+function downloadAllZip() {
+  window.location = '/api/download-all';
+}
+
+async function deleteSelected() {
+  if (!selected.size) return;
+  if (!confirm(`Excluir ${selected.size} arquivo(s)?`)) return;
+  for (const id of selected) {
+    const f = files.find(x => x.id === id);
+    if (f) {
+      await fetch(`/api/delete/${encodeURIComponent(f.file)}`, { method: 'DELETE' });
+      files.splice(files.findIndex(x => x.id === id), 1);
+    }
+  }
+  selected.clear();
+  renderFiles(files);
+  syncBulkBar();
+  await loadStats();
+  showToast('Arquivos excluídos.', 'error');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  UPLOAD MODAL
+// ═══════════════════════════════════════════════════════════════
+function openModal(tab = 'file') {
+  switchTab(tab);
+  document.getElementById('overlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+  setTimeout(() => document.querySelector('#overlay .modal-close').focus(), 50);
+}
+
+function closeModal() {
+  document.getElementById('overlay').classList.remove('open');
+  document.body.style.overflow = '';
+  stopRecordingCleanup();
+}
+
+function handleOverlayClick(e) {
+  if (e.target === document.getElementById('overlay')) closeModal();
+}
+
+function switchTab(tab) {
+  ['file', 'url', 'rec'].forEach(t => {
+    const pressed = t === tab;
+    document.getElementById('tab-' + t).setAttribute('aria-pressed', pressed);
+    document.getElementById('content-' + t).style.display = pressed ? '' : 'none';
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  DROPZONE
+// ═══════════════════════════════════════════════════════════════
+function handleDragOver(e) { e.preventDefault(); document.getElementById('dropzone').classList.add('drag-over'); }
+function handleDragLeave()  { document.getElementById('dropzone').classList.remove('drag-over'); }
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('dropzone').classList.remove('drag-over');
+  if (e.dataTransfer.files.length) handleFileSelect(e.dataTransfer.files);
+}
+
+function handleFileSelect(fileList) {
+  if (!fileList || !fileList.length) return;
+  pendingFiles = Array.from(fileList);
+  const f = pendingFiles[0];
+  document.getElementById('chip-name').textContent =
+    pendingFiles.length > 1 ? `${f.name} + ${pendingFiles.length-1} outro(s)` : f.name;
+  document.getElementById('chip-size').textContent =
+    pendingFiles.reduce((s, x) => s + x.size, 0) < 1048576
+      ? (pendingFiles.reduce((s, x) => s + x.size, 0) / 1024).toFixed(1) + ' KB'
+      : (pendingFiles.reduce((s, x) => s + x.size, 0) / 1048576).toFixed(1) + ' MB';
+  document.getElementById('file-chip').classList.add('show');
+  document.getElementById('dropzone').style.display = 'none';
+}
+
+function removeFile() {
+  pendingFiles = [];
+  document.getElementById('file-input').value = '';
+  document.getElementById('file-chip').classList.remove('show');
+  document.getElementById('dropzone').style.display = '';
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ADVANCED
+// ═══════════════════════════════════════════════════════════════
+function toggleAdvanced() {
+  const panel = document.getElementById('adv-panel');
+  const btn   = document.getElementById('adv-toggle');
+  const open  = panel.classList.toggle('open');
+  btn.classList.toggle('open', open);
+  btn.setAttribute('aria-expanded', open);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  TRANSCRIPTION
+// ═══════════════════════════════════════════════════════════════
+async function startTranscription() {
+  const activeTab = document.querySelector('.seg-tab[aria-pressed="true"]')?.id?.replace('tab-','') || 'file';
+
+  if (activeTab === 'url') {
+    showToast('Transcrição por URL requer yt-dlp — em desenvolvimento.', 'error');
+    return;
+  }
+
+  if (activeTab === 'rec') {
+    // handled by stopRecording
+    showToast('Pare a gravação para transcrever.', '');
+    return;
+  }
+
+  if (!pendingFiles.length) {
+    showToast('Selecione um arquivo primeiro.', 'error');
+    return;
+  }
+
+  const model         = document.getElementById('mode-select').value;
+  const language      = document.getElementById('lang-select').value;
+  const taskType      = document.getElementById('task-select').value;
+  const filterFillers = document.getElementById('filter-toggle').checked;
+
+  closeModal();
+
+  // Queue all pending files
+  for (const file of pendingFiles) {
+    await sendFile(file, model, language, taskType, filterFillers);
+  }
+  removeFile();
+}
+
+async function sendFile(file, model, language, taskType, filterFillers) {
+  const fd = new FormData();
+  fd.append('file',           file);
+  fd.append('model',          model);
+  fd.append('language',       language);
+  fd.append('task',           taskType);
+  fd.append('filter_fillers', filterFillers ? 'true' : 'false');
+
+  showProgress(file.name);
+
+  try {
+    const res  = await fetch('/api/transcribe', { method: 'POST', body: fd });
+    const data = await res.json();
+    // Reload history immediately so item appears in table as "Aguardando"
+    await loadHistory();
+    pollProgressForRow(data.task_id, data.filename || file.name);
+  } catch {
+    hideProgress();
+    showToast(`Erro ao enviar "${file.name}".`, 'error');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PROGRESS POLLING
+// ═══════════════════════════════════════════════════════════════
+function showProgress(name) {
+  document.getElementById('progress-item').style.display = 'flex';
+  document.getElementById('progress-name').textContent  = `Transcrevendo "${name}"…`;
+  setProgressPct(0);
+}
+
+function hideProgress() {
+  document.getElementById('progress-item').style.display = 'none';
+}
+
+function setProgressPct(pct) {
+  document.getElementById('progress-fill').style.width = pct + '%';
+  document.getElementById('progress-pct').textContent  = Math.floor(pct) + '%';
+  document.querySelector('#progress-item [role="progressbar"]')
+          ?.setAttribute('aria-valuenow', Math.floor(pct));
+}
+
+// Legacy alias kept for recording tab
+function pollProgress(task_id, filename) { pollProgressForRow(task_id, filename); }
+
+// Per-row polling — updates the table row live without full re-render
+const _activePolls = {}; // task_id → intervalId
+
+function pollProgressForRow(task_id, filename) {
+  if (_activePolls[task_id]) return; // already polling
+
+  showProgress(filename);
+
+  _activePolls[task_id] = setInterval(async () => {
+    try {
+      const res  = await fetch(`/api/progress/${task_id}`);
+      if (!res.ok) { _stopPoll(task_id); return; }
+      const data = await res.json();
+
+      const pct  = data.progress || 0;
+      const name = data.name || filename;
+      setProgressPct(pct);
+      document.getElementById('progress-name').textContent =
+        `Transcrevendo "${name}"… ${pct}%`;
+
+      // Update row status badge live
+      _updateRowStatus(filename, data.status, pct);
+
+      if (data.status === 'done') {
+        _stopPoll(task_id);
+        hideProgress();
+        await loadHistory();
+        await loadStats();
+        showToast(`"${data.filename || filename}" transcrito com sucesso!`, 'success');
+      } else if (data.status === 'error') {
+        _stopPoll(task_id);
+        hideProgress();
+        await loadHistory(); // reload so error message appears in row
+        const errMsg = data.error || 'Falha na transcrição';
+        showToast(`Erro em "${filename}": ${errMsg}`, 'error');
+      }
+    } catch { /* ignore network blip */ }
+  }, 800);
+}
+
+function _stopPoll(task_id) {
+  if (_activePolls[task_id]) {
+    clearInterval(_activePolls[task_id]);
+    delete _activePolls[task_id];
+  }
+}
+
+function _updateRowStatus(filename, status, pct) {
+  const tr = document.querySelector(`#files-tbody tr[data-id="${CSS.escape(filename)}"]`);
+  if (!tr) return;
+  const badge = tr.querySelector('.status-badge');
+  if (!badge) return;
+  const s = STATUS_MAP[status] || STATUS_MAP.queued;
+  badge.className = `status-badge ${s.cls}`;
+  badge.setAttribute('aria-label', s.label);
+  badge.innerHTML = `<span class="status-dot"></span>${s.label}${status === 'processing' ? ` <small style="opacity:.7">${pct}%</small>` : ''}`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  RECORDING
+// ═══════════════════════════════════════════════════════════════
+let _mediaRecorder = null;
+let _audioChunks   = [];
+let _recTimerInterval = null;
+let _recSeconds    = 0;
+
+async function startRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    _audioChunks  = [];
+    _mediaRecorder = new MediaRecorder(stream);
+    _mediaRecorder.ondataavailable = e => { if (e.data.size) _audioChunks.push(e.data); };
+    _mediaRecorder.onstop = () => {
+      const blob = new Blob(_audioChunks, { type: 'audio/webm' });
+      const file = new File([blob], `gravacao_${Date.now()}.webm`, { type: 'audio/webm' });
+      pendingFiles = [file];
+      closeModal();
+      const model        = document.getElementById('mode-select').value;
+      const language     = document.getElementById('lang-select').value;
+      const taskType     = document.getElementById('task-select').value;
+      const filterFill   = document.getElementById('filter-toggle').checked;
+      sendFile(file, model, language, taskType, filterFill);
+      stream.getTracks().forEach(t => t.stop());
+    };
+    _mediaRecorder.start();
+    _recSeconds = 0;
+    _recTimerInterval = setInterval(() => {
+      _recSeconds++;
+      const m = String(Math.floor(_recSeconds / 60)).padStart(2, '0');
+      const s = String(_recSeconds % 60).padStart(2, '0');
+      document.getElementById('rec-timer').textContent = `${m}:${s}`;
+    }, 1000);
+
+    document.getElementById('rec-icon').classList.add('recording');
+    document.getElementById('rec-timer').classList.add('show');
+    document.getElementById('rec-label').textContent = 'Gravando…';
+    document.getElementById('rec-sub').textContent   = 'Clique em PARAR quando terminar';
+    document.getElementById('rec-start-btn').style.display = 'none';
+    document.getElementById('rec-stop-btn').style.display  = '';
+  } catch (err) {
+    showToast('Não foi possível acessar o microfone.', 'error');
+  }
+}
+
+function stopRecording() {
+  if (_mediaRecorder && _mediaRecorder.state !== 'inactive') {
+    _mediaRecorder.stop();
+    clearInterval(_recTimerInterval);
+    resetRecUI();
+    showToast('Gravação enviada para transcrição!', 'success');
+  }
+}
+
+function stopRecordingCleanup() {
+  if (_mediaRecorder && _mediaRecorder.state !== 'inactive') {
+    _mediaRecorder.stop();
+  }
+  clearInterval(_recTimerInterval);
+  resetRecUI();
+}
+
+function resetRecUI() {
+  document.getElementById('rec-icon').classList.remove('recording');
+  document.getElementById('rec-timer').classList.remove('show');
+  document.getElementById('rec-label').textContent  = 'Gravar do microfone';
+  document.getElementById('rec-sub').textContent    = 'Clique para iniciar a gravação';
+  document.getElementById('rec-start-btn').style.display = '';
+  document.getElementById('rec-stop-btn').style.display  = 'none';
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  VIEWER MODAL
+// ═══════════════════════════════════════════════════════════════
+function openViewer(f, data) {
+  _viewerFile = f;
+  _viewerData = data;
+  document.getElementById('viewer-title').textContent = f.name;
+  // Ensure all tabs visible (may have been hidden by viewError)
+  document.getElementById('vtab-ts').style.display  = '';
+  document.getElementById('vtab-srt').style.display = '';
+  switchViewerTab('text');
+  document.getElementById('viewer-overlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeViewer() {
+  document.getElementById('viewer-overlay').classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+function handleViewerOverlayClick(e) {
+  if (e.target === document.getElementById('viewer-overlay')) closeViewer();
+}
+
+function switchViewerTab(tab) {
+  const map = { text: 'text', ts: 'timestamped', srt: 'srt' };
+  document.getElementById('viewer-text').value = _viewerData[map[tab]] || '';
+  ['text','ts','srt'].forEach(t => {
+    const el = document.getElementById('vtab-' + t);
+    el.classList.toggle('active', t === tab);
+    el.setAttribute('aria-selected', t === tab);
+  });
+}
+
+function dlViewerFile(fmt) {
+  if (!_viewerFile) return;
+  window.location = `/api/download/${encodeURIComponent(_viewerFile.file)}/${fmt}`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  TOAST
+// ═══════════════════════════════════════════════════════════════
+const TOAST_ICONS = {
+  success: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`,
+  error:   `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`,
+  '':      `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`,
+};
+
+function showToast(msg, type = '') {
+  const area = document.getElementById('toast-area');
+  const t    = document.createElement('div');
+  t.className = 'toast' + (type ? ' ' + type : '');
+  t.setAttribute('role', 'alert');
+  t.innerHTML = (TOAST_ICONS[type] || TOAST_ICONS['']) + `<span>${msg}</span>`;
+  area.appendChild(t);
+  setTimeout(() => t.remove(), 4500);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  GLOBAL DRAG
+// ═══════════════════════════════════════════════════════════════
+document.body.addEventListener('dragover', e => {
+  e.preventDefault();
+  if (!document.getElementById('overlay').classList.contains('open')) openModal('file');
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  BOOT
+// ═══════════════════════════════════════════════════════════════
+init();
+</script>
+</body>
+</html>
