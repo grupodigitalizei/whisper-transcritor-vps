@@ -21,6 +21,8 @@ for d in (RESULTS_DIR, UPLOAD_DIR):
 # ── Model cache ────────────────────────────────────────────────
 _models: dict = {}
 _models_lock  = threading.Lock()
+_transcribe_sem = threading.Semaphore(1)  # apenas 1 transcrição por vez
+_history_lock = threading.Lock()           # protege escrita no history.json
 
 def _load_model(name: str):
     with _models_lock:
@@ -122,8 +124,11 @@ def _load_result_files(filename: str) -> dict | None:
 def _load_history() -> list:
     if not os.path.exists(HISTORY_FILE):
         return []
-    with open(HISTORY_FILE, encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(HISTORY_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, ValueError):
+        return []
 
 def _save_to_history(filename: str, result: dict, model_name: str,
                      status: str = "done", error: str | None = None,
@@ -148,8 +153,9 @@ def _save_to_history(filename: str, result: dict, model_name: str,
     }
     history = [h for h in history if h.get("file") != filename]
     history.insert(0, entry)
-    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(history, f, ensure_ascii=False, indent=2)
+    with _history_lock:
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(history, f, ensure_ascii=False, indent=2)
 
 def _update_history_status(filename: str, status: str,
                            error: str | None = None, **extra):
@@ -162,8 +168,9 @@ def _update_history_status(filename: str, status: str,
                 entry["error"] = error
             entry.update(extra)
             break
-    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(history, f, ensure_ascii=False, indent=2)
+    with _history_lock:
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(history, f, ensure_ascii=False, indent=2)
 
 # ── Task tracking ──────────────────────────────────────────────
 _tasks:      dict = {}
@@ -179,36 +186,37 @@ def _get_task(task_id: str) -> dict | None:
 
 def _run_transcription(task_id, file_path, filename, model_name,
                        language, task_type, do_filter):
-    try:
-        _set_task(task_id, status="processing", progress=10)
-        _update_history_status(filename, "processing", task_id=task_id)
+    with _transcribe_sem:
+        try:
+            _set_task(task_id, status="processing", progress=10)
+            _update_history_status(filename, "processing", task_id=task_id)
 
-        model = _load_model(model_name)
-        _set_task(task_id, progress=25)
+            model = _load_model(model_name)
+            _set_task(task_id, progress=25)
 
-        result = _transcribe_one(file_path, model, language, task_type)
-        _set_task(task_id, progress=82)
+            result = _transcribe_one(file_path, model, language, task_type)
+            _set_task(task_id, progress=82)
 
-        if do_filter:
-            result["text"]        = _apply_filler_filter(result["text"])
-            result["timestamped"] = "\n".join(
-                _apply_filler_filter(l) for l in result["timestamped"].split("\n"))
+            if do_filter:
+                result["text"]        = _apply_filler_filter(result["text"])
+                result["timestamped"] = "\n".join(
+                    _apply_filler_filter(l) for l in result["timestamped"].split("\n"))
 
-        _save_result_files(filename, result)
-        _save_to_history(filename, result, model_name,
-                         status="done", task_id=task_id)
+            _save_result_files(filename, result)
+            _save_to_history(filename, result, model_name,
+                             status="done", task_id=task_id)
 
-        _set_task(task_id, status="done", progress=100,
-                  filename=filename, lang=result["lang"],
-                  duration=result["duration"], words=result["words"])
+            _set_task(task_id, status="done", progress=100,
+                      filename=filename, lang=result["lang"],
+                      duration=result["duration"], words=result["words"])
 
-    except Exception as exc:
-        error_msg = str(exc)
-        _set_task(task_id, status="error", progress=0, error=error_msg)
-        _update_history_status(filename, "error", error=error_msg)
-    finally:
-        if os.path.exists(file_path):
-            os.remove(file_path)
+        except Exception as exc:
+            error_msg = str(exc)
+            _set_task(task_id, status="error", progress=0, error=error_msg)
+            _update_history_status(filename, "error", error=error_msg)
+        finally:
+            if os.path.exists(file_path):
+                os.remove(file_path)
 
 # ── FastAPI ────────────────────────────────────────────────────
 app = FastAPI(title="Whisper Transcritor")
