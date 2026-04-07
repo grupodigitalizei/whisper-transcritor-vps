@@ -6,6 +6,7 @@ import whisper
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form, BackgroundTasks
 from fastapi.responses import HTMLResponse, FileResponse
 import uvicorn
+import tqdm
 
 # ── Paths ──────────────────────────────────────────────────────
 SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
@@ -23,6 +24,25 @@ _models: dict = {}
 _models_lock  = threading.Lock()
 _transcribe_sem = threading.Semaphore(1)  # apenas 1 transcrição por vez
 _history_lock = threading.Lock()           # protege escrita no history.json
+
+_thread_local = threading.local()
+
+_orig_tqdm_init = tqdm.tqdm.__init__
+_orig_tqdm_update = tqdm.tqdm.update
+
+def _custom_tqdm_init(self, *args, **kwargs):
+    _orig_tqdm_init(self, *args, **kwargs)
+    self._task_id = getattr(_thread_local, 'task_id', None)
+
+def _custom_tqdm_update(self, n=1):
+    _orig_tqdm_update(self, n)
+    if hasattr(self, '_task_id') and self._task_id:
+        if self.total and self.total > 0:
+            pct = 25 + (self.n / self.total) * 57
+            _set_task(self._task_id, progress=pct)
+
+tqdm.tqdm.__init__ = _custom_tqdm_init
+tqdm.tqdm.update = _custom_tqdm_update
 
 def _load_model(name: str):
     with _models_lock:
@@ -186,6 +206,7 @@ def _get_task(task_id: str) -> dict | None:
 
 def _run_transcription(task_id, file_path, filename, model_name,
                        language, task_type, do_filter):
+    _thread_local.task_id = task_id
     with _transcribe_sem:
         try:
             _set_task(task_id, status="processing", progress=10)
