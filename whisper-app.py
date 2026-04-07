@@ -363,6 +363,35 @@ async def api_delete(filename: str):
         shutil.rmtree(d)
     return {"ok": True}
 
+
+@app.get("/api/gaps/{filename}")
+async def api_gaps(filename: str, min_gap: float = 1.0):
+    """Detecta silêncios/respiros entre segmentos de fala."""
+    base = _result_base(filename)
+    json_path = os.path.join(RESULTS_DIR, base, f"{base}.json")
+    if not os.path.exists(json_path):
+        raise HTTPException(404, "Resultado não encontrado")
+    with open(json_path, encoding="utf-8") as f:
+        data = json.load(f)
+    segments = data.get("segments", [])
+    gaps = []
+    for i in range(1, len(segments)):
+        prev_end = segments[i-1]["end"]
+        curr_start = segments[i]["start"]
+        duration = round(curr_start - prev_end, 2)
+        if duration >= min_gap:
+            gaps.append({
+                "index": i,
+                "start": round(prev_end, 2),
+                "end": round(curr_start, 2),
+                "duration": duration,
+                "start_fmt": _fmt_ts(prev_end),
+                "end_fmt": _fmt_ts(curr_start),
+                "before": segments[i-1]["text"].strip()[-60:],
+                "after": segments[i]["text"].strip()[:60],
+            })
+    return {"filename": filename, "total_gaps": len(gaps), "min_gap": min_gap, "gaps": gaps}
+
 # ── Entry point ────────────────────────────────────────────────
 if __name__ == "__main__":
     print("✅  Whisper Transcritor → http://127.0.0.1:7860")

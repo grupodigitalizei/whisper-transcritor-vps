@@ -756,11 +756,24 @@
       <button class="vtab active" id="vtab-text" role="tab" aria-selected="true"  onclick="switchViewerTab('text')">Texto</button>
       <button class="vtab"        id="vtab-ts"   role="tab" aria-selected="false" onclick="switchViewerTab('ts')">Timestamps</button>
       <button class="vtab"        id="vtab-srt"  role="tab" aria-selected="false" onclick="switchViewerTab('srt')">SRT</button>
+      <button class="vtab"        id="vtab-gaps" role="tab" aria-selected="false" onclick="switchViewerTab('gaps')">🫁 Respiros</button>
     </div>
 
-    <div class="viewer-body">
+    <div class="viewer-body" style="display:flex;flex-direction:column;">
       <textarea class="viewer-textarea" id="viewer-text" readonly
-        placeholder="Carregando..."></textarea>
+        placeholder="Carregando..." style="flex:1;"></textarea>
+      
+      <div id="gaps-panel" style="display:none; flex-direction:column; gap:10px; flex:1;">
+        <div style="display:flex;align-items:center;gap:10px">
+          <label style="font-size:13px;font-weight:600;color:var(--slate-700)">Silêncio mínimo:</label>
+          <input type="number" id="gaps-min-sec" value="1.0" min="0.1" step="0.1" 
+                 style="width:70px;padding:4px 8px;border-radius:6px;border:1px solid var(--slate-300);font-size:13px;background:var(--white)"
+                 onchange="loadGaps(_viewerFile.file)">
+          <span style="font-size:12px;color:var(--slate-500)">segundos</span>
+          <span id="gaps-count" style="margin-left:auto;font-size:12px;color:var(--blue);font-weight:600"></span>
+        </div>
+        <div id="gaps-list" style="flex:1;min-height:300px;overflow-y:auto;background:var(--slate-50);border:1.5px solid var(--slate-200);border-radius:var(--r-md);padding:14px;"></div>
+      </div>
     </div>
 
     <div class="viewer-dl-row">
@@ -1485,10 +1498,21 @@ function handleViewerOverlayClick(e) {
 }
 
 function switchViewerTab(tab) {
-  const map = { text: 'text', ts: 'timestamped', srt: 'srt' };
-  document.getElementById('viewer-text').value = _viewerData[map[tab]] || '';
-  ['text','ts','srt'].forEach(t => {
+  const map = { text: 'text', ts: 'timestamped', srt: 'srt', gaps: '' };
+  
+  const isGaps = tab === 'gaps';
+  document.getElementById('viewer-text').style.display = isGaps ? 'none' : 'block';
+  document.getElementById('gaps-panel').style.display = isGaps ? 'flex' : 'none';
+  
+  if (!isGaps) {
+    document.getElementById('viewer-text').value = _viewerData[map[tab]] || '';
+  } else {
+    if (_viewerFile) loadGaps(_viewerFile.file);
+  }
+
+  ['text','ts','srt','gaps'].forEach(t => {
     const el = document.getElementById('vtab-' + t);
+    if (!el) return;
     el.classList.toggle('active', t === tab);
     el.setAttribute('aria-selected', t === tab);
   });
@@ -1530,6 +1554,37 @@ document.body.addEventListener('dragover', e => {
 //  BOOT
 // ═══════════════════════════════════════════════════════════════
 init();
+    function loadGaps(filename) {
+        if (!filename) return;
+        const minSec = parseFloat(document.getElementById('gaps-min-sec')?.value || 1.0);
+        const listEl = document.getElementById('gaps-list');
+        const countEl = document.getElementById('gaps-count');
+        if (!listEl) return;
+        listEl.innerHTML = '<p style="color:var(--slate-500);font-size:13px">Carregando...</p>';
+        fetch(`/api/gaps/${encodeURIComponent(filename)}?min_gap=${minSec}`)
+            .then(r => r.json())
+            .then(data => {
+                countEl.textContent = data.total_gaps + ' respiro(s) encontrado(s)';
+                if (!data.gaps || data.gaps.length === 0) {
+                    listEl.innerHTML = '<p style="color:var(--slate-500);font-size:13px">Nenhum respiro ≥ ' + minSec + 's encontrado.</p>';
+                    return;
+                }
+                listEl.innerHTML = data.gaps.map((g, i) => `
+                    <div style="background:var(--white);border:1px solid var(--slate-200);border-radius:8px;padding:12px;margin-bottom:8px;text-align:left;">
+                        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+                            <span style="background:var(--slate-100);color:var(--slate-700);padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600">#${i+1}</span>
+                            <span style="color:var(--slate-900);font-size:13px;font-weight:600">${g.start_fmt} → ${g.end_fmt}</span>
+                            <span style="background:#ff6b6b22;color:#ff6b6b;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:700;margin-left:auto">${g.duration}s</span>
+                        </div>
+                        <div style="font-size:12px;line-height:1.5;color:var(--slate-500);margin-top:6px">
+                            <span style="color:var(--slate-400)">...${g.before}</span>
+                            <span style="color:var(--blue);margin:0 6px">【silêncio】</span>
+                            <span style="color:var(--slate-400)">${g.after}...</span>
+                        </div>
+                    </div>`).join('');
+            })
+            .catch(() => { listEl.innerHTML = '<p style="color:#ff6b6b">Erro ao carregar respiros.</p>'; });
+    }
 </script>
 </body>
 </html>
