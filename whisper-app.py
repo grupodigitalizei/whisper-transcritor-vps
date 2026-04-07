@@ -3,6 +3,11 @@
 from __future__ import annotations
 import os, json, shutil, threading, uuid, datetime, re, zipfile
 import whisper
+try:
+    import yt_dlp
+    YT_DLP_OK = True
+except ImportError:
+    YT_DLP_OK = False
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form, BackgroundTasks
 from fastapi.responses import HTMLResponse, FileResponse
 import uvicorn
@@ -436,6 +441,55 @@ async def api_gaps(filename: str, min_gap: float = 1.0):
         "gaps": gaps,
         "full_text": out_text
     }
+
+@app.post("/api/transcribe-url")
+async def api_transcribe_url(
+    background_tasks: BackgroundTasks,
+    url: str = Form(...),
+    model: str = Form("turbo"),
+    language: str = Form("pt"),
+    task: str = Form("transcribe"),
+    filter_fillers: str = Form("false"),
+):
+    if not YT_DLP_OK:
+        raise HTTPException(400, "yt-dlp não instalado. Execute: pip install yt-dlp")
+
+    task_id = str(uuid.uuid4())
+    safe_name = re.sub(r'[^\w.-]', '_', url.split('/')[-1] or 'video')[:50] or 'video'
+    original_name = f"{safe_name}.mp3"
+    filename = f"{task_id[:8]}_{original_name}"
+    upload_path = os.path.join(UPLOAD_DIR, filename)
+
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'outtmpl': upload_path.replace('.mp3', '.%(ext)s'),
+        'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3'}],
+        'quiet': True,
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+    except Exception as e:
+        raise HTTPException(400, f"Erro ao baixar URL: {e}")
+
+    actual_path = upload_path if os.path.exists(upload_path) else upload_path.replace('.mp3', '') + '.mp3'
+    if not os.path.exists(actual_path):
+        for f in os.listdir(UPLOAD_DIR):
+            if task_id[:8] in f:
+                actual_path = os.path.join(UPLOAD_DIR, f)
+                filename = f
+                break
+
+    _set_task(task_id, status="queued", progress=0, name=original_name, filename=filename)
+    _save_to_history(filename, {}, model, status="queued", task_id=task_id, original_name=_result_base(original_name))
+
+    t = threading.Thread(
+        target=_run_transcription,
+        args=(task_id, actual_path, filename, model, language, task, filter_fillers == "true"),
+        daemon=True,
+    )
+    t.start()
+    return {"task_id": task_id, "filename": filename}
 
 # ── Entry point ────────────────────────────────────────────────
 if __name__ == "__main__":

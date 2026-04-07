@@ -711,13 +711,13 @@
                 </label>
               </div>
 
-              <div class="toggle-row" style="opacity:.5">
+              <div class="toggle-row">
                 <div class="toggle-info">
                   <div class="toggle-label">Identificar falantes</div>
-                  <div class="toggle-sub">Em desenvolvimento — requer pyannote.audio</div>
+                  <div class="toggle-sub">Identificar falantes por voz (pyannote.audio)</div>
                 </div>
-                <label class="switch" aria-label="Identificar falantes (indisponível)">
-                  <input type="checkbox" disabled />
+                <label class="switch" aria-label="Identificar falantes">
+                  <input type="checkbox" id="speaker-toggle" />
                   <span class="switch-track"></span>
                   <span class="switch-thumb"></span>
                 </label>
@@ -1273,7 +1273,15 @@ async function startTranscription() {
   const activeTab = document.querySelector('.seg-tab[aria-pressed="true"]')?.id?.replace('tab-','') || 'file';
 
   if (activeTab === 'url') {
-    showToast('Transcrição por URL requer yt-dlp — em desenvolvimento.', 'error');
+    const model         = document.getElementById('mode-select').value;
+    const language      = document.getElementById('lang-select').value;
+    const taskType      = document.getElementById('task-select').value;
+    const filterFillers = document.getElementById('filter-toggle').checked;
+
+    const urlVal = document.getElementById('url-input')?.value?.trim();
+    if (!urlVal) { showToast('Cole uma URL do YouTube válida.', 'error'); return; }
+    closeModal();
+    await sendUrl(urlVal, model, language, taskType, filterFillers);
     return;
   }
 
@@ -1585,6 +1593,24 @@ init();
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(a.href);
+    }
+
+    async function sendUrl(url, model, language, taskType, filterFillers) {
+        showToast('Baixando e transcrevendo URL...', '');
+        try {
+            const fd = new FormData();
+            fd.append('url',            url);
+            fd.append('model',          model);
+            fd.append('language',       language);
+            fd.append('task',           taskType);
+            fd.append('filter_fillers', filterFillers ? 'true' : 'false');
+            const r = await fetch('/api/transcribe-url', { method: 'POST', body: fd });
+            const data = await r.json();
+            if (!r.ok) { showToast(data.detail || 'Erro ao processar URL.', 'error'); return; }
+            showToast('URL enviada para transcrição!', 'success');
+            document.getElementById('url-input').value = '';
+            setTimeout(loadHistory, 1500);
+        } catch(e) { showToast('Erro: ' + e.message, 'error'); }
     }
 </script>
 </body>
