@@ -152,14 +152,15 @@ def _load_history() -> list:
 
 def _save_to_history(filename: str, result: dict, model_name: str,
                      status: str = "done", error: str | None = None,
-                     task_id: str | None = None):
+                     task_id: str | None = None, original_name: str | None = None):
     history = _load_history()
     # Preserve original date if entry already exists
     existing = next((h for h in history if h.get("file") == filename), {})
+    name_to_use = original_name or existing.get("name") or _result_base(filename)
     entry = {
         "id":           filename,
         "file":         filename,
-        "name":         _result_base(filename),
+        "name":         name_to_use,
         "lang":         result.get("lang", "?") if result else "?",
         "duration":     result.get("duration", "?") if result else "—",
         "duration_secs":result.get("duration_secs", 0) if result else 0,
@@ -273,18 +274,19 @@ async def api_transcribe(
     task:            str        = Form("transcribe"),
     filter_fillers:  str        = Form("false"),
 ):
-    filename = file.filename or f"audio_{uuid.uuid4().hex[:8]}.mp3"
+    original_name = file.filename or f"audio_{uuid.uuid4().hex[:8]}.mp3"
     task_id  = str(uuid.uuid4())
+    filename = f"{task_id[:8]}_{original_name}"
 
-    upload_path = os.path.join(UPLOAD_DIR, f"{task_id}_{filename}")
+    upload_path = os.path.join(UPLOAD_DIR, filename)
     with open(upload_path, "wb") as f:
         f.write(await file.read())
 
     _set_task(task_id, status="queued", progress=0,
-              name=filename, filename=filename)
+              name=original_name, filename=filename)
 
     # Register immediately in history so it survives refresh
-    _save_to_history(filename, {}, model, status="queued", task_id=task_id)
+    _save_to_history(filename, {}, model, status="queued", task_id=task_id, original_name=_result_base(original_name))
 
     t = threading.Thread(
         target=_run_transcription,
