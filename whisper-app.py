@@ -366,7 +366,7 @@ async def api_delete(filename: str):
 
 @app.get("/api/gaps/{filename}")
 async def api_gaps(filename: str, min_gap: float = 1.0):
-    """Detecta silêncios/respiros entre segmentos de fala."""
+    """Detecta silêncios/respiros entre segmentos de fala e gera texto intercalado."""
     base = _result_base(filename)
     json_path = os.path.join(RESULTS_DIR, base, f"{base}.json")
     if not os.path.exists(json_path):
@@ -375,22 +375,44 @@ async def api_gaps(filename: str, min_gap: float = 1.0):
         data = json.load(f)
     segments = data.get("segments", [])
     gaps = []
-    for i in range(1, len(segments)):
-        prev_end = segments[i-1]["end"]
-        curr_start = segments[i]["start"]
-        duration = round(curr_start - prev_end, 2)
-        if duration >= min_gap:
-            gaps.append({
-                "index": i,
-                "start": round(prev_end, 2),
-                "end": round(curr_start, 2),
-                "duration": duration,
-                "start_fmt": _fmt_ts(prev_end),
-                "end_fmt": _fmt_ts(curr_start),
-                "before": segments[i-1]["text"].strip()[-60:],
-                "after": segments[i]["text"].strip()[:60],
-            })
-    return {"filename": filename, "total_gaps": len(gaps), "min_gap": min_gap, "gaps": gaps}
+    
+    full_text_lines = []
+    
+    for i, seg in enumerate(segments):
+        start_fmt = _fmt_ts(seg["start"])
+        end_fmt = _fmt_ts(seg["end"])
+        
+        # Checa respiro antes de adicionar o segmento atual
+        if i > 0:
+            prev_end = segments[i-1]["end"]
+            curr_start = seg["start"]
+            duration = round(curr_start - prev_end, 2)
+            if duration >= min_gap:
+                gaps.append({
+                    "index": i,
+                    "start": round(prev_end, 2),
+                    "end": round(curr_start, 2),
+                    "duration": duration,
+                    "start_fmt": _fmt_ts(prev_end),
+                    "end_fmt": _fmt_ts(curr_start),
+                    "before": segments[i-1]["text"].strip()[-60:],
+                    "after": segments[i]["text"].strip()[:60],
+                })
+                # Insere linha de respiro
+                full_text_lines.append(f"{_fmt_ts(prev_end)} → {_fmt_ts(curr_start)}【silêncio {duration}s】")
+        
+        # Insere linha de fala
+        full_text_lines.append(f"{start_fmt} → {end_fmt}\n{seg['text'].strip()}")
+
+    out_text = "\n\n".join(full_text_lines)
+    
+    return {
+        "filename": filename, 
+        "total_gaps": len(gaps), 
+        "min_gap": min_gap, 
+        "gaps": gaps,
+        "full_text": out_text
+    }
 
 # ── Entry point ────────────────────────────────────────────────
 if __name__ == "__main__":

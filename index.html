@@ -764,15 +764,19 @@
         placeholder="Carregando..." style="flex:1;"></textarea>
       
       <div id="gaps-panel" style="display:none; flex-direction:column; gap:10px; flex:1;">
-        <div style="display:flex;align-items:center;gap:10px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
           <label style="font-size:13px;font-weight:600;color:var(--slate-700)">Silêncio mínimo:</label>
           <input type="number" id="gaps-min-sec" value="1.0" min="0.1" step="0.1" 
                  style="width:70px;padding:4px 8px;border-radius:6px;border:1px solid var(--slate-300);font-size:13px;background:var(--white)"
                  onchange="loadGaps(_viewerFile.file)">
           <span style="font-size:12px;color:var(--slate-500)">segundos</span>
           <span id="gaps-count" style="margin-left:auto;font-size:12px;color:var(--blue);font-weight:600"></span>
+          <button class="btn btn-primary" style="padding:6px 12px;font-size:12px;margin-left:10px" onclick="downloadGapsTxt()">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Exportar TXT
+          </button>
         </div>
-        <div id="gaps-list" style="flex:1;min-height:300px;overflow-y:auto;background:var(--slate-50);border:1.5px solid var(--slate-200);border-radius:var(--r-md);padding:14px;"></div>
+        <textarea class="viewer-textarea" id="gaps-text" readonly placeholder="Carregando..." style="flex:1;min-height:300px;font-family:monospace;white-space:pre-wrap;"></textarea>
       </div>
     </div>
 
@@ -1557,33 +1561,30 @@ init();
     function loadGaps(filename) {
         if (!filename) return;
         const minSec = parseFloat(document.getElementById('gaps-min-sec')?.value || 1.0);
-        const listEl = document.getElementById('gaps-list');
+        const textEl = document.getElementById('gaps-text');
         const countEl = document.getElementById('gaps-count');
-        if (!listEl) return;
-        listEl.innerHTML = '<p style="color:var(--slate-500);font-size:13px">Carregando...</p>';
+        if (!textEl) return;
+        textEl.value = 'Carregando...';
         fetch(`/api/gaps/${encodeURIComponent(filename)}?min_gap=${minSec}`)
             .then(r => r.json())
             .then(data => {
                 countEl.textContent = data.total_gaps + ' respiro(s) encontrado(s)';
-                if (!data.gaps || data.gaps.length === 0) {
-                    listEl.innerHTML = '<p style="color:var(--slate-500);font-size:13px">Nenhum respiro ≥ ' + minSec + 's encontrado.</p>';
-                    return;
-                }
-                listEl.innerHTML = data.gaps.map((g, i) => `
-                    <div style="background:var(--white);border:1px solid var(--slate-200);border-radius:8px;padding:12px;margin-bottom:8px;text-align:left;">
-                        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-                            <span style="background:var(--slate-100);color:var(--slate-700);padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600">#${i+1}</span>
-                            <span style="color:var(--slate-900);font-size:13px;font-weight:600">${g.start_fmt} → ${g.end_fmt}</span>
-                            <span style="background:#ff6b6b22;color:#ff6b6b;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:700;margin-left:auto">${g.duration}s</span>
-                        </div>
-                        <div style="font-size:12px;line-height:1.5;color:var(--slate-500);margin-top:6px">
-                            <span style="color:var(--slate-400)">...${g.before}</span>
-                            <span style="color:var(--blue);margin:0 6px">【silêncio】</span>
-                            <span style="color:var(--slate-400)">${g.after}...</span>
-                        </div>
-                    </div>`).join('');
+                textEl.value = data.full_text || 'Nenhum texto disponível.';
             })
-            .catch(() => { listEl.innerHTML = '<p style="color:#ff6b6b">Erro ao carregar respiros.</p>'; });
+            .catch(() => { textEl.value = 'Erro ao carregar respiros.'; });
+    }
+
+    function downloadGapsTxt() {
+        if (!_viewerFile) return;
+        const text = document.getElementById('gaps-text').value;
+        const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = _viewerFile.name + '_com_respiros.txt';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
     }
 </script>
 </body>
