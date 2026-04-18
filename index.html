@@ -82,6 +82,11 @@
     .btn-primary-lg:hover { background:var(--blue-dk); box-shadow:var(--sh-md); }
     .btn-primary-lg:disabled { opacity:.55; cursor:not-allowed; transform:none; box-shadow:none; }
 
+    .btn-secondary-lg { background:var(--slate-200); color:var(--slate-800); font-size:14px;
+                        letter-spacing:.6px; padding:13px 24px; border-radius:var(--r-md); width:100%;
+                        border:none; transition: background var(--t) var(--ease), color var(--t) var(--ease); }
+    .btn-secondary-lg:hover { background:var(--slate-300); color:var(--slate-900); }
+
     .btn-ghost { background:transparent; color:var(--slate-600); font-size:13px;
                  padding:7px 14px; border-radius:var(--r-sm); border:1.5px solid var(--slate-200); }
     .btn-ghost:hover { background:var(--slate-100); border-color:var(--slate-300); color:var(--slate-800); }
@@ -192,18 +197,14 @@
     .status-badge.done       { background:#DCFCE7; color:#15803D; }
     .status-badge.queued     { background:var(--slate-100); color:var(--slate-500); }
     .status-badge.processing { background:var(--blue-50); color:var(--blue); }
-    .status-badge.failed     { background:#FEE2E2; color:#B91C1C; }
     .status-badge.error      { background:#FEE2E2; color:#B91C1C; cursor:pointer; }
     .status-badge.error:hover{ background:#FECACA; }
-    .status-badge.cancelled  { background:#FEF9C3; color:#854D0E; }
     .status-dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
     .status-badge.done .status-dot       { background:#16A34A; }
     .status-badge.queued .status-dot     { background:var(--slate-400); }
     .status-badge.processing .status-dot { background:var(--blue);
                                            animation:pulse 1.2s ease-in-out infinite; }
-    .status-badge.failed .status-dot     { background:#DC2626; }
     .status-badge.error .status-dot      { background:#DC2626; }
-    .status-badge.cancelled .status-dot  { background:#CA8A04; }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
     .status-spinner { width:22px; height:22px; border:2.5px solid var(--blue-100);
                       border-top-color:var(--blue); border-radius:50%;
@@ -453,8 +454,20 @@
     </div>
   </div>
 
+  <!-- Main Tabs -->
+  <div class="seg-tabs" style="margin-bottom: 24px; max-width: 400px; margin-left: auto; margin-right: auto;" role="tablist">
+    <button id="main-tab-transcriptions" class="seg-tab" aria-pressed="true" onclick="switchMainTab('transcriptions')" role="tab">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right:6px; margin-top:-2px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+      Transcrições
+    </button>
+    <button id="main-tab-media" class="seg-tab" aria-pressed="false" onclick="switchMainTab('media')" role="tab">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right:6px; margin-top:-2px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Biblioteca de Mídia
+    </button>
+  </div>
+
   <!-- Files Card -->
-  <div class="card" role="region" aria-label="Arquivos transcritos">
+  <div class="card" id="card-transcriptions" role="tabpanel" aria-label="Arquivos transcritos">
 
     <!-- Bulk bar -->
     <div class="bulk-bar" id="bulk-bar" role="toolbar" aria-label="Ações em lote" aria-live="polite">
@@ -554,6 +567,45 @@
       </div>
     </div>
   </div>
+
+  <!-- Media Card -->
+  <div class="card" id="card-media" style="display:none;" role="tabpanel" aria-label="Biblioteca de Mídias">
+    <div class="card-header">
+      <div class="card-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Vídeos e Áudios Armazenados
+      </div>
+    </div>
+    
+    <div id="table-wrap-media">
+      <table class="files-table" aria-label="Lista de mídias baixadas">
+        <thead>
+          <tr>
+            <th style="width: 24px"></th>
+            <th class="col-name" scope="col">Nome</th>
+            <th class="col-date" scope="col">Adicionado Em</th>
+            <th class="col-dur" scope="col">Tamanho</th>
+            <th class="col-status" scope="col">Status</th>
+            <th class="col-actions" scope="col"><span class="sr-only">Ações</span></th>
+          </tr>
+        </thead>
+        <tbody id="media-tbody"></tbody>
+      </table>
+
+      <!-- Empty state -->
+      <div class="empty-state" id="empty-media-state" role="status" aria-live="polite">
+        <div class="empty-icon" aria-hidden="true">
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </div>
+        <div class="empty-title">Nenhuma mídia armazenada</div>
+        <div class="empty-sub">Cole uma URL ou faça upload de um arquivo para começar a preencher sua biblioteca local.</div>
+        <button class="btn btn-primary-lg" style="max-width:300px" onclick="switchTab('url'); openModal('file');">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+          Salvar primeiro link
+        </button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- ═══════════════════════════════ UPLOAD MODAL ═══════════════ -->
@@ -619,11 +671,31 @@
 
       <!-- URL tab -->
       <div id="content-url" style="display:none">
-        <label class="field-label" for="url-input">URL do vídeo ou áudio</label>
-        <input id="url-input" type="url" class="select" style="height:40px;padding:0 12px"
+        <label class="field-label" for="url-input">URL do vídeo do YouTube</label>
+        <input id="url-input" type="url" class="select" style="height:40px;padding:0 12px;margin-bottom:12px"
           placeholder="https://youtube.com/watch?v=..." aria-label="URL do vídeo ou áudio" />
-        <p style="font-size:11.5px;color:var(--slate-400);margin-top:6px">
-          ⚠️ Requer <strong>yt-dlp</strong> instalado — em desenvolvimento.
+        
+        <div style="display: flex; gap: 12px; margin-bottom: 6px;">
+            <div style="flex:1">
+                <label class="field-label" for="dl-type-select">Formato (para "Apenas Baixar")</label>
+                <select id="dl-type-select" class="select" aria-label="Formato de Download" onchange="updateQualityOptions()">
+                  <option value="video" selected>Vídeo (.mp4)</option>
+                  <option value="audio">Áudio (.mp3)</option>
+                </select>
+            </div>
+            <div style="flex:1">
+                <label class="field-label" for="dl-quality-select">Qualidade</label>
+                <select id="dl-quality-select" class="select" aria-label="Qualidade de Download">
+                  <option value="best">Melhor (Máxima)</option>
+                  <option value="1080p">1080p</option>
+                  <option value="720p">720p</option>
+                  <option value="480p">480p</option>
+                </select>
+            </div>
+        </div>
+
+        <p style="font-size:11.5px;color:var(--slate-400);margin-top:12px">
+          ⚠️ <strong>Transcrever</strong> sempre extrai áudio silenciosamente. Requer <strong>yt-dlp e ffmpeg</strong>.
         </p>
       </div>
 
@@ -711,17 +783,8 @@
                 </label>
               </div>
 
-              <div class="toggle-row" style="opacity:.5">
-                <div class="toggle-info">
-                  <div class="toggle-label">Identificar falantes</div>
-                  <div class="toggle-sub">Em desenvolvimento — requer pyannote.audio</div>
-                </div>
-                <label class="switch" aria-label="Identificar falantes (indisponível)">
-                  <input type="checkbox" disabled />
-                  <span class="switch-track"></span>
-                  <span class="switch-thumb"></span>
-                </label>
-              </div>
+              <!-- Toggle "Identificar falantes" removido: backend não implementa diarização (pyannote.audio).
+                   Re-adicionar quando integrarmos a lib e enviarmos o flag em /api/transcribe. -->
 
             </div>
           </div>
@@ -731,9 +794,14 @@
     </div>
 
     <div class="modal-foot">
-      <button class="btn btn-primary-lg" id="transcribe-btn" onclick="startTranscription()">
-        TRANSCREVER
-      </button>
+      <div style="display: flex; gap: 10px; width: 100%;" id="modal-actions-container">
+        <button class="btn btn-secondary-lg" id="download-only-btn" style="flex: 1; display: none;" onclick="startDownloadOnly()">
+          APENAS BAIXAR
+        </button>
+        <button class="btn btn-primary-lg" id="transcribe-btn" style="flex: 1;" onclick="startTranscription()">
+          TRANSCREVER
+        </button>
+      </div>
       <p class="tos">Processamento 100% local · Seus arquivos não saem do seu computador</p>
     </div>
 
@@ -756,11 +824,28 @@
       <button class="vtab active" id="vtab-text" role="tab" aria-selected="true"  onclick="switchViewerTab('text')">Texto</button>
       <button class="vtab"        id="vtab-ts"   role="tab" aria-selected="false" onclick="switchViewerTab('ts')">Timestamps</button>
       <button class="vtab"        id="vtab-srt"  role="tab" aria-selected="false" onclick="switchViewerTab('srt')">SRT</button>
+      <button class="vtab"        id="vtab-gaps" role="tab" aria-selected="false" onclick="switchViewerTab('gaps')">🫁 Respiros</button>
     </div>
 
-    <div class="viewer-body">
+    <div class="viewer-body" style="display:flex;flex-direction:column;">
       <textarea class="viewer-textarea" id="viewer-text" readonly
-        placeholder="Carregando..."></textarea>
+        placeholder="Carregando..." style="flex:1;"></textarea>
+      
+      <div id="gaps-panel" style="display:none; flex-direction:column; gap:10px; flex:1;">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <label style="font-size:13px;font-weight:600;color:var(--slate-700)">Silêncio mínimo:</label>
+          <input type="number" id="gaps-min-sec" value="1.0" min="0.1" step="0.1" 
+                 style="width:70px;padding:4px 8px;border-radius:6px;border:1px solid var(--slate-300);font-size:13px;background:var(--white)"
+                 onchange="loadGaps(_viewerFile.file)">
+          <span style="font-size:12px;color:var(--slate-500)">segundos</span>
+          <span id="gaps-count" style="margin-left:auto;font-size:12px;color:var(--blue);font-weight:600"></span>
+          <button class="btn btn-primary" style="padding:6px 12px;font-size:12px;margin-left:10px" onclick="downloadGapsTxt()">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Exportar TXT
+          </button>
+        </div>
+        <textarea class="viewer-textarea" id="gaps-text" readonly placeholder="Carregando..." style="flex:1;min-height:300px;font-family:monospace;white-space:pre-wrap;"></textarea>
+      </div>
     </div>
 
     <div class="viewer-dl-row">
@@ -788,7 +873,6 @@ let selected = new Set();
 let pendingFiles = []; // File objects queued from input
 let _viewerFile  = null;
 let _viewerData  = {};
-let _pollInterval = null;
 let _autoSyncInterval = null;
 let _syncFingerprint  = '';
 
@@ -899,17 +983,32 @@ async function loadStats() {
 // ═══════════════════════════════════════════════════════════════
 //  RENDER
 // ═══════════════════════════════════════════════════════════════
+// Escapes for safe insertion into HTML attribute values quoted with double OR single quotes.
+// Critical: filenames may contain ' or " — without escaping these, onclick="..(' + name + ')..."
+// breaks the attribute and allows JS injection.
 function esc(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(s)
+    .replace(/&/g,  '&amp;')
+    .replace(/</g,  '&lt;')
+    .replace(/>/g,  '&gt;')
+    .replace(/"/g,  '&quot;')
+    .replace(/'/g,  '&#39;')
+    .replace(/`/g,  '&#96;');
 }
 
+// Escapes a string for safe insertion as a JS string LITERAL inside an HTML attribute
+// (e.g. onclick="foo('${jsAttr(name)}')"). Combines JS string escaping with HTML escaping.
+function jsAttr(s) {
+  return esc(String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
+}
+
+// Status types emitidos pelo backend: queued | processing | done | error.
+// (Os antigos 'failed' e 'cancelled' eram código morto — removidos.)
 const STATUS_MAP = {
   done:       { label:'Concluído',   cls:'done'       },
   processing: { label:'Processando', cls:'processing'  },
   queued:     { label:'Aguardando',  cls:'queued'      },
-  failed:     { label:'Falhou',      cls:'failed'      },
   error:      { label:'Erro',        cls:'error'       },
-  cancelled:  { label:'Cancelado',   cls:'cancelled'   },
 };
 
 function renderStatus(status) {
@@ -941,7 +1040,7 @@ function renderFiles(data) {
       <td class="col-check">
         <input type="checkbox" class="checkbox" aria-label="Selecionar ${esc(f.name)}"
           ${selected.has(f.id)?'checked':''}
-          onclick="event.stopPropagation()" onchange="toggleSelect('${esc(f.id)}',this)" />
+          onclick="event.stopPropagation()" onchange="toggleSelect('${jsAttr(f.id)}',this)" />
       </td>
       <td><div class="file-name">${esc(f.name)}</div></td>
       <td class="col-date"><div class="file-date">${esc(f.date)}</div></td>
@@ -951,38 +1050,38 @@ function renderFiles(data) {
       <td class="col-actions">
         <div class="action-wrap">
           <button class="dots-btn" aria-label="Ações — ${esc(f.name)}" aria-haspopup="true" aria-expanded="false"
-            onclick="toggleDD('${esc(f.id)}',this,event)">
+            onclick="toggleDD('${jsAttr(f.id)}',this,event)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="19" r="1" fill="currentColor"/></svg>
           </button>
           <div class="dropdown" id="dd-${esc(f.id)}" role="menu">
             ${f.status === 'error' ? `
-            <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="viewError('${esc(f.id)}')">
+            <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="viewError('${jsAttr(f.id)}')">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
               Ver log de erro
             </div>
             <div class="dd-sep"></div>` : `
-            <div class="dd-item" role="menuitem" tabindex="-1" onclick="viewFile('${esc(f.id)}')">
+            <div class="dd-item" role="menuitem" tabindex="-1" onclick="viewFile('${jsAttr(f.id)}')">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
               Ver transcrição
             </div>`}
-            <div class="dd-item" role="menuitem" tabindex="-1" onclick="dlFile('${esc(f.id)}','txt')">
+            <div class="dd-item" role="menuitem" tabindex="-1" onclick="dlFile('${jsAttr(f.id)}','txt')">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Baixar TXT
             </div>
-            <div class="dd-item" role="menuitem" tabindex="-1" onclick="dlFile('${esc(f.id)}','srt')">
+            <div class="dd-item" role="menuitem" tabindex="-1" onclick="dlFile('${jsAttr(f.id)}','srt')">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
               Baixar SRT (legendas)
             </div>
-            <div class="dd-item" role="menuitem" tabindex="-1" onclick="dlFile('${esc(f.id)}','timestamps')">
+            <div class="dd-item" role="menuitem" tabindex="-1" onclick="dlFile('${jsAttr(f.id)}','timestamps')">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
               Baixar Timestamps
             </div>
-            <div class="dd-item" role="menuitem" tabindex="-1" onclick="dlFile('${esc(f.id)}','json')">
+            <div class="dd-item" role="menuitem" tabindex="-1" onclick="dlFile('${jsAttr(f.id)}','json')">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
               Baixar JSON
             </div>
             <div class="dd-sep"></div>
-            <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="deleteFile('${esc(f.id)}')">
+            <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="deleteFile('${jsAttr(f.id)}')">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
               Excluir arquivo
             </div>
@@ -1130,13 +1229,14 @@ async function deleteFile(id) {
   if (!f) return;
   if (!confirm(`Excluir "${f.name}"?`)) return;
   try {
-    await fetch(`/api/delete/${encodeURIComponent(f.file)}`, { method: 'DELETE' });
+    const res = await fetch(`/api/delete/${encodeURIComponent(f.file)}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('delete failed');
     files.splice(files.findIndex(x => x.id === id), 1);
     selected.delete(id);
     renderFiles(files);
     syncBulkBar();
     await loadStats();
-    showToast('Arquivo excluído.', 'error');
+    showToast('Arquivo excluído.', 'success');
   } catch {
     showToast('Erro ao excluir.', 'error');
   }
@@ -1163,19 +1263,28 @@ function downloadAllZip() {
 
 async function deleteSelected() {
   if (!selected.size) return;
-  if (!confirm(`Excluir ${selected.size} arquivo(s)?`)) return;
+  const count = selected.size;
+  if (!confirm(`Excluir ${count} arquivo(s)?`)) return;
+  let failed = 0;
   for (const id of selected) {
     const f = files.find(x => x.id === id);
     if (f) {
-      await fetch(`/api/delete/${encodeURIComponent(f.file)}`, { method: 'DELETE' });
-      files.splice(files.findIndex(x => x.id === id), 1);
+      try {
+        const res = await fetch(`/api/delete/${encodeURIComponent(f.file)}`, { method: 'DELETE' });
+        if (!res.ok) { failed++; continue; }
+        files.splice(files.findIndex(x => x.id === id), 1);
+      } catch { failed++; }
     }
   }
   selected.clear();
   renderFiles(files);
   syncBulkBar();
   await loadStats();
-  showToast('Arquivos excluídos.', 'error');
+  if (failed === 0) {
+    showToast(`${count} arquivo(s) excluído(s).`, 'success');
+  } else {
+    showToast(`${count - failed} excluído(s), ${failed} falha(s).`, 'error');
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1204,6 +1313,34 @@ function switchTab(tab) {
     document.getElementById('tab-' + t).setAttribute('aria-pressed', pressed);
     document.getElementById('content-' + t).style.display = pressed ? '' : 'none';
   });
+
+  const dlBtn = document.getElementById('download-only-btn');
+  if (dlBtn) dlBtn.style.display = tab === 'url' ? 'block' : 'none';
+
+  // The 'rec' tab has its own INICIAR/PARAR buttons; the footer "TRANSCREVER"
+  // would be a no-op there (it just shows a toast). Hide it to avoid confusion.
+  const txBtn = document.getElementById('transcribe-btn');
+  if (txBtn) txBtn.style.display = tab === 'rec' ? 'none' : 'block';
+}
+
+function switchMainTab(tab) {
+  ['transcriptions', 'media'].forEach(t => {
+    const pressed = t === tab;
+    document.getElementById('main-tab-' + t).setAttribute('aria-pressed', pressed);
+    document.getElementById('card-' + t).style.display = pressed ? 'block' : 'none';
+  });
+  if (tab === 'media') {
+    loadMedia();
+  }
+}
+
+function formatBytes(bytes, decimals = 1) {
+    if (!+bytes) return '0 Bytes';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1256,7 +1393,15 @@ async function startTranscription() {
   const activeTab = document.querySelector('.seg-tab[aria-pressed="true"]')?.id?.replace('tab-','') || 'file';
 
   if (activeTab === 'url') {
-    showToast('Transcrição por URL requer yt-dlp — em desenvolvimento.', 'error');
+    const model         = document.getElementById('mode-select').value;
+    const language      = document.getElementById('lang-select').value;
+    const taskType      = document.getElementById('task-select').value;
+    const filterFillers = document.getElementById('filter-toggle').checked;
+
+    const urlVal = document.getElementById('url-input')?.value?.trim();
+    if (!urlVal) { showToast('Cole uma URL do YouTube válida.', 'error'); return; }
+    closeModal();
+    await sendUrl(urlVal, model, language, taskType, filterFillers);
     return;
   }
 
@@ -1296,8 +1441,20 @@ async function sendFile(file, model, language, taskType, filterFillers) {
   showProgress(file.name);
 
   try {
-    const res  = await fetch('/api/transcribe', { method: 'POST', body: fd });
+    const res = await fetch('/api/transcribe', { method: 'POST', body: fd });
+    if (!res.ok) {
+      let msg = '';
+      try { const errData = await res.json(); msg = errData.detail || ''; } catch {}
+      hideProgress();
+      showToast(`Erro ao enviar "${file.name}"${msg ? ': ' + msg : ''}.`, 'error');
+      return;
+    }
     const data = await res.json();
+    if (!data.task_id) {
+      hideProgress();
+      showToast(`Erro ao enviar "${file.name}": resposta inválida do servidor.`, 'error');
+      return;
+    }
     // Reload history immediately so item appears in table as "Aguardando"
     await loadHistory();
     pollProgressForRow(data.task_id, data.filename || file.name);
@@ -1327,9 +1484,6 @@ function setProgressPct(pct) {
           ?.setAttribute('aria-valuenow', Math.floor(pct));
 }
 
-// Legacy alias kept for recording tab
-function pollProgress(task_id, filename) { pollProgressForRow(task_id, filename); }
-
 // Per-row polling — updates the table row live without full re-render
 const _activePolls = {}; // task_id → intervalId
 
@@ -1348,7 +1502,7 @@ function pollProgressForRow(task_id, filename) {
       const name = data.name || filename;
       setProgressPct(pct);
       document.getElementById('progress-name').textContent =
-        `Transcrevendo "${name}"… ${pct}%`;
+        `Transcrevendo "${name}"… ${Math.floor(pct)}%`;
 
       // Update row status badge live
       _updateRowStatus(filename, data.status, pct);
@@ -1385,7 +1539,7 @@ function _updateRowStatus(filename, status, pct) {
   const s = STATUS_MAP[status] || STATUS_MAP.queued;
   badge.className = `status-badge ${s.cls}`;
   badge.setAttribute('aria-label', s.label);
-  badge.innerHTML = `<span class="status-dot"></span>${s.label}${status === 'processing' ? ` <small style="opacity:.7">${pct}%</small>` : ''}`;
+  badge.innerHTML = `<span class="status-dot"></span>${s.label}${status === 'processing' ? ` <small style="opacity:.7">${Math.floor(pct)}%</small>` : ''}`;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1485,10 +1639,21 @@ function handleViewerOverlayClick(e) {
 }
 
 function switchViewerTab(tab) {
-  const map = { text: 'text', ts: 'timestamped', srt: 'srt' };
-  document.getElementById('viewer-text').value = _viewerData[map[tab]] || '';
-  ['text','ts','srt'].forEach(t => {
+  const map = { text: 'text', ts: 'timestamped', srt: 'srt', gaps: '' };
+  
+  const isGaps = tab === 'gaps';
+  document.getElementById('viewer-text').style.display = isGaps ? 'none' : 'block';
+  document.getElementById('gaps-panel').style.display = isGaps ? 'flex' : 'none';
+  
+  if (!isGaps) {
+    document.getElementById('viewer-text').value = _viewerData[map[tab]] || '';
+  } else {
+    if (_viewerFile) loadGaps(_viewerFile.file);
+  }
+
+  ['text','ts','srt','gaps'].forEach(t => {
     const el = document.getElementById('vtab-' + t);
+    if (!el) return;
     el.classList.toggle('active', t === tab);
     el.setAttribute('aria-selected', t === tab);
   });
@@ -1530,6 +1695,181 @@ document.body.addEventListener('dragover', e => {
 //  BOOT
 // ═══════════════════════════════════════════════════════════════
 init();
+    function loadGaps(filename) {
+        if (!filename) return;
+        const minSec = parseFloat(document.getElementById('gaps-min-sec')?.value || 1.0);
+        const textEl = document.getElementById('gaps-text');
+        const countEl = document.getElementById('gaps-count');
+        if (!textEl) return;
+        textEl.value = 'Carregando...';
+        fetch(`/api/gaps/${encodeURIComponent(filename)}?min_gap=${minSec}`)
+            .then(r => r.json())
+            .then(data => {
+                countEl.textContent = data.total_gaps + ' respiro(s) encontrado(s)';
+                textEl.value = data.full_text || 'Nenhum texto disponível.';
+            })
+            .catch(() => { textEl.value = 'Erro ao carregar respiros.'; });
+    }
+
+    function downloadGapsTxt() {
+        if (!_viewerFile) return;
+        const text = document.getElementById('gaps-text').value;
+        const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = _viewerFile.name + '_com_respiros.txt';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+    }
+
+    async function sendUrl(url, model, language, taskType, filterFillers) {
+        showToast('Baixando e transcrevendo URL...', '');
+        try {
+            const fd = new FormData();
+            fd.append('url',            url);
+            fd.append('model',          model);
+            fd.append('language',       language);
+            fd.append('task',           taskType);
+            fd.append('filter_fillers', filterFillers ? 'true' : 'false');
+            const r = await fetch('/api/transcribe-url', { method: 'POST', body: fd });
+            const data = await r.json();
+            if (!r.ok) { showToast(data.detail || 'Erro ao processar URL.', 'error'); return; }
+            showToast('URL enviada para transcrição!', 'success');
+            document.getElementById('url-input').value = '';
+            setTimeout(loadHistory, 1500);
+        } catch(e) { showToast('Erro: ' + e.message, 'error'); }
+    }
+
+    async function loadMedia() {
+      try {
+        const res = await fetch('/api/media-history');
+        const media = await res.json();
+        renderMedia(media);
+      } catch { /* ignore */ }
+    }
+
+    function renderMedia(data) {
+      const tbody = document.getElementById('media-tbody');
+      const empty = document.getElementById('empty-media-state');
+      const table = tbody.closest('table');
+      tbody.innerHTML = '';
+
+      if (!data.length) {
+        table.style.display = 'none';
+        empty.style.display = 'flex';
+        return;
+      }
+      table.style.display = '';
+      empty.style.display = 'none';
+
+      data.forEach(f => {
+        const tr = document.createElement('tr');
+        tr.dataset.id = f.file;
+        tr.innerHTML = `
+          <td></td>
+          <td><div class="file-name">${esc(f.name)}</div></td>
+          <td class="col-date"><div class="file-date">${esc(f.date)}</div></td>
+          <td class="col-dur"><div class="file-dur">${formatBytes(f.size_bytes)}</div></td>
+          <td class="col-status">${renderStatus(f.status)}</td>
+          <td class="col-actions">
+            <div class="action-wrap">
+              <button class="dots-btn" aria-label="Ações" onclick="toggleDD('media-${jsAttr(f.id)}',this,event)">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="19" r="1" fill="currentColor"/></svg>
+              </button>
+              <div class="dropdown" id="dd-media-${esc(f.id)}" role="menu">
+                <div class="dd-item" role="menuitem" tabindex="-1" onclick="dlMediaFile('${jsAttr(f.file)}')">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  Baixar Original para o PC
+                </div>
+                <div class="dd-sep"></div>
+                <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="deleteMediaFile('${jsAttr(f.file)}')">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+                  Excluir Mídia Hospedada
+                </div>
+              </div>
+            </div>
+          </td>`;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function dlMediaFile(filename) {
+      window.location = `/api/download-media/${encodeURIComponent(filename)}`;
+    }
+
+    async function deleteMediaFile(filename) {
+      if (!confirm('Excluir arquivo físico original permanentemente do cofre local? Essa ação cancela sua re-utilização e libera espaço em HD.')) return;
+      try {
+        await fetch(`/api/delete-media/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+        showToast('Mídia original excluída', 'success');
+        loadMedia();
+      } catch (e) {
+        showToast('Erro ao remover', 'error');
+      }
+    }
+
+    function updateQualityOptions() {
+        const typeSelect = document.getElementById('dl-type-select').value;
+        const qualSelect = document.getElementById('dl-quality-select');
+        qualSelect.innerHTML = '';
+        if (typeSelect === 'video') {
+            qualSelect.innerHTML = `
+              <option value="best">Melhor (Máxima)</option>
+              <option value="1080p">1080p</option>
+              <option value="720p">720p</option>
+              <option value="480p">480p</option>
+            `;
+        } else {
+            qualSelect.innerHTML = `
+              <option value="best">Melhor Original</option>
+              <option value="worst">Menor Espaço</option>
+            `;
+        }
+    }
+
+    // Track active media-refresh intervals so concurrent downloads don't stack timers.
+    const _mediaRefreshIntervals = new Set();
+    function _stopMediaRefresh(id) {
+        clearInterval(id);
+        _mediaRefreshIntervals.delete(id);
+    }
+
+    async function startDownloadOnly() {
+        const urlVal = document.getElementById('url-input')?.value?.trim();
+        const mediaType = document.getElementById('dl-type-select').value;
+        const quality = document.getElementById('dl-quality-select').value;
+
+        if (!urlVal) { showToast('Cole uma URL do YouTube válida.', 'error'); return; }
+        closeModal();
+        showToast(`Baixando apenas o ${mediaType === 'video' ? 'vídeo' : 'áudio'}...`, '');
+
+        try {
+            const fd = new FormData();
+            fd.append('url', urlVal);
+            fd.append('media_type', mediaType);
+            fd.append('quality', quality);
+
+            const r = await fetch('/api/yt-download-only', { method: 'POST', body: fd });
+            let data = {};
+            try { data = await r.json(); } catch {}
+            if (!r.ok) { showToast(data.detail || 'Erro ao agendar URL.', 'error'); return; }
+            showToast('Mídia adicionada na fila de downloads!', 'success');
+            document.getElementById('url-input').value = '';
+            switchMainTab('media');
+            // NOTE: this is a download-only task — its row lives in the Media tbody,
+            // not in the Transcriptions tbody. We intentionally do NOT call
+            // pollProgressForRow here (it would try to update a non-existent row in
+            // the transcriptions table). Progress is reflected via media list refresh.
+            setTimeout(loadMedia, 1500);
+
+            const intervalId = setInterval(loadMedia, 5000);
+            _mediaRefreshIntervals.add(intervalId);
+            // Auto-stop the refresh after 2 minutes (download usually completes by then).
+            setTimeout(() => _stopMediaRefresh(intervalId), 120000);
+        } catch(e) { showToast('Erro: ' + e.message, 'error'); }
+    }
 </script>
 </body>
 </html>

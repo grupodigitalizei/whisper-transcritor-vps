@@ -83,18 +83,43 @@ whisper-transcritor/
 
 ## 🔌 API REST
 
+### Histórico e estatísticas
+
 | Método | Endpoint | Descrição |
 |--------|----------|-----------|
-| `GET` | `/api/history` | Lista todo o histórico |
+| `GET` | `/api/history` | Lista todo o histórico de transcrições |
 | `GET` | `/api/stats` | Total de arquivos e horas transcritas |
+
+### Transcrição
+
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
 | `POST` | `/api/transcribe` | Envia arquivo para transcrição |
+| `POST` | `/api/transcribe-url` | Baixa de URL (yt-dlp) e transcreve |
 | `GET` | `/api/progress/{task_id}` | Progresso de uma tarefa |
-| `GET` | `/api/result/{filename}` | Texto da transcrição |
-| `GET` | `/api/download/{filename}/{fmt}` | Download (`txt`, `srt`, `timestamps`, `json`) |
-| `GET` | `/api/download-all` | Download de tudo em `.zip` |
-| `DELETE` | `/api/delete/{filename}` | Remove do histórico |
 | `GET` | `/api/active-tasks` | Tarefas ativas em memória |
-| `POST` | `/api/reset-stale` | Marca tarefas interrompidas como erro |
+| `POST` | `/api/reset-stale` | Marca tarefas órfãs após restart como erro |
+
+### Resultados e downloads
+
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| `GET` | `/api/result/{filename}` | Texto da transcrição (todos os formatos) |
+| `GET` | `/api/download/{filename}/{fmt}` | Download de um formato (`txt`, `srt`, `timestamps`, `json`) |
+| `GET` | `/api/download-all` | Download de tudo em `.zip` |
+| `GET` | `/api/gaps/{filename}?min_gap=1.0` | Detecta silêncios/respiros entre segmentos |
+| `DELETE` | `/api/delete/{filename}` | Remove transcrição (histórico + arquivos) |
+
+### Biblioteca de mídia
+
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| `GET` | `/api/media-history` | Lista mídias baixadas/enviadas |
+| `POST` | `/api/yt-download-only` | Baixa apenas (sem transcrever) — `media_type=video|audio`, `quality=best|1080p|...` |
+| `GET` | `/api/download-media/{filename}` | Baixa o arquivo original armazenado |
+| `DELETE` | `/api/delete-media/{filename}` | Remove o arquivo físico do upload |
+
+> **Segurança:** todos os endpoints com `{filename}` validam o nome contra path traversal (`..`, `/`, `\`, etc.). Como o servidor escuta em `127.0.0.1`, não há autenticação — não exponha em rede sem proxy reverso.
 
 ---
 
