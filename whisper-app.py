@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Whisper Transcritor — FastAPI + HTML frontend"""
 from __future__ import annotations
-import os, json, shutil, threading, uuid, datetime, re, zipfile
+import os, json, shutil, threading, uuid, datetime, re, zipfile, time
 import whisper
 try:
     import yt_dlp
@@ -20,6 +20,7 @@ RESULTS_DIR  = os.path.join(DATA_DIR, "results")
 UPLOAD_DIR   = os.path.join(DATA_DIR, "uploads")
 HISTORY_FILE = os.path.join(DATA_DIR, "history.json")
 MEDIA_FILE   = os.path.join(DATA_DIR, "media.json")
+FOLDERS_FILE = os.path.join(DATA_DIR, "folders.json")
 HTML_FILE    = os.path.join(SCRIPT_DIR, "index.html")
 
 for d in (RESULTS_DIR, UPLOAD_DIR):
@@ -31,6 +32,7 @@ _models_lock  = threading.Lock()
 _transcribe_sem = threading.Semaphore(1)  # apenas 1 transcrição por vez
 _history_lock = threading.Lock()           # protege escrita no history.json
 _media_lock   = threading.Lock()           # protege escrita no media.json
+_folders_lock = threading.Lock()           # protege escrita no folders.json
 
 _thread_local = threading.local()
 
@@ -183,7 +185,7 @@ def _save_to_history(filename: str, result: dict, model_name: str,
     # Atomic read-modify-write under a single lock to prevent lost updates
     with _history_lock:
         history = _load_history()
-        # Preserve original date if entry already exists
+        # Preserve original date, folder, and timing fields if entry already exists
         existing = next((h for h in history if h.get("file") == filename), {})
         name_to_use = original_name or existing.get("name") or _result_base(filename)
         entry = {
@@ -200,6 +202,13 @@ def _save_to_history(filename: str, result: dict, model_name: str,
             "error":        error,
             "task_id":      task_id,
             "date":         existing.get("date") or datetime.datetime.now().strftime("%d de %b. de %Y, %H:%M"),
+            # Sortable timestamp + folder, both preserved across updates
+            "queued_at":    existing.get("queued_at") or time.time(),
+            "folder":       existing.get("folder", ""),
+            # Timing fields (filled during transcription by _update_history_status)
+            "started_at":   existing.get("started_at"),
+            "completed_at": existing.get("completed_at"),
+            "processing_secs": existing.get("processing_secs"),
         }
         history = [h for h in history if h.get("file") != filename]
         history.insert(0, entry)
@@ -233,7 +242,9 @@ def _save_media(filename: str, original_name: str, url: str | None = None, is_tr
             "size_bytes": size_bytes,
             "is_transcribed": is_transcribed or existing.get("is_transcribed", False),
             "status": status,
-            "date": existing.get("date") or datetime.datetime.now().strftime("%d de %b. de %Y, %H:%M")
+            "date": existing.get("date") or datetime.datetime.now().strftime("%d de %b. de %Y, %H:%M"),
+            "queued_at": existing.get("queued_at") or time.time(),
+            "folder": existing.get("folder", ""),
         }
 
         media = [m for m in media if m.get("file") != filename]
@@ -274,9 +285,11 @@ def _run_transcription(task_id, file_path, filename, model_name,
                        language, task_type, do_filter):
     _thread_local.task_id = task_id
     with _transcribe_sem:
+        started_at = time.time()
         try:
-            _set_task(task_id, status="processing", progress=10)
-            _update_history_status(filename, "processing", task_id=task_id)
+            _set_task(task_id, status="processing", progress=10, started_at=started_at)
+            _update_history_status(filename, "processing", task_id=task_id,
+                                   started_at=started_at)
 
             model = _load_model(model_name)
             _set_task(task_id, progress=25)
@@ -290,18 +303,31 @@ def _run_transcription(task_id, file_path, filename, model_name,
                     _apply_filler_filter(l) for l in result["timestamped"].split("\n"))
 
             _save_result_files(filename, result)
+            completed_at   = time.time()
+            processing_secs = round(completed_at - started_at, 2)
             _save_to_history(filename, result, model_name,
                              status="done", task_id=task_id)
+            # Patch timing into the just-saved "done" entry
+            _update_history_status(filename, "done",
+                                   started_at=started_at,
+                                   completed_at=completed_at,
+                                   processing_secs=processing_secs)
 
             _set_task(task_id, status="done", progress=100,
                       filename=filename, lang=result["lang"],
-                      duration=result["duration"], words=result["words"])
+                      duration=result["duration"], words=result["words"],
+                      completed_at=completed_at, processing_secs=processing_secs)
             _save_media(filename, _result_base(filename), is_transcribed=True, status="done")
 
         except Exception as exc:
             error_msg = str(exc)
-            _set_task(task_id, status="error", progress=0, error=error_msg)
-            _update_history_status(filename, "error", error=error_msg)
+            completed_at = time.time()
+            processing_secs = round(completed_at - started_at, 2)
+            _set_task(task_id, status="error", progress=0, error=error_msg,
+                      completed_at=completed_at, processing_secs=processing_secs)
+            _update_history_status(filename, "error", error=error_msg,
+                                   completed_at=completed_at,
+                                   processing_secs=processing_secs)
             _save_media(filename, _result_base(filename), is_transcribed=False, status="error")
 
 # ── FastAPI ────────────────────────────────────────────────────
@@ -682,6 +708,301 @@ async def api_yt_download_only(
     task_id = str(uuid.uuid4())
     background_tasks.add_task(_run_download_only, task_id, url, media_type, quality)
     return {"message": "Download_start", "task_id": task_id}
+
+# ── Folders (nested, path-based) ───────────────────────────────
+# Folder paths use '/' as separator, e.g. "Projetos/Cliente X/Q1".
+# Empty string ("") means root (no folder).
+# folders.json stores the canonical list of folder paths (allows empty folders).
+
+_FOLDER_SEG_RE = re.compile(r'^[^/\\\x00]{1,60}$')
+
+def _validate_folder_name(folder: str) -> str:
+    """Validate and canonicalise a folder path.
+    Empty string or None = root (no folder). Otherwise:
+      - Segments separated by single '/'; no leading/trailing/double slash
+      - Each segment: 1-60 chars, no backslash, null byte, or '.' / '..'
+    Raises HTTPException(400) on bad input."""
+    if folder is None:
+        return ""
+    folder = folder.strip().strip("/")
+    if folder == "":
+        return ""
+    # Reject control chars and backslashes globally
+    if "\x00" in folder or "\\" in folder:
+        raise HTTPException(400, "Caminho de pasta contém caracteres inválidos")
+    segments = folder.split("/")
+    for seg in segments:
+        seg = seg.strip()
+        if not seg:
+            raise HTTPException(400, "Caminho de pasta tem segmento vazio (barras duplicadas?)")
+        if seg in (".", ".."):
+            raise HTTPException(400, f"Segmento de pasta inválido: '{seg}'")
+        if not _FOLDER_SEG_RE.match(seg):
+            raise HTTPException(400, f"Segmento de pasta inválido: '{seg}' (máx 60 caracteres, sem /, \\ ou controle)")
+    # Re-join with single slashes (canonical form)
+    return "/".join(s.strip() for s in segments)
+
+def _ancestors_of(path: str) -> list[str]:
+    """Returns all ancestor paths of a folder (ordered from shallowest to deepest).
+    e.g. 'A/B/C' -> ['A', 'A/B', 'A/B/C']"""
+    if not path:
+        return []
+    segments = path.split("/")
+    return ["/".join(segments[:i+1]) for i in range(len(segments))]
+
+def _load_folders_paths() -> list[str]:
+    if not os.path.exists(FOLDERS_FILE):
+        return []
+    try:
+        with open(FOLDERS_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                return [p for p in data if isinstance(p, str)]
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return []
+
+def _save_folders_paths(paths: list[str]):
+    # Deduplicate + sort for determinism, inside the caller's lock context
+    paths = sorted(set(paths))
+    with open(FOLDERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(paths, f, ensure_ascii=False, indent=2)
+
+@app.get("/api/folders")
+async def api_folders():
+    """Returns every folder path (explicit + implicit from entries) with item counts.
+    A folder's count includes items in that folder AND all its descendants."""
+    # Snapshot state under locks (brief) — counts are informational, no need for
+    # a single global transaction across all three files.
+    with _folders_lock:
+        explicit_paths = set(_load_folders_paths())
+    with _history_lock:
+        hist = list(_load_history())
+    with _media_lock:
+        med = list(_load_media())
+
+    # Paths = explicit + every ancestor implied by existing entries
+    paths = set(explicit_paths)
+    for item in hist + med:
+        p = (item.get("folder") or "").strip()
+        if p:
+            paths.update(_ancestors_of(p))
+
+    # Count items per folder, propagating up to ancestors
+    counts: dict = {p: 0 for p in paths}
+    for item in hist + med:
+        p = (item.get("folder") or "").strip()
+        if not p:
+            continue
+        for anc in _ancestors_of(p):
+            if anc in counts:
+                counts[anc] += 1
+
+    return [{"path": p, "count": counts.get(p, 0)} for p in sorted(paths)]
+
+@app.post("/api/folders/create")
+async def api_folders_create(path: str = Form(...)):
+    """Create a folder (and implicitly all ancestors). No-op if it already exists."""
+    path = _validate_folder_name(path)
+    if not path:
+        raise HTTPException(400, "Caminho de pasta vazio")
+    with _folders_lock:
+        paths = set(_load_folders_paths())
+        # Create path + all ancestors
+        for p in _ancestors_of(path):
+            paths.add(p)
+        _save_folders_paths(sorted(paths))
+    return {"ok": True, "path": path}
+
+@app.post("/api/folders/rename")
+async def api_folders_rename(old_path: str = Form(...), new_path: str = Form(...)):
+    """Rename a folder. Cascades to all descendants and all affected history/media entries."""
+    old_path = _validate_folder_name(old_path)
+    new_path = _validate_folder_name(new_path)
+    if not old_path or not new_path:
+        raise HTTPException(400, "Caminhos não podem ser vazios")
+    if old_path == new_path:
+        return {"ok": True, "path": new_path, "renamed": 0}
+    # Refuse to rename ONTO a path that would create a cycle (new_path is a descendant of old_path)
+    if new_path == old_path or new_path.startswith(old_path + "/"):
+        raise HTTPException(400, "Não é possível mover uma pasta para dentro dela mesma")
+
+    old_prefix = old_path + "/"
+
+    def _remap(p: str) -> str | None:
+        if p == old_path:
+            return new_path
+        if p.startswith(old_prefix):
+            return new_path + "/" + p[len(old_prefix):]
+        return None
+
+    renamed_count = 0
+    # Rename entries in folders.json
+    with _folders_lock:
+        paths = _load_folders_paths()
+        new_paths = []
+        for p in paths:
+            r = _remap(p)
+            new_paths.append(r if r is not None else p)
+        # Also ensure new_path + ancestors exist
+        for a in _ancestors_of(new_path):
+            if a not in new_paths:
+                new_paths.append(a)
+        _save_folders_paths(new_paths)
+
+    # Rename folder field in history entries
+    with _history_lock:
+        history = _load_history()
+        for entry in history:
+            r = _remap(entry.get("folder") or "")
+            if r is not None:
+                entry["folder"] = r
+                renamed_count += 1
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(history, f, ensure_ascii=False, indent=2)
+
+    # Rename folder field in media entries
+    with _media_lock:
+        media = _load_media()
+        for entry in media:
+            r = _remap(entry.get("folder") or "")
+            if r is not None:
+                entry["folder"] = r
+                renamed_count += 1
+        with open(MEDIA_FILE, "w", encoding="utf-8") as f:
+            json.dump(media, f, ensure_ascii=False, indent=2)
+
+    return {"ok": True, "path": new_path, "renamed": renamed_count}
+
+@app.post("/api/folders/delete")
+async def api_folders_delete(path: str = Form(...), cascade: str = Form("move")):
+    """Delete a folder. `cascade` controls what happens to items inside:
+      - 'move'   (default): move all descendant items to the parent folder
+      - 'delete': delete all descendant items (history entries + result files);
+                   media files are NOT deleted — they just lose their folder tag.
+    Either way, the folder (and its descendants) disappear from folders.json."""
+    path = _validate_folder_name(path)
+    if not path:
+        raise HTTPException(400, "Não é possível excluir a raiz")
+    if cascade not in ("move", "delete"):
+        raise HTTPException(400, "cascade deve ser 'move' ou 'delete'")
+
+    prefix = path + "/"
+    # Parent path of `path` (for move); may be "" (root)
+    parent = "/".join(path.split("/")[:-1])
+
+    affected_items = 0
+    deleted_items = 0
+
+    # Remove from folders.json: path + descendants
+    with _folders_lock:
+        paths = _load_folders_paths()
+        new_paths = [p for p in paths if p != path and not p.startswith(prefix)]
+        _save_folders_paths(new_paths)
+
+    # Update history entries
+    with _history_lock:
+        history = _load_history()
+        if cascade == "delete":
+            # Mark items inside this folder for deletion
+            to_delete = [h for h in history if (h.get("folder") or "") == path
+                         or (h.get("folder") or "").startswith(prefix)]
+            keep = [h for h in history if h not in to_delete]
+            history = keep
+            # Remove their result directories
+            for h in to_delete:
+                fname = h.get("file")
+                if not fname:
+                    continue
+                d = os.path.join(RESULTS_DIR, _result_base(fname))
+                # Defense: only rmtree if path is within RESULTS_DIR
+                try:
+                    if os.path.commonpath([os.path.realpath(d), os.path.realpath(RESULTS_DIR)]) == os.path.realpath(RESULTS_DIR):
+                        if os.path.isdir(d):
+                            shutil.rmtree(d)
+                except (ValueError, OSError):
+                    pass  # path comparison across drives/mounts may fail — skip defensively
+            deleted_items += len(to_delete)
+        else:  # move
+            for entry in history:
+                f = (entry.get("folder") or "")
+                if f == path or f.startswith(prefix):
+                    entry["folder"] = parent
+                    affected_items += 1
+        with open(HISTORY_FILE, "w", encoding="utf-8") as fh:
+            json.dump(history, fh, ensure_ascii=False, indent=2)
+
+    # Update media entries — on 'delete' we only strip the folder tag
+    # (we don't delete the physical upload files; user can still do that via DELETE /api/delete-media)
+    with _media_lock:
+        media = _load_media()
+        if cascade == "delete":
+            # Items in deleted history already handled above; media entries for those
+            # files keep existing but lose folder tag
+            for entry in media:
+                f = (entry.get("folder") or "")
+                if f == path or f.startswith(prefix):
+                    entry["folder"] = ""  # orphaned back to root; physical file remains
+                    affected_items += 1
+        else:
+            for entry in media:
+                f = (entry.get("folder") or "")
+                if f == path or f.startswith(prefix):
+                    entry["folder"] = parent
+                    affected_items += 1
+        with open(MEDIA_FILE, "w", encoding="utf-8") as fh:
+            json.dump(media, fh, ensure_ascii=False, indent=2)
+
+    return {
+        "ok": True,
+        "path": path,
+        "cascade": cascade,
+        "moved_items": affected_items,
+        "deleted_items": deleted_items,
+    }
+
+@app.post("/api/move-to-folder")
+async def api_move_to_folder(filename: str = Form(...), folder: str = Form("")):
+    """Moves a history entry and its matching media entry to a folder.
+    Empty folder string = move back to root. Folder path may be nested (e.g. 'A/B/C')."""
+    filename = _safe_filename(filename)
+    folder   = _validate_folder_name(folder)
+
+    # Auto-create ancestor folders in folders.json so the UI tree keeps them visible
+    if folder:
+        with _folders_lock:
+            paths = set(_load_folders_paths())
+            for a in _ancestors_of(folder):
+                paths.add(a)
+            _save_folders_paths(sorted(paths))
+
+    moved = False
+    with _history_lock:
+        history = _load_history()
+        for entry in history:
+            if entry.get("file") == filename:
+                entry["folder"] = folder
+                moved = True
+                break
+        if moved:
+            with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+                json.dump(history, f, ensure_ascii=False, indent=2)
+
+    with _media_lock:
+        media = _load_media()
+        changed = False
+        for entry in media:
+            if entry.get("file") == filename:
+                entry["folder"] = folder
+                changed = True
+                break
+        if changed:
+            with open(MEDIA_FILE, "w", encoding="utf-8") as f:
+                json.dump(media, f, ensure_ascii=False, indent=2)
+
+    if not moved and not changed:
+        raise HTTPException(404, "Arquivo não encontrado em histórico nem mídia")
+    return {"ok": True, "folder": folder}
 
 # ── Entry point ────────────────────────────────────────────────
 if __name__ == "__main__":

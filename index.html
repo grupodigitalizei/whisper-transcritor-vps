@@ -429,6 +429,174 @@
     }
     .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px;
                overflow:hidden; clip:rect(0,0,0,0); border:0; }
+
+    /* FILTER BAR (status chips + folder select + queue summary) */
+    .filter-bar { display:flex; align-items:center; flex-wrap:wrap; gap:10px;
+                  padding:12px 24px; border-bottom:1px solid var(--slate-100);
+                  background:var(--slate-50); }
+    .chip-group { display:inline-flex; gap:6px; flex-wrap:wrap; }
+    .chip { display:inline-flex; align-items:center; gap:6px; padding:5px 11px;
+            border-radius:20px; border:1.5px solid var(--slate-200);
+            background:var(--white); color:var(--slate-600);
+            font-size:12px; font-weight:700; cursor:pointer;
+            transition:background var(--t) var(--ease), color var(--t) var(--ease),
+                        border-color var(--t) var(--ease); white-space:nowrap;
+            font-family:inherit; }
+    .chip:hover { background:var(--slate-100); color:var(--slate-800); }
+    .chip[aria-pressed="true"] { background:var(--blue); color:var(--white); border-color:var(--blue); }
+    .chip-count { display:inline-flex; align-items:center; justify-content:center;
+                  min-width:18px; height:18px; padding:0 5px; border-radius:9px;
+                  background:var(--slate-100); color:var(--slate-600);
+                  font-size:10.5px; font-weight:800; }
+    .chip[aria-pressed="true"] .chip-count { background:rgba(255,255,255,.25); color:var(--white); }
+
+    .folder-select-wrap { margin-left:auto; display:inline-flex; align-items:center; gap:8px; }
+    .folder-select-wrap label { font-size:11.5px; font-weight:700; color:var(--slate-500);
+                                text-transform:uppercase; letter-spacing:.6px; }
+    .folder-select { height:32px; padding:0 26px 0 10px; border:1.5px solid var(--slate-200);
+                     border-radius:var(--r-sm); font-family:inherit; font-size:12.5px;
+                     color:var(--slate-800); background:var(--white) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394A3B8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E") no-repeat right 9px center;
+                     appearance:none; outline:none; cursor:pointer;
+                     transition:border-color var(--t) var(--ease); }
+    .folder-select:focus { border-color:var(--blue); }
+
+    /* QUEUE SUMMARY — tempo estimado restante acima do progress */
+    .queue-summary { display:none; align-items:center; gap:10px; padding:8px 24px;
+                     background:var(--blue-50); border-bottom:1px solid var(--blue-100);
+                     font-size:12.5px; color:var(--slate-700); }
+    .queue-summary.show { display:flex; }
+    .queue-summary strong { color:var(--blue); font-weight:800; }
+
+    /* SORTABLE HEADERS */
+    .files-table th.sortable { cursor:pointer; user-select:none; }
+    .files-table th.sortable:hover { color:var(--slate-600); }
+    .files-table th.sortable .sort-arrow { display:inline-block; margin-left:4px;
+                                             font-size:10px; color:var(--slate-300); vertical-align:middle; }
+    .files-table th.sortable[aria-sort="ascending"]  .sort-arrow,
+    .files-table th.sortable[aria-sort="descending"] .sort-arrow { color:var(--blue); }
+
+    /* ROW STATUS — estimativa em linha queued/processing */
+    .row-eta { font-size:10.5px; color:var(--slate-400); font-weight:600;
+               margin-top:2px; font-variant-numeric:tabular-nums; }
+
+    /* SIDEBAR + TREE (pastas) */
+    .card-with-sidebar { display:grid; grid-template-columns:240px 1fr;
+                         background:var(--white); border-radius:var(--r-xl);
+                         box-shadow:var(--sh-md); overflow:hidden; }
+    .folder-sidebar { background:var(--slate-50); border-right:1px solid var(--slate-100);
+                      display:flex; flex-direction:column; min-height:200px; }
+    .folder-sidebar-header { padding:14px 16px 10px; display:flex; align-items:center;
+                             gap:8px; border-bottom:1px solid var(--slate-100); }
+    .folder-sidebar-title { font-size:11px; font-weight:800; letter-spacing:.8px;
+                            color:var(--slate-500); text-transform:uppercase; flex:1; }
+    .folder-new-btn { width:26px; height:26px; border-radius:var(--r-sm); border:none;
+                      background:var(--slate-200); color:var(--slate-700); cursor:pointer;
+                      display:flex; align-items:center; justify-content:center;
+                      transition:background var(--t) var(--ease), color var(--t) var(--ease); }
+    .folder-new-btn:hover { background:var(--blue); color:var(--white); }
+    .folder-tree { flex:1; overflow-y:auto; padding:6px 8px 14px; }
+    .folder-tree ul { list-style:none; padding:0; margin:0; }
+    .folder-tree ul ul { padding-left:16px; }
+    .folder-node { display:flex; align-items:center; gap:6px; padding:5px 8px;
+                   border-radius:var(--r-sm); font-size:12.5px; font-weight:600;
+                   color:var(--slate-700); cursor:pointer; position:relative;
+                   transition:background var(--t) var(--ease), color var(--t) var(--ease); }
+    .folder-node:hover { background:var(--slate-200); }
+    .folder-node.active { background:var(--blue); color:var(--white); }
+    .folder-node.active .folder-count { background:rgba(255,255,255,.25); color:var(--white); }
+    .folder-node .twist { width:14px; height:14px; display:inline-flex; align-items:center;
+                          justify-content:center; color:var(--slate-400); flex-shrink:0;
+                          transition:transform var(--t) var(--ease); }
+    .folder-node.active .twist { color:var(--white); }
+    .folder-node.expanded > .twist { transform:rotate(90deg); }
+    .folder-node .twist.leaf { opacity:0; pointer-events:none; }
+    .folder-node .ficon { width:14px; height:14px; flex-shrink:0; color:var(--slate-400); }
+    .folder-node.active .ficon { color:var(--white); }
+    .folder-node .folder-label { flex:1; white-space:nowrap; overflow:hidden;
+                                 text-overflow:ellipsis; }
+    .folder-count { display:inline-flex; align-items:center; justify-content:center;
+                    min-width:18px; height:18px; padding:0 5px; border-radius:9px;
+                    background:var(--slate-200); color:var(--slate-600);
+                    font-size:10.5px; font-weight:800; flex-shrink:0; }
+    .folder-menu-btn { width:22px; height:22px; border-radius:var(--r-sm); border:none;
+                       background:transparent; color:var(--slate-400); cursor:pointer;
+                       display:inline-flex; align-items:center; justify-content:center;
+                       opacity:0; transition:opacity var(--t) var(--ease),
+                                              background var(--t) var(--ease),
+                                              color var(--t) var(--ease); flex-shrink:0; }
+    .folder-node:hover .folder-menu-btn { opacity:1; }
+    .folder-node.active .folder-menu-btn { color:rgba(255,255,255,.8); }
+    .folder-menu-btn:hover { background:var(--slate-300); color:var(--slate-900); }
+    .folder-node.active .folder-menu-btn:hover { background:rgba(255,255,255,.2); color:var(--white); }
+    .folder-child-nodes { margin-top:1px; display:none; }
+    .folder-node.expanded + .folder-child-nodes { display:block; }
+
+    /* Mobile: sidebar vira drawer */
+    .sidebar-toggle { display:none; align-items:center; gap:6px; padding:6px 12px;
+                      border:1.5px solid var(--slate-200); border-radius:var(--r-sm);
+                      background:var(--white); cursor:pointer; font-family:inherit;
+                      font-size:12px; font-weight:700; color:var(--slate-700); }
+    @media (max-width:900px) {
+      .card-with-sidebar { display:block; }
+      .folder-sidebar { position:fixed; top:0; left:0; bottom:0; width:260px; z-index:250;
+                        background:var(--white); box-shadow:var(--sh-lg);
+                        transform:translateX(-100%); transition:transform 220ms var(--ease);
+                        border-right:1px solid var(--slate-100); }
+      .folder-sidebar.open { transform:none; }
+      .sidebar-backdrop { position:fixed; inset:0; background:rgba(15,23,42,.4); z-index:249;
+                          opacity:0; pointer-events:none; transition:opacity 180ms var(--ease); }
+      .sidebar-backdrop.open { opacity:1; pointer-events:auto; }
+      .sidebar-toggle { display:inline-flex; }
+    }
+
+    /* GENERIC DIALOG (prompt / confirm / choice) */
+    .dialog-message { font-size:13.5px; color:var(--slate-600); line-height:1.55;
+                      white-space:pre-line; }
+    .dialog-error   { font-size:12px; color:var(--red); margin-top:-6px; font-weight:600; }
+    .dialog-input   { width:100%; height:40px; padding:0 12px; border:1.5px solid var(--slate-200);
+                      border-radius:var(--r-sm); font-family:inherit; font-size:13.5px;
+                      color:var(--slate-800); outline:none; background:var(--white);
+                      transition:border-color var(--t) var(--ease); }
+    .dialog-input:focus { border-color:var(--blue); }
+    .dialog-input.invalid { border-color:var(--red); }
+    .dialog-choices { display:flex; flex-direction:column; gap:6px; margin-top:4px; }
+    .dialog-choice  { display:flex; align-items:center; gap:12px; padding:12px 14px;
+                      border:1.5px solid var(--slate-200); border-radius:var(--r-md);
+                      background:var(--white); cursor:pointer; text-align:left;
+                      font-family:inherit; font-size:13.5px; font-weight:600;
+                      color:var(--slate-800); width:100%;
+                      transition:background var(--t) var(--ease),
+                                  border-color var(--t) var(--ease),
+                                  transform var(--t) var(--ease); }
+    .dialog-choice:hover { background:var(--slate-50); border-color:var(--blue); }
+    .dialog-choice:active { transform:scale(0.99); }
+    .dialog-choice:focus-visible { outline:3px solid var(--blue); outline-offset:1px; }
+    .dialog-choice-icon { width:34px; height:34px; border-radius:var(--r-sm);
+                          background:var(--blue-50); color:var(--blue);
+                          display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+    .dialog-choice-body { flex:1; min-width:0; }
+    .dialog-choice-label { font-size:13.5px; font-weight:700; color:var(--slate-900); }
+    .dialog-choice-sub   { font-size:12px; color:var(--slate-500); margin-top:2px; font-weight:500; }
+    .dialog-choice.danger .dialog-choice-icon { background:var(--red-lt); color:var(--red); }
+    .dialog-choice.danger:hover { border-color:var(--red); }
+    .dialog-choice.danger .dialog-choice-label { color:var(--red); }
+
+    /* Danger variant for the confirm button in the shared dialog footer */
+    .btn-danger-lg { background:var(--red); color:var(--white); font-size:14px;
+                     letter-spacing:.6px; padding:13px 24px; border-radius:var(--r-md); width:100%; }
+    .btn-danger-lg:hover { background:#B91C1C; box-shadow:var(--sh-md); }
+
+    /* FOLDER PICKER MODAL */
+    .folder-picker-list { max-height:320px; overflow-y:auto;
+                          border:1.5px solid var(--slate-200); border-radius:var(--r-sm);
+                          padding:6px 4px; background:var(--slate-50); }
+    .folder-picker-list ul { list-style:none; padding:0; margin:0; }
+    .folder-picker-list ul ul { padding-left:18px; }
+    .folder-picker-item { display:flex; align-items:center; gap:6px; padding:6px 10px;
+                          border-radius:var(--r-sm); font-size:13px; font-weight:600;
+                          color:var(--slate-700); cursor:pointer; }
+    .folder-picker-item:hover { background:var(--slate-200); }
+    .folder-picker-item.selected { background:var(--blue); color:var(--white); }
   </style>
 </head>
 <body>
@@ -466,8 +634,24 @@
     </button>
   </div>
 
-  <!-- Files Card -->
-  <div class="card" id="card-transcriptions" role="tabpanel" aria-label="Arquivos transcritos">
+  <!-- Files Card + Sidebar -->
+  <div class="card-with-sidebar" id="card-transcriptions" role="tabpanel" aria-label="Arquivos transcritos">
+
+    <!-- Sidebar de pastas -->
+    <aside class="folder-sidebar" id="folder-sidebar" aria-label="Pastas">
+      <div class="folder-sidebar-header">
+        <span class="folder-sidebar-title">Pastas</span>
+        <button class="folder-new-btn" onclick="promptCreateFolder('')" aria-label="Nova pasta na raiz" title="Nova pasta">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+      </div>
+      <div class="folder-tree" id="folder-tree">
+        <!-- populated by renderFolderTree() -->
+      </div>
+    </aside>
+
+    <!-- Card principal (conte\u00fado original) -->
+    <div id="card-transcriptions-main" style="display:flex;flex-direction:column;min-width:0;">
 
     <!-- Bulk bar -->
     <div class="bulk-bar" id="bulk-bar" role="toolbar" aria-label="Ações em lote" aria-live="polite">
@@ -521,6 +705,39 @@
       </div>
     </div>
 
+    <!-- Filter bar: status chips + folder select -->
+    <div class="filter-bar" role="region" aria-label="Filtros">
+      <div class="chip-group" role="group" aria-label="Filtrar por status">
+        <button class="chip" data-status="all" aria-pressed="true" onclick="setStatusFilter('all')">
+          Todos <span class="chip-count" id="chip-count-all">0</span>
+        </button>
+        <button class="chip" data-status="queued" aria-pressed="false" onclick="setStatusFilter('queued')">
+          Aguardando <span class="chip-count" id="chip-count-queued">0</span>
+        </button>
+        <button class="chip" data-status="processing" aria-pressed="false" onclick="setStatusFilter('processing')">
+          Processando <span class="chip-count" id="chip-count-processing">0</span>
+        </button>
+        <button class="chip" data-status="done" aria-pressed="false" onclick="setStatusFilter('done')">
+          Concluído <span class="chip-count" id="chip-count-done">0</span>
+        </button>
+        <button class="chip" data-status="error" aria-pressed="false" onclick="setStatusFilter('error')">
+          Erro <span class="chip-count" id="chip-count-error">0</span>
+        </button>
+      </div>
+      <div class="folder-select-wrap">
+        <button class="sidebar-toggle" onclick="openSidebar()" aria-label="Abrir barra de pastas">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          <span id="current-folder-label">Pastas</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Queue summary: tempo estimado restante acumulado -->
+    <div class="queue-summary" id="queue-summary" role="status" aria-live="polite">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      <span id="queue-summary-text">—</span>
+    </div>
+
     <!-- Search bar -->
     <div class="search-bar" id="search-bar" role="search">
       <div class="search-wrap">
@@ -538,11 +755,11 @@
         <thead>
           <tr>
             <th class="col-check" scope="col"><input type="checkbox" class="checkbox" id="check-all" aria-label="Selecionar todos" onchange="toggleAll(this)" /></th>
-            <th class="col-name"   scope="col">Nome</th>
-            <th class="col-date"   scope="col">Enviado</th>
-            <th class="col-dur"    scope="col">Duração</th>
-            <th class="col-mode"   scope="col">Modo</th>
-            <th class="col-status" scope="col">Status</th>
+            <th class="col-name   sortable" scope="col" data-sort="name"   onclick="setSort('name')">Nome <span class="sort-arrow" aria-hidden="true">↕</span></th>
+            <th class="col-date   sortable" scope="col" data-sort="date"   onclick="setSort('date')">Enviado <span class="sort-arrow" aria-hidden="true">↕</span></th>
+            <th class="col-dur"             scope="col">Duração</th>
+            <th class="col-mode   sortable" scope="col" data-sort="mode"   onclick="setSort('mode')">Modo <span class="sort-arrow" aria-hidden="true">↕</span></th>
+            <th class="col-status sortable" scope="col" data-sort="status" onclick="setSort('status')">Status <span class="sort-arrow" aria-hidden="true">↕</span></th>
             <th class="col-actions" scope="col"><span class="sr-only">Ações</span></th>
           </tr>
         </thead>
@@ -566,7 +783,12 @@
         </div>
       </div>
     </div>
+
+    </div><!-- /#card-transcriptions-main -->
   </div>
+
+  <!-- Backdrop da sidebar em mobile -->
+  <div class="sidebar-backdrop" id="sidebar-backdrop" onclick="closeSidebar()" aria-hidden="true"></div>
 
   <!-- Media Card -->
   <div class="card" id="card-media" style="display:none;" role="tabpanel" aria-label="Biblioteca de Mídias">
@@ -861,6 +1083,51 @@
   </div>
 </div>
 
+<!-- Generic in-site dialog (substitui prompt()/confirm() nativos) -->
+<div class="overlay" id="dialog-overlay" role="dialog" aria-modal="true" aria-labelledby="dialog-title" onclick="if (event.target === this) _dialogCancel()">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-head">
+      <svg id="dialog-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <h2 class="modal-title" id="dialog-title">—</h2>
+      <button class="modal-close" onclick="_dialogCancel()" aria-label="Fechar">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <p class="dialog-message" id="dialog-message"></p>
+      <input type="text" class="dialog-input" id="dialog-input" style="display:none" aria-describedby="dialog-error" />
+      <div class="dialog-error" id="dialog-error" style="display:none" role="alert"></div>
+      <div class="dialog-choices" id="dialog-choices" style="display:none"></div>
+    </div>
+    <div class="modal-foot" id="dialog-foot"></div>
+  </div>
+</div>
+
+<!-- Folder picker modal (usado por "Mover para pasta") -->
+<div class="overlay" id="folder-picker-overlay" role="dialog" aria-modal="true" aria-labelledby="folder-picker-title" onclick="if (event.target === this) closeFolderPicker()">
+  <div class="modal" style="max-width:460px">
+    <div class="modal-head">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+      <h2 class="modal-title" id="folder-picker-title">Mover para pasta</h2>
+      <button class="modal-close" onclick="closeFolderPicker()" aria-label="Fechar">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:var(--slate-600)" id="folder-picker-subtitle">Selecione a pasta de destino:</p>
+      <div class="folder-picker-list" id="folder-picker-list"></div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="text" class="search-input" id="folder-picker-new" placeholder="Ou crie uma nova pasta (ex: Projetos/Cliente X)" style="flex:1"/>
+        <button class="btn btn-ghost" onclick="folderPickerCreateNew()">Criar</button>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-primary-lg" onclick="folderPickerConfirm()" id="folder-picker-confirm-btn">Mover</button>
+      <button class="btn btn-secondary-lg" onclick="closeFolderPicker()">Cancelar</button>
+    </div>
+  </div>
+</div>
+
 <!-- Toast container -->
 <div class="toast-area" id="toast-area" aria-live="polite" aria-label="Notificações"></div>
 
@@ -880,7 +1147,7 @@ let _syncFingerprint  = '';
 //  INIT
 // ═══════════════════════════════════════════════════════════════
 async function init() {
-  await Promise.all([loadHistory(), loadStats()]);
+  await Promise.all([loadHistory(), loadStats(), loadFolders()]);
   await resumeActivePolling();
   startAutoSync();
 }
@@ -916,12 +1183,18 @@ function _historyToFiles(data) {
     name:    h.name || h.file.replace(/\.[^.]+$/, ''),
     date:    h.date    || '—',
     dur:     h.duration || '—',
+    dur_secs: h.duration_secs || 0,
     status:  h.status   || 'done',
     mode:    h.mode     || 'turbo',
     lang:    h.lang     || '',
     words:   h.words    || 0,
     error:   h.error    || null,
     task_id: h.task_id  || null,
+    folder:  h.folder   || '',
+    queued_at:      h.queued_at      || 0,
+    started_at:     h.started_at     || null,
+    completed_at:   h.completed_at   || null,
+    processing_secs: h.processing_secs || null,
   }));
 }
 
@@ -935,7 +1208,7 @@ async function loadHistory() {
     const data = await res.json();
     files = _historyToFiles(data);
     _syncFingerprint = _makeFingerprint(data);
-    renderFiles(files);
+    renderFiles();
   } catch (e) {
     console.error('loadHistory:', e);
     renderFiles([]);
@@ -945,9 +1218,27 @@ async function loadHistory() {
 // ─── AUTO-SYNC ───────────────────────────────────────────────
 // Keeps the page live — checks for history changes every 5s
 // and re-renders only if something actually changed.
+let _etaTickInterval = null;
 function startAutoSync() {
   if (_autoSyncInterval) return;
   _autoSyncInterval = setInterval(_autoSyncTick, 5000);
+  // Lighter tick: only update ETAs (no fetch) every 5s so the remaining
+  // time feels "live" while a transcription is running.
+  if (!_etaTickInterval) {
+    _etaTickInterval = setInterval(() => {
+      const hasActive = files.some(f => f.status === 'queued' || f.status === 'processing');
+      if (hasActive) {
+        _renderQueueSummary();
+        // Only re-render rows that have an ETA visible (queued/processing)
+        // — cheap because we're iterating a small subset.
+        for (const f of files) {
+          if (f.status !== 'queued' && f.status !== 'processing') continue;
+          const tr = document.querySelector(`#files-tbody tr[data-id="${CSS.escape(f.file)}"] .col-status`);
+          if (tr) tr.innerHTML = renderStatus(f.status, f);
+        }
+      }
+    }, 5000);
+  }
 }
 
 async function _autoSyncTick() {
@@ -960,8 +1251,9 @@ async function _autoSyncTick() {
     if (fp === _syncFingerprint) return; // nothing changed
     _syncFingerprint = fp;
     files = _historyToFiles(data);
-    renderFiles(files);
+    renderFiles();
     loadStats();
+    loadFolders(); // counts may have changed
     // Restart polling for any active tasks discovered (e.g. uploaded from another tab)
     files.forEach(f => {
       if ((f.status === 'queued' || f.status === 'processing') && f.task_id && !_activePolls[f.task_id]) {
@@ -978,6 +1270,694 @@ async function loadStats() {
     document.getElementById('stat-count').textContent = data.total ?? '0';
     document.getElementById('stat-hours').textContent = data.duration || '0m';
   } catch { /* ignore */ }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  IN-SITE DIALOGS (substituem prompt()/confirm() nativos)
+//  Um único modal reutilizável, promise-based. Chamadas:
+//    await showConfirm({ title, message, confirmText, cancelText, danger })
+//    await showPrompt ({ title, message, initialValue, placeholder,
+//                        confirmText, validator })
+//    await showChoice ({ title, message, choices: [{ value, label,
+//                        description?, danger?, icon? (SVG HTML) }] })
+// Todas retornam Promise. Confirm -> true|false, Prompt -> string|null,
+// Choice -> value|null (null = cancelado).
+// ═══════════════════════════════════════════════════════════════
+let _dialogResolver = null; // função que resolve a promise pendente
+
+function _dialogClose(result) {
+  const overlay = document.getElementById('dialog-overlay');
+  if (!overlay) return;
+  overlay.classList.remove('open');
+  document.body.style.overflow = '';
+  if (_dialogResolver) {
+    const fn = _dialogResolver;
+    _dialogResolver = null;
+    fn(result);
+  }
+}
+
+function _dialogCancel() {
+  // Decide o valor "cancelado" com base no tipo ativo (armazenado em dataset)
+  const overlay = document.getElementById('dialog-overlay');
+  const type = overlay?.dataset?.type;
+  if (type === 'confirm')      _dialogClose(false);
+  else                          _dialogClose(null); // prompt ou choice
+}
+
+// Ícones por tipo — ajuda a comunicar intenção visual
+const _DIALOG_ICONS = {
+  info:    `<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>`,
+  edit:    `<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>`,
+  folder:  `<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>`,
+  warning: `<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>`,
+  danger:  `<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/>`,
+};
+
+function _setDialogIcon(kind, color) {
+  const svg = document.getElementById('dialog-icon');
+  if (!svg) return;
+  svg.innerHTML = _DIALOG_ICONS[kind] || _DIALOG_ICONS.info;
+  svg.style.color = color || 'var(--blue)';
+}
+
+function _showDialog({ type, title, iconKind, iconColor, bodyBuilder, footBuilder }) {
+  return new Promise((resolve) => {
+    // Se já existe diálogo aberto, força fechar (cancelar) antes de abrir novo.
+    if (_dialogResolver) { const prev = _dialogResolver; _dialogResolver = null; prev(null); }
+    _dialogResolver = resolve;
+
+    const overlay = document.getElementById('dialog-overlay');
+    overlay.dataset.type = type;
+    document.getElementById('dialog-title').textContent = title || '';
+
+    _setDialogIcon(iconKind || 'info', iconColor);
+
+    // Clear body
+    const msg = document.getElementById('dialog-message');
+    const inp = document.getElementById('dialog-input');
+    const err = document.getElementById('dialog-error');
+    const ch  = document.getElementById('dialog-choices');
+    msg.textContent = '';
+    msg.style.display = 'none';
+    inp.style.display = 'none'; inp.classList.remove('invalid'); inp.value = '';
+    err.style.display = 'none'; err.textContent = '';
+    ch.style.display  = 'none'; ch.innerHTML = '';
+
+    bodyBuilder({ msg, inp, err, ch });
+    document.getElementById('dialog-foot').innerHTML = '';
+    footBuilder(document.getElementById('dialog-foot'));
+
+    overlay.classList.add('open');
+    document.body.style.overflow = 'hidden';
+
+    // Foco: input se houver, senão primeiro botão do footer
+    setTimeout(() => {
+      if (inp.style.display !== 'none') { inp.focus(); inp.select(); }
+      else {
+        const firstBtn = document.querySelector('#dialog-foot button, #dialog-choices button');
+        if (firstBtn) firstBtn.focus();
+      }
+    }, 60);
+  });
+}
+
+function showConfirm({ title = 'Confirmar', message = '', confirmText = 'Confirmar', cancelText = 'Cancelar', danger = false } = {}) {
+  return _showDialog({
+    type: 'confirm',
+    title,
+    iconKind: danger ? 'danger' : 'warning',
+    iconColor: danger ? 'var(--red)' : 'var(--blue)',
+    bodyBuilder: ({ msg }) => {
+      msg.textContent = message;
+      msg.style.display = 'block';
+    },
+    footBuilder: (foot) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:10px;width:100%';
+      const ok = document.createElement('button');
+      ok.className = danger ? 'btn btn-danger-lg' : 'btn btn-primary-lg';
+      ok.style.flex = '1';
+      ok.textContent = confirmText;
+      ok.onclick = () => _dialogClose(true);
+      const cancel = document.createElement('button');
+      cancel.className = 'btn btn-secondary-lg';
+      cancel.style.flex = '1';
+      cancel.textContent = cancelText;
+      cancel.onclick = () => _dialogClose(false);
+      row.appendChild(cancel);
+      row.appendChild(ok);
+      foot.appendChild(row);
+    }
+  });
+}
+
+function showPrompt({ title = 'Digite um valor', message = '', initialValue = '', placeholder = '', confirmText = 'Confirmar', cancelText = 'Cancelar', validator = null, iconKind = 'edit' } = {}) {
+  return _showDialog({
+    type: 'prompt',
+    title,
+    iconKind,
+    bodyBuilder: ({ msg, inp, err }) => {
+      if (message) { msg.textContent = message; msg.style.display = 'block'; }
+      inp.style.display = 'block';
+      inp.value = initialValue;
+      inp.placeholder = placeholder || '';
+      const doConfirm = () => {
+        const val = inp.value;
+        if (validator) {
+          const errMsg = validator(val);
+          if (errMsg) {
+            err.textContent = errMsg; err.style.display = 'block';
+            inp.classList.add('invalid'); inp.focus();
+            return;
+          }
+        }
+        _dialogClose(val);
+      };
+      inp.onkeydown = (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); doConfirm(); }
+        else { err.style.display = 'none'; inp.classList.remove('invalid'); }
+      };
+      // Exponha o handler pro footer usar
+      inp.dataset._bound = '1';
+      inp._confirm = doConfirm;
+    },
+    footBuilder: (foot) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:10px;width:100%';
+      const ok = document.createElement('button');
+      ok.className = 'btn btn-primary-lg'; ok.style.flex = '1';
+      ok.textContent = confirmText;
+      ok.onclick = () => { document.getElementById('dialog-input')._confirm(); };
+      const cancel = document.createElement('button');
+      cancel.className = 'btn btn-secondary-lg'; cancel.style.flex = '1';
+      cancel.textContent = cancelText;
+      cancel.onclick = () => _dialogClose(null);
+      row.appendChild(cancel);
+      row.appendChild(ok);
+      foot.appendChild(row);
+    }
+  });
+}
+
+function showChoice({ title = 'Selecionar', message = '', choices = [], cancelText = 'Cancelar', iconKind = 'folder' } = {}) {
+  return _showDialog({
+    type: 'choice',
+    title,
+    iconKind,
+    bodyBuilder: ({ msg, ch }) => {
+      if (message) { msg.textContent = message; msg.style.display = 'block'; }
+      ch.style.display = 'flex';
+      ch.innerHTML = '';
+      for (const c of choices) {
+        const btn = document.createElement('button');
+        btn.className = 'dialog-choice' + (c.danger ? ' danger' : '');
+        btn.innerHTML = `
+          <div class="dialog-choice-icon">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${c.icon || _DIALOG_ICONS.folder}</svg>
+          </div>
+          <div class="dialog-choice-body">
+            <div class="dialog-choice-label">${esc(c.label)}</div>
+            ${c.description ? `<div class="dialog-choice-sub">${esc(c.description)}</div>` : ''}
+          </div>`;
+        btn.onclick = () => _dialogClose(c.value);
+        ch.appendChild(btn);
+      }
+    },
+    footBuilder: (foot) => {
+      const cancel = document.createElement('button');
+      cancel.className = 'btn btn-secondary-lg'; cancel.style.width = '100%';
+      cancel.textContent = cancelText;
+      cancel.onclick = () => _dialogClose(null);
+      foot.appendChild(cancel);
+    }
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  FOLDERS — tree, CRUD, sidebar
+// ═══════════════════════════════════════════════════════════════
+// _folders: flat list of {path, count} returned by backend.
+// _expandedFolders: Set of paths currently expanded in the tree UI.
+let _folders = [];
+const _expandedFolders = new Set();
+
+async function loadFolders() {
+  try {
+    const res = await fetch('/api/folders');
+    if (!res.ok) { _folders = []; renderFolderTree(); return; }
+    _folders = await res.json();
+  } catch { _folders = []; }
+  renderFolderTree();
+}
+
+// Build a nested tree from the flat list of paths + counts.
+// Also injects items with folder='' into the root "(sem pasta)" bucket for display.
+function _buildFolderTree() {
+  const root = { path: '', name: '(raiz)', count: 0, children: {} };
+  for (const f of _folders) {
+    const segments = f.path.split('/');
+    let node = root;
+    let curPath = '';
+    for (const seg of segments) {
+      curPath = curPath ? `${curPath}/${seg}` : seg;
+      if (!node.children[seg]) {
+        node.children[seg] = { path: curPath, name: seg, count: 0, children: {} };
+      }
+      node = node.children[seg];
+    }
+    node.count = f.count;
+  }
+  return root;
+}
+
+function renderFolderTree() {
+  const container = document.getElementById('folder-tree');
+  if (!container) return;
+  const tree = _buildFolderTree();
+
+  // In-memory counts for the special "virtual" buckets
+  const allCount  = files.length;
+  const rootCount = files.filter(f => !(f.folder || '')).length;
+
+  const html = [];
+  html.push(`<ul>`);
+  html.push(_renderFolderNodeHTML({
+    path: '__all__', name: 'Todas', count: allCount, isVirtual: true
+  }));
+  html.push(_renderFolderNodeHTML({
+    path: '__root__', name: '(sem pasta)', count: rootCount, isVirtual: true
+  }));
+  // Top-level folders from the tree
+  for (const name of Object.keys(tree.children).sort()) {
+    html.push(_renderFolderSubtreeHTML(tree.children[name]));
+  }
+  html.push(`</ul>`);
+  container.innerHTML = html.join('');
+}
+
+function _renderFolderNodeHTML(node, hasChildren = false) {
+  const filterKey = node.isVirtual ? (node.path === '__all__' ? 'all' : '__root__') : node.path;
+  const active = _view.folderFilter === filterKey;
+  const expanded = hasChildren && _expandedFolders.has(node.path);
+  const twist = hasChildren
+    ? `<span class="twist" onclick="event.stopPropagation(); toggleFolderExpand('${jsAttr(node.path)}')" aria-hidden="true">▸</span>`
+    : `<span class="twist leaf" aria-hidden="true">▸</span>`;
+  const icon = node.isVirtual && node.path === '__all__'
+    ? `<svg class="ficon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>`
+    : `<svg class="ficon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`;
+  const menuBtn = node.isVirtual ? '' :
+    `<button class="folder-menu-btn" aria-label="Ações da pasta" onclick="event.stopPropagation(); folderMenu('${jsAttr(node.path)}', event)">
+       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="19" r="1" fill="currentColor"/></svg>
+     </button>`;
+  return `
+    <li>
+      <div class="folder-node ${active ? 'active' : ''} ${expanded ? 'expanded' : ''}"
+           role="button" tabindex="0"
+           onclick="selectFolder('${jsAttr(filterKey)}')"
+           onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectFolder('${jsAttr(filterKey)}'); }">
+        ${twist}
+        ${icon}
+        <span class="folder-label" title="${esc(node.name)}">${esc(node.name)}</span>
+        <span class="folder-count">${node.count}</span>
+        ${menuBtn}
+      </div>
+    </li>`;
+}
+
+function _renderFolderSubtreeHTML(node) {
+  const hasChildren = Object.keys(node.children).length > 0;
+  const nodeHTML = _renderFolderNodeHTML(node, hasChildren);
+  if (!hasChildren) return nodeHTML;
+  const expanded = _expandedFolders.has(node.path);
+  const childrenHTML = `<ul class="folder-child-nodes" style="display:${expanded ? 'block' : 'none'}">${Object.keys(node.children).sort().map(n => _renderFolderSubtreeHTML(node.children[n])).join('')}</ul>`;
+  // Inject children UL after the node's LI (still inside the parent UL)
+  // We wrap nodeHTML+childrenHTML into a single <li> structure:
+  return nodeHTML.replace('</li>', childrenHTML + '</li>');
+}
+
+function selectFolder(pathOrKey) {
+  _view.folderFilter = pathOrKey;
+  // Auto-expand ancestors when selecting a nested folder
+  if (pathOrKey !== 'all' && pathOrKey !== '__root__' && pathOrKey) {
+    const segments = pathOrKey.split('/');
+    for (let i = 0; i < segments.length - 1; i++) {
+      _expandedFolders.add(segments.slice(0, i + 1).join('/'));
+    }
+  }
+  closeSidebar();
+  renderFolderTree();
+  renderFiles();
+}
+
+function toggleFolderExpand(path) {
+  if (_expandedFolders.has(path)) _expandedFolders.delete(path);
+  else _expandedFolders.add(path);
+  renderFolderTree();
+}
+
+// Sidebar mobile drawer
+function openSidebar() {
+  document.getElementById('folder-sidebar').classList.add('open');
+  document.getElementById('sidebar-backdrop').classList.add('open');
+}
+function closeSidebar() {
+  document.getElementById('folder-sidebar').classList.remove('open');
+  document.getElementById('sidebar-backdrop').classList.remove('open');
+}
+
+async function folderMenu(path, ev) {
+  const action = await showChoice({
+    title: `Pasta "${path}"`,
+    message: 'O que você deseja fazer?',
+    iconKind: 'folder',
+    choices: [
+      { value: 'subfolder', label: 'Criar subpasta', description: 'Adiciona uma nova pasta dentro desta',
+        icon: `<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/>` },
+      { value: 'rename',    label: 'Renomear pasta',  description: 'Atualiza o nome; descendentes e itens são ajustados',
+        icon: _DIALOG_ICONS.edit },
+      { value: 'delete',    label: 'Excluir pasta',   description: 'Com opção de mover ou apagar o conteúdo',
+        danger: true, icon: _DIALOG_ICONS.danger },
+    ]
+  });
+  if (action === 'subfolder') await promptCreateFolder(path);
+  else if (action === 'rename') await promptRenameFolder(path);
+  else if (action === 'delete') await promptDeleteFolder(path);
+}
+
+async function promptCreateFolder(parentPath) {
+  const name = await showPrompt({
+    title: parentPath ? 'Nova subpasta' : 'Nova pasta',
+    message: parentPath
+      ? `A subpasta será criada dentro de "${parentPath}".`
+      : 'Digite o nome da nova pasta.',
+    placeholder: 'Ex: Projetos 2026',
+    confirmText: 'Criar',
+    iconKind: 'folder',
+    validator: (val) => {
+      const v = (val || '').trim();
+      if (!v) return 'O nome não pode ficar em branco.';
+      if (v.length > 60) return 'Máximo de 60 caracteres por segmento.';
+      if (/[\/\\\x00]/.test(v)) return 'O nome não pode conter /, \\ ou caracteres de controle.';
+      if (v === '.' || v === '..') return 'Nome inválido.';
+      return null;
+    }
+  });
+  if (name === null) return;
+  const clean = name.trim();
+  if (!clean) return;
+  const fullPath = parentPath ? `${parentPath}/${clean}` : clean;
+  try {
+    const fd = new FormData();
+    fd.append('path', fullPath);
+    const res = await fetch('/api/folders/create', { method: 'POST', body: fd });
+    if (!res.ok) {
+      let msg = 'Erro ao criar pasta.';
+      try { const e = await res.json(); if (e.detail) msg = e.detail; } catch {}
+      showToast(msg, 'error');
+      return;
+    }
+    // Auto-expand ancestors
+    if (parentPath) {
+      const segs = parentPath.split('/');
+      for (let i = 0; i < segs.length; i++) _expandedFolders.add(segs.slice(0, i + 1).join('/'));
+    }
+    await loadFolders();
+    showToast(`Pasta "${fullPath}" criada.`, 'success');
+  } catch {
+    showToast('Erro ao criar pasta.', 'error');
+  }
+}
+
+async function promptRenameFolder(oldPath) {
+  const segments = oldPath.split('/');
+  const oldName = segments[segments.length - 1];
+  const newName = await showPrompt({
+    title: 'Renomear pasta',
+    message: `Pasta atual: "${oldPath}"\nDescendentes e itens dentro serão atualizados automaticamente.`,
+    initialValue: oldName,
+    confirmText: 'Renomear',
+    iconKind: 'edit',
+    validator: (val) => {
+      const v = (val || '').trim();
+      if (!v) return 'O nome não pode ficar em branco.';
+      if (v.length > 60) return 'Máximo de 60 caracteres.';
+      if (/[\/\\\x00]/.test(v)) return 'O nome não pode conter /, \\ ou caracteres de controle.';
+      if (v === '.' || v === '..') return 'Nome inválido.';
+      return null;
+    }
+  });
+  if (newName === null) return;
+  const clean = newName.trim();
+  if (!clean || clean === oldName) return;
+  const parent = segments.slice(0, -1).join('/');
+  const newPath = parent ? `${parent}/${clean}` : clean;
+  try {
+    const fd = new FormData();
+    fd.append('old_path', oldPath);
+    fd.append('new_path', newPath);
+    const res = await fetch('/api/folders/rename', { method: 'POST', body: fd });
+    if (!res.ok) {
+      let msg = 'Erro ao renomear pasta.';
+      try { const e = await res.json(); if (e.detail) msg = e.detail; } catch {}
+      showToast(msg, 'error');
+      return;
+    }
+    // If we had this folder selected, update filter to the new path
+    if (_view.folderFilter === oldPath) _view.folderFilter = newPath;
+    else if (_view.folderFilter.startsWith(oldPath + '/')) {
+      _view.folderFilter = newPath + _view.folderFilter.slice(oldPath.length);
+    }
+    await Promise.all([loadFolders(), loadHistory()]);
+    showToast(`Renomeada para "${newPath}".`, 'success');
+  } catch {
+    showToast('Erro ao renomear pasta.', 'error');
+  }
+}
+
+async function promptDeleteFolder(path) {
+  const itemsInside = files.filter(f => (f.folder || '') === path || (f.folder || '').startsWith(path + '/'));
+  let cascade = 'move';
+  if (itemsInside.length > 0) {
+    const parent = path.split('/').slice(0, -1).join('/');
+    const parentLabel = parent || '(raiz)';
+    const choice = await showChoice({
+      title: `Excluir pasta "${path}"`,
+      message: `A pasta contém ${itemsInside.length} item(ns). O que fazer com o conteúdo?`,
+      iconKind: 'warning',
+      choices: [
+        { value: 'move',
+          label: `Mover para ${parentLabel}`,
+          description: 'Os itens são preservados e vão para a pasta-pai.',
+          icon: `<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><polyline points="9 12 12 9 15 12"/><line x1="12" y1="9" x2="12" y2="16"/>` },
+        { value: 'delete',
+          label: 'Excluir todos os itens',
+          description: 'Apaga os arquivos de transcrição do disco. Ação irreversível.',
+          danger: true, icon: _DIALOG_ICONS.danger },
+      ]
+    });
+    if (choice === null) return;
+    cascade = choice;
+  } else {
+    const ok = await showConfirm({
+      title: 'Excluir pasta vazia',
+      message: `Excluir a pasta "${path}"?`,
+      confirmText: 'Excluir',
+      danger: true
+    });
+    if (!ok) return;
+  }
+  try {
+    const fd = new FormData();
+    fd.append('path', path);
+    fd.append('cascade', cascade);
+    const res = await fetch('/api/folders/delete', { method: 'POST', body: fd });
+    if (!res.ok) {
+      let msg = 'Erro ao excluir pasta.';
+      try { const e = await res.json(); if (e.detail) msg = e.detail; } catch {}
+      showToast(msg, 'error');
+      return;
+    }
+    // If we had this folder (or descendant) selected, reset filter to parent/all
+    if (_view.folderFilter === path || _view.folderFilter.startsWith(path + '/')) {
+      const parent = path.split('/').slice(0, -1).join('/');
+      _view.folderFilter = parent || 'all';
+    }
+    await Promise.all([loadFolders(), loadHistory()]);
+    showToast('Pasta excluída.', 'success');
+  } catch {
+    showToast('Erro ao excluir pasta.', 'error');
+  }
+}
+
+// ───── Folder picker modal (usado pelo "Mover para pasta") ─────
+let _pickerTargetFileId = null;
+let _pickerSelected = ''; // '' = raiz
+
+function openFolderPicker(fileId) {
+  _pickerTargetFileId = fileId;
+  const f = files.find(x => x.id === fileId);
+  _pickerSelected = f ? (f.folder || '') : '';
+  document.getElementById('folder-picker-subtitle').textContent =
+    f ? `Mover "${f.name}" para qual pasta?` : 'Selecione a pasta de destino:';
+  document.getElementById('folder-picker-new').value = '';
+  _renderFolderPickerList();
+  document.getElementById('folder-picker-overlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeFolderPicker() {
+  document.getElementById('folder-picker-overlay').classList.remove('open');
+  document.body.style.overflow = '';
+  _pickerTargetFileId = null;
+}
+
+function _renderFolderPickerList() {
+  const list = document.getElementById('folder-picker-list');
+  if (!list) return;
+  const tree = _buildFolderTree();
+  const html = ['<ul>'];
+  html.push(_renderPickerItem({ path: '', name: '(raiz)' }));
+  for (const name of Object.keys(tree.children).sort()) {
+    html.push(_renderPickerSubtree(tree.children[name]));
+  }
+  html.push('</ul>');
+  list.innerHTML = html.join('');
+}
+
+function _renderPickerItem(node) {
+  const selected = _pickerSelected === node.path;
+  return `<li>
+    <div class="folder-picker-item ${selected ? 'selected' : ''}"
+         onclick="_pickerSelect('${jsAttr(node.path)}')">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        ${node.path === '' ? '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>' : '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'}
+      </svg>
+      ${esc(node.name)}
+    </div>
+  </li>`;
+}
+
+function _renderPickerSubtree(node) {
+  let html = _renderPickerItem(node);
+  const names = Object.keys(node.children).sort();
+  if (names.length) {
+    html = html.replace('</li>',
+      `<ul>${names.map(n => _renderPickerSubtree(node.children[n])).join('')}</ul></li>`);
+  }
+  return html;
+}
+
+function _pickerSelect(path) {
+  _pickerSelected = path;
+  _renderFolderPickerList();
+}
+
+async function folderPickerCreateNew() {
+  const inp = document.getElementById('folder-picker-new');
+  const raw = (inp.value || '').trim();
+  if (!raw) return;
+  try {
+    const fd = new FormData();
+    fd.append('path', raw);
+    const res = await fetch('/api/folders/create', { method: 'POST', body: fd });
+    if (!res.ok) {
+      let msg = 'Erro ao criar pasta.';
+      try { const e = await res.json(); if (e.detail) msg = e.detail; } catch {}
+      showToast(msg, 'error');
+      return;
+    }
+    inp.value = '';
+    _pickerSelected = raw;
+    await loadFolders();
+    _renderFolderPickerList();
+  } catch {
+    showToast('Erro ao criar pasta.', 'error');
+  }
+}
+
+async function folderPickerConfirm() {
+  if (_pickerTargetFileId == null) return;
+  const f = files.find(x => x.id === _pickerTargetFileId);
+  if (!f) { closeFolderPicker(); return; }
+  const target = _pickerSelected;
+  try {
+    const fd = new FormData();
+    fd.append('filename', f.file);
+    fd.append('folder', target);
+    const res = await fetch('/api/move-to-folder', { method: 'POST', body: fd });
+    if (!res.ok) {
+      let msg = 'Erro ao mover.';
+      try { const e = await res.json(); if (e.detail) msg = e.detail; } catch {}
+      showToast(msg, 'error');
+      return;
+    }
+    f.folder = target;
+    closeFolderPicker();
+    await loadFolders();
+    renderFiles();
+    showToast(target ? `Movido para "${target}".` : 'Removido da pasta.', 'success');
+  } catch {
+    showToast('Erro ao mover.', 'error');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  VIEW CONTROLS (sort / filter / folder / queue summary)
+// ═══════════════════════════════════════════════════════════════
+function setStatusFilter(status) {
+  _view.statusFilter = status;
+  document.querySelectorAll('.chip[data-status]').forEach(el => {
+    el.setAttribute('aria-pressed', el.dataset.status === status);
+  });
+  renderFiles();
+}
+
+function setFolderFilter(folder) {
+  _view.folderFilter = folder || 'all';
+  renderFiles();
+}
+
+function setSort(key) {
+  if (_view.sortKey === key) {
+    _view.sortDir = _view.sortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    _view.sortKey = key;
+    // Sensible default direction per column
+    _view.sortDir = (key === 'date') ? 'desc' : 'asc';
+  }
+  renderFiles();
+}
+
+function _renderSortIndicators() {
+  document.querySelectorAll('.files-table th.sortable').forEach(th => {
+    const active = th.dataset.sort === _view.sortKey;
+    const arrow = th.querySelector('.sort-arrow');
+    if (!active) {
+      th.removeAttribute('aria-sort');
+      if (arrow) arrow.textContent = '↕';
+    } else {
+      th.setAttribute('aria-sort', _view.sortDir === 'asc' ? 'ascending' : 'descending');
+      if (arrow) arrow.textContent = _view.sortDir === 'asc' ? '↑' : '↓';
+    }
+  });
+}
+
+function _renderStatusFilterCounts() {
+  const counts = { all: files.length, queued:0, processing:0, done:0, error:0 };
+  for (const f of files) counts[f.status] = (counts[f.status] || 0) + 1;
+  for (const k of Object.keys(counts)) {
+    const el = document.getElementById('chip-count-' + k);
+    if (el) el.textContent = counts[k];
+  }
+}
+
+// Sync the mobile "current folder" label on the sidebar-toggle button
+function _syncFolderButtonLabel() {
+  const el = document.getElementById('current-folder-label');
+  if (!el) return;
+  const v = _view.folderFilter;
+  el.textContent = v === 'all' ? 'Pastas'
+                  : v === '__root__' ? 'Sem pasta'
+                  : v.split('/').slice(-1)[0];
+}
+
+function _renderQueueSummary() {
+  const box  = document.getElementById('queue-summary');
+  const text = document.getElementById('queue-summary-text');
+  if (!box || !text) return;
+  const { count, totalSecs, unknown } = estimateTotalRemaining();
+  if (count === 0) { box.classList.remove('show'); return; }
+  box.classList.add('show');
+  let msg = `<strong>${count}</strong> pendente${count > 1 ? 's' : ''}`;
+  if (totalSecs > 0)  msg += ` · tempo estimado ~<strong>${fmtSecs(totalSecs)}</strong>`;
+  if (unknown > 0)    msg += ` · ${unknown} sem estimativa`;
+  text.innerHTML = msg;
+}
+
+function promptMoveToFolder(id) {
+  closeAllDDs();
+  openFolderPicker(id);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1011,19 +1991,162 @@ const STATUS_MAP = {
   error:      { label:'Erro',        cls:'error'       },
 };
 
-function renderStatus(status) {
-  const s = STATUS_MAP[status] || STATUS_MAP.queued;
-  const extra = status === 'error' ? ' title="Clique para ver o erro"' : '';
-  return `<span class="status-badge ${s.cls}" role="img" aria-label="${s.label}"${extra}>
-    <span class="status-dot"></span>${s.label}
-  </span>`;
+// ═══════════════════════════════════════════════════════════════
+//  VIEW STATE (filtros + ordenação)
+// ═══════════════════════════════════════════════════════════════
+// Pipeline: files -> search -> statusFilter -> folderFilter -> sort -> render
+const _view = {
+  search:       '',
+  statusFilter: 'all',      // 'all' | 'queued' | 'processing' | 'done' | 'error'
+  folderFilter: 'all',      // 'all' | '__root__' | '<folder name>'
+  sortKey:      'date',     // 'name' | 'date' | 'mode' | 'status'
+  sortDir:      'desc',     // 'asc' | 'desc'
+};
+
+// Canonical ordering for the "status" column sort.
+const _STATUS_ORDER = { processing: 0, queued: 1, done: 2, error: 3 };
+
+function _cmp(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
+
+function _sortValue(f, key) {
+  switch (key) {
+    case 'name':   return (f.name || '').toLowerCase();
+    case 'mode':   return (f.mode || '').toLowerCase();
+    case 'status': return _STATUS_ORDER[f.status] ?? 99;
+    // Date: queued_at is epoch seconds; falls back to 0 for legacy entries.
+    // Entries are already in "newest first" insertion order on load, so we
+    // use array index as a tiebreaker stored on the object (see applyPipeline).
+    case 'date':
+    default:       return f.queued_at || 0;
+  }
 }
 
-function renderFiles(data) {
+function applyPipeline(allFiles) {
+  // Stamp each file with its original array index so we have a stable
+  // tiebreaker for date sorting of legacy entries without queued_at.
+  const stamped = allFiles.map((f, i) => ({ ...f, _order: i }));
+  const q = _view.search.trim().toLowerCase();
+  let arr = stamped;
+  if (q) arr = arr.filter(f => (f.name || '').toLowerCase().includes(q));
+  if (_view.statusFilter !== 'all') arr = arr.filter(f => f.status === _view.statusFilter);
+  if (_view.folderFilter !== 'all') {
+    if (_view.folderFilter === '__root__') {
+      arr = arr.filter(f => !(f.folder || ''));
+    } else {
+      // Include items in this folder AND in any descendant folder
+      const wanted = _view.folderFilter;
+      const prefix = wanted + '/';
+      arr = arr.filter(f => {
+        const fp = f.folder || '';
+        return fp === wanted || fp.startsWith(prefix);
+      });
+    }
+  }
+  const key = _view.sortKey;
+  const dir = _view.sortDir === 'asc' ? 1 : -1;
+  arr.sort((a, b) => {
+    const av = _sortValue(a, key);
+    const bv = _sortValue(b, key);
+    const c = _cmp(av, bv);
+    // Tiebreaker: original order (so sort is stable + legacy dates keep their order)
+    if (c !== 0) return c * dir;
+    return (a._order - b._order) * (key === 'date' ? dir : 1);
+  });
+  return arr;
+}
+
+function _getVisibleFiles() { return applyPipeline(files); }
+
+// ═══════════════════════════════════════════════════════════════
+//  TIME ESTIMATION
+// ═══════════════════════════════════════════════════════════════
+// Per-model rate: seconds of wall-clock processing per second of audio.
+// Computed from completed history entries. Returns null if no data for that model.
+function _ratePerAudioSec(model) {
+  let totalProc = 0, totalAudio = 0;
+  for (const f of files) {
+    if (f.status !== 'done' || !f.processing_secs || !f.dur_secs) continue;
+    if (f.mode !== model) continue;
+    totalProc  += f.processing_secs;
+    totalAudio += f.dur_secs;
+  }
+  if (totalAudio <= 0) return null;
+  return totalProc / totalAudio;
+}
+
+// Fallback: average total processing time for that model (when we don't know
+// the audio duration of a queued entry yet).
+function _avgTotalProcessingSecs(model) {
+  const samples = files.filter(f => f.status === 'done' && f.processing_secs && f.mode === model);
+  if (!samples.length) return null;
+  return samples.reduce((s, f) => s + f.processing_secs, 0) / samples.length;
+}
+
+// Estimate remaining seconds for a single entry. Returns null if unknown.
+function estimateRemainingSecs(f, nowTs) {
+  nowTs = nowTs || (Date.now() / 1000);
+  if (f.status === 'done' || f.status === 'error') return 0;
+  const rate = _ratePerAudioSec(f.mode);
+  // If we know audio duration (usually not until after transcription) use rate.
+  // For queued/processing before we know duration, use avg total processing time.
+  let total = null;
+  if (f.dur_secs && rate) total = f.dur_secs * rate;
+  else                    total = _avgTotalProcessingSecs(f.mode);
+  if (total == null) return null;
+  if (f.status === 'processing' && f.started_at) {
+    const elapsed = nowTs - f.started_at;
+    return Math.max(0, total - elapsed);
+  }
+  return total;
+}
+
+function estimateTotalRemaining() {
+  const pending = files.filter(f => f.status === 'queued' || f.status === 'processing');
+  let total = 0, unknown = 0;
+  const now = Date.now() / 1000;
+  for (const f of pending) {
+    const est = estimateRemainingSecs(f, now);
+    if (est == null) unknown++;
+    else total += est;
+  }
+  return { count: pending.length, totalSecs: total, unknown };
+}
+
+function fmtSecs(s) {
+  if (s == null || !isFinite(s)) return '—';
+  s = Math.max(0, Math.round(s));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60), r = s % 60;
+  if (m < 60) return r ? `${m}m ${r}s` : `${m}m`;
+  const h = Math.floor(m / 60), mm = m % 60;
+  return mm ? `${h}h ${mm}m` : `${h}h`;
+}
+
+function renderStatus(status, f) {
+  const s = STATUS_MAP[status] || STATUS_MAP.queued;
+  const extra = status === 'error' ? ' title="Clique para ver o erro"' : '';
+  let eta = '';
+  if (f && (status === 'queued' || status === 'processing')) {
+    const est = estimateRemainingSecs(f);
+    if (est != null && est > 0) eta = `<div class="row-eta">~${fmtSecs(est)} restante${status === 'queued' ? ' (aguardando)' : ''}</div>`;
+  }
+  return `<span class="status-badge ${s.cls}" role="img" aria-label="${s.label}"${extra}>
+    <span class="status-dot"></span>${s.label}
+  </span>${eta}`;
+}
+
+function renderFiles(dataOverride) {
+  // If no explicit data passed, apply the current view pipeline.
+  const data = dataOverride || _getVisibleFiles();
   const tbody = document.getElementById('files-tbody');
   const empty = document.getElementById('empty-state');
   const table = tbody.closest('table');
   tbody.innerHTML = '';
+
+  _renderSortIndicators();
+  _syncFolderButtonLabel();
+  _renderStatusFilterCounts();
+  _renderQueueSummary();
 
   if (!data.length) {
     table.style.display = 'none';
@@ -1046,7 +2169,7 @@ function renderFiles(data) {
       <td class="col-date"><div class="file-date">${esc(f.date)}</div></td>
       <td class="col-dur"><div class="file-dur">${esc(f.dur)}</div></td>
       <td class="col-mode"><span class="mode-badge">${esc(f.mode)}</span></td>
-      <td class="col-status">${renderStatus(f.status)}</td>
+      <td class="col-status">${renderStatus(f.status, f)}</td>
       <td class="col-actions">
         <div class="action-wrap">
           <button class="dots-btn" aria-label="Ações — ${esc(f.name)}" aria-haspopup="true" aria-expanded="false"
@@ -1079,6 +2202,11 @@ function renderFiles(data) {
             <div class="dd-item" role="menuitem" tabindex="-1" onclick="dlFile('${jsAttr(f.id)}','json')">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
               Baixar JSON
+            </div>
+            <div class="dd-sep"></div>
+            <div class="dd-item" role="menuitem" tabindex="-1" onclick="promptMoveToFolder('${jsAttr(f.id)}')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+              Mover para pasta${f.folder ? ` (${esc(f.folder)})` : ''}
             </div>
             <div class="dd-sep"></div>
             <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="deleteFile('${jsAttr(f.id)}')">
@@ -1117,11 +2245,12 @@ function toggleSearch() {
   btn.classList.toggle('active', open);
   btn.setAttribute('aria-expanded', open);
   if (open) document.getElementById('search-input').focus();
-  else { document.getElementById('search-input').value = ''; renderFiles(files); }
+  else { document.getElementById('search-input').value = ''; _view.search = ''; renderFiles(); }
 }
 
 function filterFiles(q) {
-  renderFiles(q ? files.filter(f => f.name.toLowerCase().includes(q.toLowerCase())) : files);
+  _view.search = q || '';
+  renderFiles();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1133,23 +2262,36 @@ function toggleSelect(id, cb) {
   syncHeaderCheck();
 }
 
+// Select/deselect respects the current filter — toggleAll only affects the
+// visible rows, and header indeterminate state is computed against visible too.
 function toggleAll(cb) {
-  files.forEach(f => cb.checked ? selected.add(f.id) : selected.delete(f.id));
-  renderFiles(files);
+  const visible = _getVisibleFiles();
+  visible.forEach(f => cb.checked ? selected.add(f.id) : selected.delete(f.id));
+  renderFiles();
   syncBulkBar();
 }
 
 function syncHeaderCheck() {
   const cb = document.getElementById('check-all');
-  cb.checked = selected.size === files.length && files.length > 0;
-  cb.indeterminate = selected.size > 0 && selected.size < files.length;
+  const visible = _getVisibleFiles();
+  const visibleSelected = visible.filter(f => selected.has(f.id)).length;
+  cb.checked = visibleSelected === visible.length && visible.length > 0;
+  cb.indeterminate = visibleSelected > 0 && visibleSelected < visible.length;
+}
+
+// Returns only the selected IDs that are currently visible under the active
+// filters — bulk actions should never touch rows the user can't see.
+function selectedVisibleIds() {
+  const visible = _getVisibleFiles();
+  return visible.filter(f => selected.has(f.id)).map(f => f.id);
 }
 
 function syncBulkBar() {
   const bar = document.getElementById('bulk-bar');
+  const count = selectedVisibleIds().length;
   document.getElementById('bulk-count').textContent =
-    `${selected.size} selecionado${selected.size !== 1 ? 's' : ''}`;
-  bar.classList.toggle('show', selected.size > 0);
+    `${count} selecionado${count !== 1 ? 's' : ''}`;
+  bar.classList.toggle('show', count > 0);
   syncHeaderCheck();
 }
 
@@ -1174,7 +2316,13 @@ function closeAllDDs() {
 
 document.addEventListener('click', closeAllDDs);
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { closeAllDDs(); closeModal(); closeViewer(); }
+  if (e.key === 'Escape') {
+    // If a dialog is open, cancel it and stop — we don't want ESC to also
+    // close the modal/viewer/etc stacked behind it.
+    const dialog = document.getElementById('dialog-overlay');
+    if (dialog && dialog.classList.contains('open')) { _dialogCancel(); return; }
+    closeAllDDs(); closeModal(); closeViewer(); closeFolderPicker(); closeSidebar();
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -1227,13 +2375,19 @@ async function deleteFile(id) {
   closeAllDDs();
   const f = files.find(x => x.id === id);
   if (!f) return;
-  if (!confirm(`Excluir "${f.name}"?`)) return;
+  const ok = await showConfirm({
+    title: 'Excluir transcrição',
+    message: `"${f.name}" será removido do histórico e todos os arquivos (TXT, SRT, JSON, timestamps) serão apagados do disco.`,
+    confirmText: 'Excluir',
+    danger: true
+  });
+  if (!ok) return;
   try {
     const res = await fetch(`/api/delete/${encodeURIComponent(f.file)}`, { method: 'DELETE' });
     if (!res.ok) throw new Error('delete failed');
     files.splice(files.findIndex(x => x.id === id), 1);
     selected.delete(id);
-    renderFiles(files);
+    renderFiles();
     syncBulkBar();
     await loadStats();
     showToast('Arquivo excluído.', 'success');
@@ -1243,18 +2397,21 @@ async function deleteFile(id) {
 }
 
 async function downloadSelected() {
-  if (!selected.size) return;
-  for (const id of selected) {
+  const ids = selectedVisibleIds();
+  if (!ids.length) return;
+  let n = 0;
+  for (const id of ids) {
     const f = files.find(x => x.id === id);
     if (f && f.status === 'done') {
       const a = document.createElement('a');
       a.href = `/api/download/${encodeURIComponent(f.file)}/txt`;
       a.download = f.name + '.txt';
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      n++;
       await new Promise(r => setTimeout(r, 300));
     }
   }
-  showToast(`${selected.size} arquivo(s) baixado(s).`, 'success');
+  showToast(`${n} arquivo(s) baixado(s).`, 'success');
 }
 
 function downloadAllZip() {
@@ -1262,22 +2419,29 @@ function downloadAllZip() {
 }
 
 async function deleteSelected() {
-  if (!selected.size) return;
-  const count = selected.size;
-  if (!confirm(`Excluir ${count} arquivo(s)?`)) return;
+  const ids = selectedVisibleIds();
+  if (!ids.length) return;
+  const count = ids.length;
+  const ok = await showConfirm({
+    title: `Excluir ${count} transcriç${count === 1 ? 'ão' : 'ões'}`,
+    message: `Os arquivos selecionados serão removidos permanentemente do histórico e do disco.`,
+    confirmText: 'Excluir',
+    danger: true
+  });
+  if (!ok) return;
   let failed = 0;
-  for (const id of selected) {
+  for (const id of ids) {
     const f = files.find(x => x.id === id);
     if (f) {
       try {
         const res = await fetch(`/api/delete/${encodeURIComponent(f.file)}`, { method: 'DELETE' });
         if (!res.ok) { failed++; continue; }
         files.splice(files.findIndex(x => x.id === id), 1);
+        selected.delete(id);
       } catch { failed++; }
     }
   }
-  selected.clear();
-  renderFiles(files);
+  renderFiles();
   syncBulkBar();
   await loadStats();
   if (failed === 0) {
@@ -1327,7 +2491,10 @@ function switchMainTab(tab) {
   ['transcriptions', 'media'].forEach(t => {
     const pressed = t === tab;
     document.getElementById('main-tab-' + t).setAttribute('aria-pressed', pressed);
-    document.getElementById('card-' + t).style.display = pressed ? 'block' : 'none';
+    // Use '' to clear the inline style so the element falls back to its CSS
+    // rule. #card-transcriptions is .card-with-sidebar (display:grid on desktop,
+    // block on mobile via media query); forcing 'block' would break the grid.
+    document.getElementById('card-' + t).style.display = pressed ? '' : 'none';
   });
   if (tab === 'media') {
     loadMedia();
@@ -1772,7 +2939,7 @@ init();
           <td><div class="file-name">${esc(f.name)}</div></td>
           <td class="col-date"><div class="file-date">${esc(f.date)}</div></td>
           <td class="col-dur"><div class="file-dur">${formatBytes(f.size_bytes)}</div></td>
-          <td class="col-status">${renderStatus(f.status)}</td>
+          <td class="col-status">${renderStatus(f.status, null)}</td>
           <td class="col-actions">
             <div class="action-wrap">
               <button class="dots-btn" aria-label="Ações" onclick="toggleDD('media-${jsAttr(f.id)}',this,event)">
@@ -1800,7 +2967,13 @@ init();
     }
 
     async function deleteMediaFile(filename) {
-      if (!confirm('Excluir arquivo físico original permanentemente do cofre local? Essa ação cancela sua re-utilização e libera espaço em HD.')) return;
+      const ok = await showConfirm({
+        title: 'Excluir mídia original',
+        message: 'O arquivo físico será removido do cofre local e não poderá mais ser re-baixado ou re-transcrito. Espaço em disco será liberado.',
+        confirmText: 'Excluir mídia',
+        danger: true
+      });
+      if (!ok) return;
       try {
         await fetch(`/api/delete-media/${encodeURIComponent(filename)}`, { method: 'DELETE' });
         showToast('Mídia original excluída', 'success');
