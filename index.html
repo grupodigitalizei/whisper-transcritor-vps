@@ -4,602 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Whisper Transcritor</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    :root {
-      --blue:      #2563EB;
-      --blue-dk:   #1D4ED8;
-      --blue-lt:   #3B82F6;
-      --blue-50:   #EFF6FF;
-      --blue-100:  #DBEAFE;
-      --blue-200:  #BFDBFE;
-      --slate-900: #0F172A;
-      --slate-800: #1E293B;
-      --slate-700: #334155;
-      --slate-600: #475569;
-      --slate-500: #64748B;
-      --slate-400: #94A3B8;
-      --slate-300: #CBD5E1;
-      --slate-200: #E2E8F0;
-      --slate-100: #F1F5F9;
-      --slate-50:  #F8FAFC;
-      --green:     #16A34A;
-      --green-lt:  #DCFCE7;
-      --red:       #DC2626;
-      --red-lt:    #FEE2E2;
-      --white:     #FFFFFF;
-      --r-sm: 6px; --r-md: 10px; --r-lg: 14px; --r-xl: 18px;
-      --sh-sm: 0 1px 3px rgba(0,0,0,.07), 0 1px 2px rgba(0,0,0,.04);
-      --sh-md: 0 4px 20px rgba(0,0,0,.09), 0 1px 6px rgba(0,0,0,.05);
-      --sh-lg: 0 12px 48px rgba(0,0,0,.14), 0 4px 14px rgba(0,0,0,.07);
-      --ease: cubic-bezier(0.4,0,0.2,1);
-      --t: 170ms;
-    }
-
-    html { scroll-behavior: smooth; }
-    body { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; background: var(--slate-100);
-           color: var(--slate-800); min-height: 100dvh; display: flex; flex-direction: column; }
-
-    /* STATS */
-    .stats-row { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; margin-bottom: 20px; }
-    .stat-card { background: var(--white); border-radius: var(--r-lg); padding: 20px 22px;
-                 box-shadow: var(--sh-sm); display: flex; flex-direction: column; gap: 4px; }
-    .stat-label { font-size: 11.5px; font-weight: 700; color: var(--slate-400);
-                  letter-spacing: .6px; text-transform: uppercase; }
-    .stat-value { font-size: 30px; font-weight: 800; color: var(--slate-900);
-                  letter-spacing: -0.5px; line-height: 1.1; }
-    .stat-sub { font-size: 12px; color: var(--slate-400); margin-top: 1px; }
-    @media (max-width:600px) { .stats-row { grid-template-columns:1fr 1fr; } }
-    @media (max-width:400px) { .stats-row { grid-template-columns:1fr; } }
-
-    /* LAYOUT */
-    .page { flex:1; padding:36px 28px 48px; max-width:1040px; margin:0 auto; width:100%; }
-
-    /* MODE BADGE */
-    .mode-badge { display:inline-flex; align-items:center; padding:2px 8px; border-radius:20px;
-                  background:var(--slate-100); font-size:11.5px; font-weight:700;
-                  color:var(--slate-600); letter-spacing:.2px; white-space:nowrap; }
-
-    /* BUTTONS */
-    .btn { display:inline-flex; align-items:center; justify-content:center; gap:7px;
-           border:none; cursor:pointer; font-family:inherit; font-weight:700;
-           transition:background var(--t) var(--ease), box-shadow var(--t) var(--ease),
-                       transform var(--t) var(--ease), color var(--t) var(--ease),
-                       border-color var(--t) var(--ease); }
-    .btn:active { transform:scale(0.97); }
-    .btn:focus-visible { outline:3px solid var(--blue); outline-offset:2px; }
-
-    .btn-primary { background:var(--blue); color:var(--white); font-size:13px;
-                   letter-spacing:.5px; padding:9px 18px; border-radius:var(--r-sm); }
-    .btn-primary:hover { background:var(--blue-dk); box-shadow:var(--sh-md); }
-
-    .btn-primary-lg { background:var(--blue); color:var(--white); font-size:14px;
-                      letter-spacing:.6px; padding:13px 24px; border-radius:var(--r-md); width:100%; }
-    .btn-primary-lg:hover { background:var(--blue-dk); box-shadow:var(--sh-md); }
-    .btn-primary-lg:disabled { opacity:.55; cursor:not-allowed; transform:none; box-shadow:none; }
-
-    .btn-secondary-lg { background:var(--slate-200); color:var(--slate-800); font-size:14px;
-                        letter-spacing:.6px; padding:13px 24px; border-radius:var(--r-md); width:100%;
-                        border:none; transition: background var(--t) var(--ease), color var(--t) var(--ease); }
-    .btn-secondary-lg:hover { background:var(--slate-300); color:var(--slate-900); }
-
-    .btn-ghost { background:transparent; color:var(--slate-600); font-size:13px;
-                 padding:7px 14px; border-radius:var(--r-sm); border:1.5px solid var(--slate-200); }
-    .btn-ghost:hover { background:var(--slate-100); border-color:var(--slate-300); color:var(--slate-800); }
-
-    /* CARD */
-    .card { background:var(--white); border-radius:var(--r-xl); box-shadow:var(--sh-md); overflow:hidden; }
-
-    /* ICON BUTTON */
-    .icon-btn { width:36px; height:36px; border-radius:var(--r-sm); border:none;
-                background:transparent; color:var(--slate-500); display:inline-flex;
-                align-items:center; justify-content:center; cursor:pointer;
-                transition:background var(--t) var(--ease), color var(--t) var(--ease); flex-shrink:0; }
-    .icon-btn:hover { background:var(--slate-100); color:var(--slate-800); }
-    .icon-btn:focus-visible { outline:3px solid var(--blue); outline-offset:1px; }
-    .icon-btn.active { background:var(--blue-50); color:var(--blue); }
-
-    /* CARD HEADER */
-    .card-header { display:flex; align-items:center; gap:12px; padding:20px 24px 18px;
-                   border-bottom:1px solid var(--slate-100); }
-    .card-title { display:flex; align-items:center; gap:9px; font-size:16px; font-weight:800;
-                  color:var(--slate-900); letter-spacing:-0.2px; }
-    .card-title svg { color:var(--slate-500); }
-    .card-actions { margin-left:auto; display:flex; align-items:center; gap:6px; }
-
-    .transcribe-btn { background:var(--blue); color:var(--white); font-family:inherit;
-                      font-weight:700; font-size:12.5px; letter-spacing:.5px; padding:8px 16px;
-                      border-radius:var(--r-sm); border:none; cursor:pointer; display:flex;
-                      align-items:center; gap:7px; white-space:nowrap;
-                      transition:background var(--t) var(--ease), box-shadow var(--t) var(--ease),
-                                  transform var(--t) var(--ease); }
-    .transcribe-btn:hover { background:var(--blue-dk); box-shadow:var(--sh-sm); }
-    .transcribe-btn:active { transform:scale(0.97); }
-
-    /* SEARCH */
-    .search-bar { overflow:hidden; max-height:0; transition:max-height 220ms var(--ease),
-                  padding 220ms var(--ease); border-bottom:1px solid transparent; }
-    .search-bar.open { max-height:64px; padding:10px 24px; border-bottom-color:var(--slate-100); }
-    .search-wrap { position:relative; }
-    .search-wrap svg { position:absolute; left:11px; top:50%; transform:translateY(-50%);
-                       color:var(--slate-400); pointer-events:none; }
-    .search-input { width:100%; height:38px; padding:0 12px 0 36px; border:1.5px solid var(--slate-200);
-                    border-radius:var(--r-sm); font-family:inherit; font-size:13.5px;
-                    color:var(--slate-800); outline:none; transition:border-color var(--t) var(--ease);
-                    background:var(--slate-50); }
-    .search-input:focus { border-color:var(--blue); background:var(--white); }
-    .search-input::placeholder { color:var(--slate-400); }
-
-    /* BULK BAR */
-    .bulk-bar { display:flex; align-items:center; gap:10px; padding:10px 24px;
-                background:var(--blue); color:var(--white); font-size:13px; font-weight:600;
-                overflow:hidden; max-height:0; opacity:0; padding-top:0; padding-bottom:0;
-                transition:max-height 200ms var(--ease), opacity 200ms var(--ease),
-                            padding 200ms var(--ease); }
-    .bulk-bar.show { max-height:52px; opacity:1; padding-top:10px; padding-bottom:10px; }
-    .bulk-actions { margin-left:auto; display:flex; gap:6px; }
-    .bulk-btn { background:rgba(255,255,255,.15); border:1px solid rgba(255,255,255,.2);
-                color:var(--white); font-family:inherit; font-size:12px; font-weight:700;
-                padding:5px 12px; border-radius:var(--r-sm); cursor:pointer; display:flex;
-                align-items:center; gap:5px; transition:background var(--t) var(--ease); }
-    .bulk-btn:hover { background:rgba(255,255,255,.25); }
-    .bulk-btn.danger { background:var(--red); border-color:var(--red); }
-    .bulk-btn.danger:hover { background:#B91C1C; border-color:#B91C1C; }
-
-    /* PROGRESS */
-    .progress-item { display:flex; align-items:center; gap:14px; padding:12px 24px;
-                     background:var(--blue-50); border-bottom:1px solid var(--blue-100);
-                     animation:slideIn 200ms var(--ease); }
-    @keyframes slideIn { from { opacity:0; transform:translateY(-6px); } }
-    .progress-info { flex:1; min-width:0; }
-    .progress-label { font-size:13px; font-weight:600; color:var(--slate-800); margin-bottom:6px;
-                      overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .progress-track { height:4px; background:var(--blue-100); border-radius:2px; overflow:hidden; }
-    .progress-fill { height:100%; background:var(--blue); border-radius:2px;
-                     transition:width 350ms var(--ease); }
-    .progress-pct { font-size:11.5px; font-weight:700; color:var(--blue); margin-top:4px; }
-
-    /* TABLE */
-    .files-table { width:100%; border-collapse:collapse; }
-    .files-table thead tr { border-bottom:1px solid var(--slate-100); }
-    .files-table th { padding:10px 14px; text-align:left; font-size:11.5px; font-weight:700;
-                      color:var(--slate-400); letter-spacing:.7px; text-transform:uppercase;
-                      white-space:nowrap; user-select:none; }
-    .files-table th.col-check { width:44px; padding-left:24px; }
-    .files-table th.col-date  { width:195px; }
-    .files-table th.col-dur   { width:100px; }
-    .files-table th.col-mode  { width:80px; text-align:center; }
-    .files-table th.col-status { width:110px; text-align:center; }
-    .files-table th.col-actions { width:44px; }
-    .files-table tbody tr { border-bottom:1px solid var(--slate-100);
-                            transition:background var(--t) var(--ease); cursor:pointer; }
-    .files-table tbody tr:last-child { border-bottom:none; }
-    .files-table tbody tr:hover { background:var(--slate-50); }
-    .files-table td { padding:13px 14px; font-size:13.5px; color:var(--slate-600);
-                      vertical-align:middle; }
-    .files-table td.col-check { padding-left:24px; }
-    .files-table td.col-mode, .files-table td.col-status,
-    .files-table td.col-actions { text-align:center; }
-    .file-name { font-weight:600; color:var(--slate-900); font-size:13.5px; line-height:1.3; }
-    .file-date { font-size:12.5px; color:var(--slate-400); }
-    .file-dur  { font-size:13px; font-weight:600; color:var(--slate-600); font-variant-numeric:tabular-nums; }
-
-    /* CHECKBOX */
-    .checkbox { width:16px; height:16px; accent-color:var(--blue); cursor:pointer; }
-
-    /* STATUS */
-    .status-badge { display:inline-flex; align-items:center; gap:5px; padding:3px 9px;
-                    border-radius:20px; font-size:11.5px; font-weight:700; white-space:nowrap; }
-    .status-badge.done       { background:#DCFCE7; color:#15803D; }
-    .status-badge.queued     { background:var(--slate-100); color:var(--slate-500); }
-    .status-badge.processing { background:var(--blue-50); color:var(--blue); }
-    .status-badge.error      { background:#FEE2E2; color:#B91C1C; cursor:pointer; }
-    .status-badge.error:hover{ background:#FECACA; }
-    .status-dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
-    .status-badge.done .status-dot       { background:#16A34A; }
-    .status-badge.queued .status-dot     { background:var(--slate-400); }
-    .status-badge.processing .status-dot { background:var(--blue);
-                                           animation:pulse 1.2s ease-in-out infinite; }
-    .status-badge.error .status-dot      { background:#DC2626; }
-    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
-    .status-spinner { width:22px; height:22px; border:2.5px solid var(--blue-100);
-                      border-top-color:var(--blue); border-radius:50%;
-                      animation:spin .75s linear infinite; display:inline-block; flex-shrink:0; }
-    @keyframes spin { to { transform:rotate(360deg); } }
-
-    /* ACTION MENU */
-    .action-wrap { position:relative; display:inline-flex; }
-    .dots-btn { width:30px; height:30px; border-radius:var(--r-sm); border:none;
-                background:transparent; color:var(--slate-400); cursor:pointer;
-                display:inline-flex; align-items:center; justify-content:center;
-                transition:background var(--t) var(--ease), color var(--t) var(--ease); }
-    .dots-btn:hover { background:var(--slate-100); color:var(--slate-700); }
-    .dots-btn[aria-expanded="true"] { background:var(--slate-100); color:var(--slate-700); }
-    .dropdown { position:absolute; right:0; top:calc(100% + 4px); background:var(--white);
-                border:1.5px solid var(--slate-200); border-radius:var(--r-md);
-                box-shadow:var(--sh-lg); min-width:192px; z-index:60; overflow:hidden;
-                opacity:0; transform:translateY(-5px) scale(0.97); pointer-events:none;
-                transition:opacity 140ms var(--ease), transform 140ms var(--ease);
-                transform-origin:top right; }
-    .dropdown.open { opacity:1; transform:none; pointer-events:auto; }
-    .dd-item { display:flex; align-items:center; gap:10px; padding:9px 14px; font-size:13px;
-               font-weight:500; color:var(--slate-700); cursor:pointer; white-space:nowrap;
-               transition:background var(--t) var(--ease); }
-    .dd-item:hover { background:var(--slate-50); }
-    .dd-item svg { color:var(--slate-400); flex-shrink:0; }
-    .dd-item.danger { color:var(--red); }
-    .dd-item.danger svg { color:var(--red); }
-    .dd-item.danger:hover { background:var(--red-lt); }
-    .dd-sep { height:1px; background:var(--slate-100); margin:3px 0; }
-
-    /* EMPTY STATE */
-    .empty-state { padding:72px 32px 80px; text-align:center; display:none;
-                   flex-direction:column; align-items:center; gap:14px; }
-    .empty-icon { width:72px; height:72px; border-radius:50%; background:var(--blue-50);
-                  display:flex; align-items:center; justify-content:center;
-                  color:var(--blue); margin-bottom:4px; }
-    .empty-title { font-size:18px; font-weight:800; color:var(--slate-900); }
-    .empty-sub { font-size:13.5px; color:var(--slate-500); max-width:320px; line-height:1.65; }
-    .tip-row { display:flex; align-items:center; gap:8px; font-size:12.5px;
-               color:var(--slate-400); margin-top:4px; }
-    .tip-tag { background:var(--blue); color:var(--white); font-size:10.5px; font-weight:800;
-               letter-spacing:.5px; padding:2px 8px; border-radius:20px; }
-
-    /* MODAL */
-    .overlay { position:fixed; inset:0; background:rgba(15,23,42,.5); backdrop-filter:blur(4px);
-               z-index:200; display:flex; align-items:center; justify-content:center;
-               padding:16px; opacity:0; pointer-events:none; transition:opacity 180ms var(--ease); }
-    .overlay.open { opacity:1; pointer-events:auto; }
-    .modal { background:var(--white); border-radius:var(--r-xl); box-shadow:var(--sh-lg);
-             width:100%; max-width:500px; max-height:calc(100dvh - 32px);
-             display:flex; flex-direction:column;
-             transform:translateY(14px) scale(0.98); opacity:0;
-             transition:transform 220ms cubic-bezier(0.34,1.5,0.64,1), opacity 180ms var(--ease); }
-    .overlay.open .modal { transform:none; opacity:1; }
-    .modal-head { display:flex; align-items:center; gap:10px; padding:20px 24px 16px;
-                  border-bottom:1px solid var(--slate-100); flex-shrink:0; }
-    .modal-title { font-size:16px; font-weight:800; color:var(--slate-900); letter-spacing:-0.2px; }
-    .modal-close { width:30px; height:30px; border-radius:var(--r-sm); border:none;
-                   background:transparent; color:var(--slate-400); cursor:pointer;
-                   display:flex; align-items:center; justify-content:center; margin-left:auto;
-                   transition:background var(--t) var(--ease), color var(--t) var(--ease); }
-    .modal-close:hover { background:var(--slate-100); color:var(--slate-700); }
-    .modal-body { padding:20px 24px; display:flex; flex-direction:column;
-                  gap:18px; overflow-y:auto; flex:1; }
-    .modal-foot { padding:0 24px 20px; display:flex; flex-direction:column;
-                  gap:10px; flex-shrink:0; }
-    .tos { font-size:11.5px; color:var(--slate-400); text-align:center; line-height:1.55; }
-    .tos a { color:var(--blue); text-decoration:none; font-weight:600; }
-
-    /* SEGMENTED TABS */
-    .seg-tabs { display:flex; gap:3px; background:var(--slate-100); border-radius:var(--r-sm); padding:3px; }
-    .seg-tab { flex:1; display:flex; align-items:center; justify-content:center; gap:6px;
-               padding:7px 10px; border:none; border-radius:4px; font-family:inherit;
-               font-size:12.5px; font-weight:600; color:var(--slate-500); background:transparent;
-               cursor:pointer; transition:background var(--t) var(--ease), color var(--t) var(--ease),
-                                          box-shadow var(--t) var(--ease); }
-    .seg-tab[aria-pressed="true"] { background:var(--white); color:var(--slate-800); box-shadow:var(--sh-sm); }
-    .seg-tab:focus-visible { outline:3px solid var(--blue); outline-offset:1px; }
-
-    /* DROPZONE */
-    .dropzone { border:2px dashed var(--slate-200); border-radius:var(--r-lg);
-                background:var(--slate-50); padding:32px 24px; text-align:center;
-                cursor:pointer; position:relative;
-                transition:border-color var(--t) var(--ease), background var(--t) var(--ease); }
-    .dropzone:hover { border-color:var(--blue-lt); background:var(--blue-50); }
-    .dropzone.drag-over { border-color:var(--blue); background:var(--blue-50); }
-    .dropzone input[type="file"] { position:absolute; inset:0; opacity:0; cursor:pointer;
-                                    width:100%; height:100%; }
-    .dz-icon { width:52px; height:52px; border-radius:50%; background:var(--white);
-               border:1.5px solid var(--slate-200); display:flex; align-items:center;
-               justify-content:center; margin:0 auto 12px; color:var(--blue);
-               box-shadow:var(--sh-sm);
-               transition:border-color var(--t) var(--ease), box-shadow var(--t) var(--ease); }
-    .dropzone:hover .dz-icon { border-color:var(--blue-200); box-shadow:0 0 0 4px var(--blue-50); }
-    .dz-title { font-size:14px; font-weight:700; color:var(--slate-800); margin-bottom:4px; }
-    .dz-formats { font-size:12px; color:var(--slate-400); line-height:1.55; }
-    .dz-or { display:flex; align-items:center; gap:10px; font-size:11.5px;
-              color:var(--slate-400); margin:14px 0; }
-    .dz-or::before,.dz-or::after { content:''; flex:1; height:1px; background:var(--slate-200); }
-    .browse-btn { display:inline-flex; align-items:center; gap:6px; padding:7px 18px;
-                  border:1.5px solid var(--slate-300); border-radius:var(--r-sm);
-                  font-family:inherit; font-size:12px; font-weight:700; letter-spacing:.4px;
-                  color:var(--slate-700); background:var(--white); cursor:pointer;
-                  transition:border-color var(--t) var(--ease), background var(--t) var(--ease); }
-    .browse-btn:hover { border-color:var(--slate-400); background:var(--slate-50); }
-
-    /* FILE CHIP */
-    .file-chip { display:none; align-items:center; gap:12px; padding:12px 14px;
-                 background:var(--blue-50); border:1.5px solid var(--blue-200);
-                 border-radius:var(--r-md); animation:fadeIn 150ms var(--ease); }
-    .file-chip.show { display:flex; }
-    @keyframes fadeIn { from { opacity:0; transform:scale(0.98); } }
-    .file-chip-icon { width:38px; height:38px; border-radius:var(--r-sm); background:var(--blue);
-                      display:flex; align-items:center; justify-content:center;
-                      color:var(--white); flex-shrink:0; }
-    .file-chip-info { flex:1; min-width:0; }
-    .file-chip-name { font-size:13px; font-weight:700; color:var(--slate-800);
-                      overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .file-chip-size { font-size:11.5px; color:var(--slate-500); margin-top:2px; }
-    .file-chip-remove { background:none; border:none; color:var(--slate-400); cursor:pointer;
-                        padding:6px; border-radius:4px; transition:color var(--t) var(--ease);
-                        display:flex; }
-    .file-chip-remove:hover { color:var(--red); }
-
-    /* FIELD */
-    .field-label { display:block; font-size:12.5px; font-weight:700; color:var(--slate-600);
-                   letter-spacing:.2px; margin-bottom:6px; }
-    .select { width:100%; height:40px; padding:0 34px 0 12px;
-              border:1.5px solid var(--slate-200); border-radius:var(--r-sm);
-              font-family:inherit; font-size:13.5px; color:var(--slate-800);
-              background:var(--white) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2394A3B8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E") no-repeat right 11px center;
-              appearance:none; outline:none; cursor:pointer;
-              transition:border-color var(--t) var(--ease); }
-    .select:focus { border-color:var(--blue); }
-
-    /* ADVANCED TOGGLE */
-    .adv-toggle { display:flex; align-items:center; gap:7px; cursor:pointer; font-size:13px;
-                  font-weight:600; color:var(--slate-500); background:none; border:none;
-                  font-family:inherit; padding:0; transition:color var(--t) var(--ease); }
-    .adv-toggle:hover { color:var(--blue); }
-    .adv-chevron { transition:transform var(--t) var(--ease); }
-    .adv-toggle.open .adv-chevron { transform:rotate(180deg); }
-    .adv-panel { display:grid; grid-template-rows:0fr; transition:grid-template-rows 200ms var(--ease); }
-    .adv-panel.open { grid-template-rows:1fr; }
-    .adv-panel-inner { overflow:hidden; }
-    .adv-content { display:flex; flex-direction:column; gap:14px; padding:14px; margin-top:10px;
-                   background:var(--slate-50); border-radius:var(--r-md);
-                   border:1.5px solid var(--slate-100); }
-
-    /* TOGGLE SWITCH */
-    .toggle-row { display:flex; align-items:center; justify-content:space-between; gap:12px; }
-    .toggle-info { flex:1; }
-    .toggle-label { font-size:13px; font-weight:600; color:var(--slate-700); }
-    .toggle-sub { font-size:11.5px; color:var(--slate-400); margin-top:2px; }
-    .switch { position:relative; width:40px; height:22px; flex-shrink:0; cursor:pointer; }
-    .switch input { opacity:0; width:0; height:0; position:absolute; }
-    .switch-track { position:absolute; inset:0; background:var(--slate-200); border-radius:11px;
-                    transition:background var(--t) var(--ease); }
-    .switch input:checked + .switch-track { background:var(--blue); }
-    .switch-thumb { position:absolute; top:3px; left:3px; width:16px; height:16px;
-                    background:var(--white); border-radius:50%; box-shadow:0 1px 3px rgba(0,0,0,.2);
-                    transition:transform var(--t) var(--ease); pointer-events:none; }
-    .switch input:checked ~ .switch-thumb { transform:translateX(18px); }
-
-    /* RECORDING */
-    .rec-area { text-align:center; padding:28px 16px; background:var(--slate-50);
-                border-radius:var(--r-lg); border:1.5px dashed var(--slate-200); }
-    .rec-icon { width:56px; height:56px; border-radius:50%; background:var(--red-lt);
-                display:flex; align-items:center; justify-content:center;
-                margin:0 auto 10px; color:var(--red); transition:all .3s; }
-    .rec-icon.recording { background:var(--red); color:var(--white);
-                          animation:recPulse 1s ease-in-out infinite; }
-    @keyframes recPulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.08)} }
-    .rec-timer { font-size:28px; font-weight:800; color:var(--slate-900);
-                 font-variant-numeric:tabular-nums; letter-spacing:-.5px; margin:8px 0 4px; display:none; }
-    .rec-timer.show { display:block; }
-
-    /* TOAST */
-    .toast-area { position:fixed; bottom:20px; right:20px; display:flex; flex-direction:column;
-                  gap:8px; z-index:500; pointer-events:none; }
-    .toast { display:flex; align-items:center; gap:10px; padding:12px 16px;
-             background:var(--slate-900); color:var(--white); border-radius:var(--r-md);
-             font-size:13px; font-weight:500; box-shadow:var(--sh-lg);
-             animation:toastIn 240ms cubic-bezier(0.34,1.5,0.64,1);
-             max-width:340px; pointer-events:auto; }
-    .toast.success { background:#15803D; }
-    .toast.error   { background:var(--red); }
-    @keyframes toastIn { from { opacity:0; transform:translateX(20px) scale(0.96); } }
-
-    /* VIEWER MODAL */
-    .viewer-modal { max-width:700px; }
-    .viewer-tabs { display:flex; gap:0; border-bottom:1px solid var(--slate-100); padding:0 24px; }
-    .vtab { padding:10px 16px; font-size:13px; font-weight:600; color:var(--slate-500);
-            border:none; background:transparent; cursor:pointer; font-family:inherit;
-            border-bottom:2px solid transparent; margin-bottom:-1px;
-            transition:color var(--t) var(--ease), border-color var(--t) var(--ease); }
-    .vtab.active { color:var(--slate-900); border-bottom-color:var(--blue); }
-    .vtab:focus-visible { outline:3px solid var(--blue); outline-offset:1px; }
-    .viewer-body { padding:20px 24px; flex:1; overflow-y:auto; }
-    .viewer-textarea { width:100%; min-height:340px; border:1.5px solid var(--slate-200);
-                       border-radius:var(--r-md); padding:14px; font-family:inherit;
-                       font-size:13px; line-height:1.75; color:var(--slate-700);
-                       resize:vertical; outline:none; background:var(--slate-50); }
-    .viewer-textarea:focus { border-color:var(--blue); background:var(--white); }
-    .viewer-dl-row { display:flex; gap:8px; flex-wrap:wrap; padding:0 24px 20px; flex-shrink:0; }
-
-    /* RESPONSIVE */
-    @media (max-width:720px) {
-      .page { padding:20px 16px 40px; }
-      .files-table th.col-date, .files-table td.col-date { display:none; }
-      .modal-body { padding:16px 18px; }
-      .modal-head { padding:16px 18px 14px; }
-      .modal-foot { padding:0 18px 16px; }
-    }
-    @media (max-width:480px) {
-      .files-table th.col-dur, .files-table td.col-dur { display:none; }
-      .card-header { flex-wrap:wrap; }
-    }
-    @media (prefers-reduced-motion:reduce) {
-      *,*::before,*::after { animation-duration:.01ms !important; transition-duration:.01ms !important; }
-    }
-    .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px;
-               overflow:hidden; clip:rect(0,0,0,0); border:0; }
-
-    /* FILTER BAR (status chips + folder select + queue summary) */
-    .filter-bar { display:flex; align-items:center; flex-wrap:wrap; gap:10px;
-                  padding:12px 24px; border-bottom:1px solid var(--slate-100);
-                  background:var(--slate-50); }
-    .chip-group { display:inline-flex; gap:6px; flex-wrap:wrap; }
-    .chip { display:inline-flex; align-items:center; gap:6px; padding:5px 11px;
-            border-radius:20px; border:1.5px solid var(--slate-200);
-            background:var(--white); color:var(--slate-600);
-            font-size:12px; font-weight:700; cursor:pointer;
-            transition:background var(--t) var(--ease), color var(--t) var(--ease),
-                        border-color var(--t) var(--ease); white-space:nowrap;
-            font-family:inherit; }
-    .chip:hover { background:var(--slate-100); color:var(--slate-800); }
-    .chip[aria-pressed="true"] { background:var(--blue); color:var(--white); border-color:var(--blue); }
-    .chip-count { display:inline-flex; align-items:center; justify-content:center;
-                  min-width:18px; height:18px; padding:0 5px; border-radius:9px;
-                  background:var(--slate-100); color:var(--slate-600);
-                  font-size:10.5px; font-weight:800; }
-    .chip[aria-pressed="true"] .chip-count { background:rgba(255,255,255,.25); color:var(--white); }
-
-    .folder-select-wrap { margin-left:auto; display:inline-flex; align-items:center; gap:8px; }
-    .folder-select-wrap label { font-size:11.5px; font-weight:700; color:var(--slate-500);
-                                text-transform:uppercase; letter-spacing:.6px; }
-    .folder-select { height:32px; padding:0 26px 0 10px; border:1.5px solid var(--slate-200);
-                     border-radius:var(--r-sm); font-family:inherit; font-size:12.5px;
-                     color:var(--slate-800); background:var(--white) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394A3B8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E") no-repeat right 9px center;
-                     appearance:none; outline:none; cursor:pointer;
-                     transition:border-color var(--t) var(--ease); }
-    .folder-select:focus { border-color:var(--blue); }
-
-    /* QUEUE SUMMARY — tempo estimado restante acima do progress */
-    .queue-summary { display:none; align-items:center; gap:10px; padding:8px 24px;
-                     background:var(--blue-50); border-bottom:1px solid var(--blue-100);
-                     font-size:12.5px; color:var(--slate-700); }
-    .queue-summary.show { display:flex; }
-    .queue-summary strong { color:var(--blue); font-weight:800; }
-
-    /* SORTABLE HEADERS */
-    .files-table th.sortable { cursor:pointer; user-select:none; }
-    .files-table th.sortable:hover { color:var(--slate-600); }
-    .files-table th.sortable .sort-arrow { display:inline-block; margin-left:4px;
-                                             font-size:10px; color:var(--slate-300); vertical-align:middle; }
-    .files-table th.sortable[aria-sort="ascending"]  .sort-arrow,
-    .files-table th.sortable[aria-sort="descending"] .sort-arrow { color:var(--blue); }
-
-    /* ROW STATUS — estimativa em linha queued/processing */
-    .row-eta { font-size:10.5px; color:var(--slate-400); font-weight:600;
-               margin-top:2px; font-variant-numeric:tabular-nums; }
-
-    /* SIDEBAR + TREE (pastas) */
-    .card-with-sidebar { display:grid; grid-template-columns:240px 1fr;
-                         background:var(--white); border-radius:var(--r-xl);
-                         box-shadow:var(--sh-md); overflow:hidden; }
-    .folder-sidebar { background:var(--slate-50); border-right:1px solid var(--slate-100);
-                      display:flex; flex-direction:column; min-height:200px; }
-    .folder-sidebar-header { padding:14px 16px 10px; display:flex; align-items:center;
-                             gap:8px; border-bottom:1px solid var(--slate-100); }
-    .folder-sidebar-title { font-size:11px; font-weight:800; letter-spacing:.8px;
-                            color:var(--slate-500); text-transform:uppercase; flex:1; }
-    .folder-new-btn { width:26px; height:26px; border-radius:var(--r-sm); border:none;
-                      background:var(--slate-200); color:var(--slate-700); cursor:pointer;
-                      display:flex; align-items:center; justify-content:center;
-                      transition:background var(--t) var(--ease), color var(--t) var(--ease); }
-    .folder-new-btn:hover { background:var(--blue); color:var(--white); }
-    .folder-tree { flex:1; overflow-y:auto; padding:6px 8px 14px; }
-    .folder-tree ul { list-style:none; padding:0; margin:0; }
-    .folder-tree ul ul { padding-left:16px; }
-    .folder-node { display:flex; align-items:center; gap:6px; padding:5px 8px;
-                   border-radius:var(--r-sm); font-size:12.5px; font-weight:600;
-                   color:var(--slate-700); cursor:pointer; position:relative;
-                   transition:background var(--t) var(--ease), color var(--t) var(--ease); }
-    .folder-node:hover { background:var(--slate-200); }
-    .folder-node.active { background:var(--blue); color:var(--white); }
-    .folder-node.active .folder-count { background:rgba(255,255,255,.25); color:var(--white); }
-    .folder-node .twist { width:14px; height:14px; display:inline-flex; align-items:center;
-                          justify-content:center; color:var(--slate-400); flex-shrink:0;
-                          transition:transform var(--t) var(--ease); }
-    .folder-node.active .twist { color:var(--white); }
-    .folder-node.expanded > .twist { transform:rotate(90deg); }
-    .folder-node .twist.leaf { opacity:0; pointer-events:none; }
-    .folder-node .ficon { width:14px; height:14px; flex-shrink:0; color:var(--slate-400); }
-    .folder-node.active .ficon { color:var(--white); }
-    .folder-node .folder-label { flex:1; white-space:nowrap; overflow:hidden;
-                                 text-overflow:ellipsis; }
-    .folder-count { display:inline-flex; align-items:center; justify-content:center;
-                    min-width:18px; height:18px; padding:0 5px; border-radius:9px;
-                    background:var(--slate-200); color:var(--slate-600);
-                    font-size:10.5px; font-weight:800; flex-shrink:0; }
-    .folder-menu-btn { width:22px; height:22px; border-radius:var(--r-sm); border:none;
-                       background:transparent; color:var(--slate-400); cursor:pointer;
-                       display:inline-flex; align-items:center; justify-content:center;
-                       opacity:0; transition:opacity var(--t) var(--ease),
-                                              background var(--t) var(--ease),
-                                              color var(--t) var(--ease); flex-shrink:0; }
-    .folder-node:hover .folder-menu-btn { opacity:1; }
-    .folder-node.active .folder-menu-btn { color:rgba(255,255,255,.8); }
-    .folder-menu-btn:hover { background:var(--slate-300); color:var(--slate-900); }
-    .folder-node.active .folder-menu-btn:hover { background:rgba(255,255,255,.2); color:var(--white); }
-    .folder-child-nodes { margin-top:1px; display:none; }
-    .folder-node.expanded + .folder-child-nodes { display:block; }
-
-    /* Mobile: sidebar vira drawer */
-    .sidebar-toggle { display:none; align-items:center; gap:6px; padding:6px 12px;
-                      border:1.5px solid var(--slate-200); border-radius:var(--r-sm);
-                      background:var(--white); cursor:pointer; font-family:inherit;
-                      font-size:12px; font-weight:700; color:var(--slate-700); }
-    @media (max-width:900px) {
-      .card-with-sidebar { display:block; }
-      .folder-sidebar { position:fixed; top:0; left:0; bottom:0; width:260px; z-index:250;
-                        background:var(--white); box-shadow:var(--sh-lg);
-                        transform:translateX(-100%); transition:transform 220ms var(--ease);
-                        border-right:1px solid var(--slate-100); }
-      .folder-sidebar.open { transform:none; }
-      .sidebar-backdrop { position:fixed; inset:0; background:rgba(15,23,42,.4); z-index:249;
-                          opacity:0; pointer-events:none; transition:opacity 180ms var(--ease); }
-      .sidebar-backdrop.open { opacity:1; pointer-events:auto; }
-      .sidebar-toggle { display:inline-flex; }
-    }
-
-    /* GENERIC DIALOG (prompt / confirm / choice) */
-    .dialog-message { font-size:13.5px; color:var(--slate-600); line-height:1.55;
-                      white-space:pre-line; }
-    .dialog-error   { font-size:12px; color:var(--red); margin-top:-6px; font-weight:600; }
-    .dialog-input   { width:100%; height:40px; padding:0 12px; border:1.5px solid var(--slate-200);
-                      border-radius:var(--r-sm); font-family:inherit; font-size:13.5px;
-                      color:var(--slate-800); outline:none; background:var(--white);
-                      transition:border-color var(--t) var(--ease); }
-    .dialog-input:focus { border-color:var(--blue); }
-    .dialog-input.invalid { border-color:var(--red); }
-    .dialog-choices { display:flex; flex-direction:column; gap:6px; margin-top:4px; }
-    .dialog-choice  { display:flex; align-items:center; gap:12px; padding:12px 14px;
-                      border:1.5px solid var(--slate-200); border-radius:var(--r-md);
-                      background:var(--white); cursor:pointer; text-align:left;
-                      font-family:inherit; font-size:13.5px; font-weight:600;
-                      color:var(--slate-800); width:100%;
-                      transition:background var(--t) var(--ease),
-                                  border-color var(--t) var(--ease),
-                                  transform var(--t) var(--ease); }
-    .dialog-choice:hover { background:var(--slate-50); border-color:var(--blue); }
-    .dialog-choice:active { transform:scale(0.99); }
-    .dialog-choice:focus-visible { outline:3px solid var(--blue); outline-offset:1px; }
-    .dialog-choice-icon { width:34px; height:34px; border-radius:var(--r-sm);
-                          background:var(--blue-50); color:var(--blue);
-                          display:flex; align-items:center; justify-content:center; flex-shrink:0; }
-    .dialog-choice-body { flex:1; min-width:0; }
-    .dialog-choice-label { font-size:13.5px; font-weight:700; color:var(--slate-900); }
-    .dialog-choice-sub   { font-size:12px; color:var(--slate-500); margin-top:2px; font-weight:500; }
-    .dialog-choice.danger .dialog-choice-icon { background:var(--red-lt); color:var(--red); }
-    .dialog-choice.danger:hover { border-color:var(--red); }
-    .dialog-choice.danger .dialog-choice-label { color:var(--red); }
-
-    /* Danger variant for the confirm button in the shared dialog footer */
-    .btn-danger-lg { background:var(--red); color:var(--white); font-size:14px;
-                     letter-spacing:.6px; padding:13px 24px; border-radius:var(--r-md); width:100%; }
-    .btn-danger-lg:hover { background:#B91C1C; box-shadow:var(--sh-md); }
-
-    /* FOLDER PICKER MODAL */
-    .folder-picker-list { max-height:320px; overflow-y:auto;
-                          border:1.5px solid var(--slate-200); border-radius:var(--r-sm);
-                          padding:6px 4px; background:var(--slate-50); }
-    .folder-picker-list ul { list-style:none; padding:0; margin:0; }
-    .folder-picker-list ul ul { padding-left:18px; }
-    .folder-picker-item { display:flex; align-items:center; gap:6px; padding:6px 10px;
-                          border-radius:var(--r-sm); font-size:13px; font-weight:600;
-                          color:var(--slate-700); cursor:pointer; }
-    .folder-picker-item:hover { background:var(--slate-200); }
-    .folder-picker-item.selected { background:var(--blue); color:var(--white); }
-  </style>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
+
+<h1 class="sr-only">Whisper Transcritor — Transcrições locais de áudio e vídeo</h1>
 
 <div class="page">
 
@@ -616,33 +26,34 @@
       <div class="stat-sub">total acumulado</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Créditos restantes</div>
-      <div class="stat-value" style="color:var(--blue)">∞</div>
-      <div class="stat-sub" style="color:var(--blue);font-weight:700">Plano Ilimitado — Local</div>
+      <div class="stat-label">Tarefas na fila</div>
+      <div class="stat-value" id="stat-queue">—</div>
+      <div class="stat-sub" id="stat-queue-sub">aguardando ou processando</div>
     </div>
   </div>
 
   <!-- Main Tabs -->
-  <div class="seg-tabs" style="margin-bottom: 24px; max-width: 400px; margin-left: auto; margin-right: auto;" role="tablist">
-    <button id="main-tab-transcriptions" class="seg-tab" aria-pressed="true" onclick="switchMainTab('transcriptions')" role="tab">
+  <div class="seg-tabs" style="margin-bottom: 24px; max-width: 400px; margin-left: auto; margin-right: auto;" role="tablist" aria-label="Visualização">
+    <button type="button" id="main-tab-transcriptions" class="seg-tab" role="tab" aria-selected="true" aria-controls="card-transcriptions" tabindex="0" onclick="switchMainTab('transcriptions')" onkeydown="onTablistKey(event, 'main')">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right:6px; margin-top:-2px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
       Transcrições
     </button>
-    <button id="main-tab-media" class="seg-tab" aria-pressed="false" onclick="switchMainTab('media')" role="tab">
+    <button type="button" id="main-tab-media" class="seg-tab" role="tab" aria-selected="false" aria-controls="card-media" tabindex="-1" onclick="switchMainTab('media')" onkeydown="onTablistKey(event, 'main')">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right:6px; margin-top:-2px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       Biblioteca de Mídia
     </button>
   </div>
 
   <!-- Files Card + Sidebar -->
-  <div class="card-with-sidebar" id="card-transcriptions" role="tabpanel" aria-label="Arquivos transcritos">
+  <div class="card-with-sidebar" id="card-transcriptions" role="tabpanel" aria-labelledby="main-tab-transcriptions">
 
     <!-- Sidebar de pastas -->
     <aside class="folder-sidebar" id="folder-sidebar" aria-label="Pastas">
       <div class="folder-sidebar-header">
         <span class="folder-sidebar-title">Pastas</span>
-        <button class="folder-new-btn" onclick="promptCreateFolder('')" aria-label="Nova pasta na raiz" title="Nova pasta">
+        <button type="button" class="folder-new-btn" onclick="promptCreateFolder('')" aria-label="Nova pasta na raiz" title="Nova pasta">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          <span class="folder-new-btn-label">Nova pasta</span>
         </button>
       </div>
       <div class="folder-tree" id="folder-tree">
@@ -658,30 +69,22 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
       <span id="bulk-count">0 selecionados</span>
       <div class="bulk-actions">
-        <button class="bulk-btn" onclick="downloadSelected()">
+        <button type="button" class="bulk-btn" onclick="downloadSelected()">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Baixar TXT
         </button>
-        <button class="bulk-btn" onclick="downloadAllZip()">
+        <button type="button" class="bulk-btn" onclick="downloadAllZip()">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Baixar ZIP
         </button>
-        <button class="bulk-btn danger" onclick="deleteSelected()">
+        <button type="button" class="bulk-btn" onclick="moveSelectedToFolder()">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          Mover para pasta
+        </button>
+        <button type="button" class="bulk-btn danger" onclick="deleteSelected()">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
           Excluir
         </button>
-      </div>
-    </div>
-
-    <!-- Progress bar -->
-    <div class="progress-item" id="progress-item" style="display:none" role="status" aria-live="polite">
-      <div class="status-spinner" aria-hidden="true"></div>
-      <div class="progress-info">
-        <div class="progress-label" id="progress-name">Transcrevendo...</div>
-        <div class="progress-track" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
-          <div class="progress-fill" id="progress-fill" style="width:0%"></div>
-        </div>
-        <div class="progress-pct" id="progress-pct">0%</div>
       </div>
     </div>
 
@@ -692,13 +95,10 @@
         Arquivos recentes
       </div>
       <div class="card-actions">
-        <button class="icon-btn" id="search-toggle" onclick="toggleSearch()" aria-label="Buscar arquivos" aria-expanded="false" title="Buscar">
+        <button type="button" class="icon-btn" id="search-toggle" onclick="toggleSearch()" aria-label="Buscar arquivos" aria-expanded="false" title="Buscar">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         </button>
-        <button class="icon-btn" onclick="openModal('rec')" aria-label="Gravar áudio" title="Gravar">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-        </button>
-        <button class="transcribe-btn" onclick="openModal('file')" aria-label="Transcrever arquivos">
+        <button type="button" class="transcribe-btn" onclick="openModal('file')" aria-label="Transcrever arquivos">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
           TRANSCREVER ARQUIVOS
         </button>
@@ -708,24 +108,24 @@
     <!-- Filter bar: status chips + folder select -->
     <div class="filter-bar" role="region" aria-label="Filtros">
       <div class="chip-group" role="group" aria-label="Filtrar por status">
-        <button class="chip" data-status="all" aria-pressed="true" onclick="setStatusFilter('all')">
+        <button type="button" class="chip" data-status="all" aria-pressed="true" onclick="setStatusFilter('all')">
           Todos <span class="chip-count" id="chip-count-all">0</span>
         </button>
-        <button class="chip" data-status="queued" aria-pressed="false" onclick="setStatusFilter('queued')">
+        <button type="button" class="chip" data-status="queued" aria-pressed="false" onclick="setStatusFilter('queued')">
           Aguardando <span class="chip-count" id="chip-count-queued">0</span>
         </button>
-        <button class="chip" data-status="processing" aria-pressed="false" onclick="setStatusFilter('processing')">
+        <button type="button" class="chip" data-status="processing" aria-pressed="false" onclick="setStatusFilter('processing')">
           Processando <span class="chip-count" id="chip-count-processing">0</span>
         </button>
-        <button class="chip" data-status="done" aria-pressed="false" onclick="setStatusFilter('done')">
+        <button type="button" class="chip" data-status="done" aria-pressed="false" onclick="setStatusFilter('done')">
           Concluído <span class="chip-count" id="chip-count-done">0</span>
         </button>
-        <button class="chip" data-status="error" aria-pressed="false" onclick="setStatusFilter('error')">
+        <button type="button" class="chip" data-status="error" aria-pressed="false" onclick="setStatusFilter('error')">
           Erro <span class="chip-count" id="chip-count-error">0</span>
         </button>
       </div>
       <div class="folder-select-wrap">
-        <button class="sidebar-toggle" onclick="openSidebar()" aria-label="Abrir barra de pastas">
+        <button type="button" class="sidebar-toggle" onclick="openSidebar()" aria-label="Abrir barra de pastas">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
           <span id="current-folder-label">Pastas</span>
         </button>
@@ -755,11 +155,11 @@
         <thead>
           <tr>
             <th class="col-check" scope="col"><input type="checkbox" class="checkbox" id="check-all" aria-label="Selecionar todos" onchange="toggleAll(this)" /></th>
-            <th class="col-name   sortable" scope="col" data-sort="name"   onclick="setSort('name')">Nome <span class="sort-arrow" aria-hidden="true">↕</span></th>
-            <th class="col-date   sortable" scope="col" data-sort="date"   onclick="setSort('date')">Enviado <span class="sort-arrow" aria-hidden="true">↕</span></th>
+            <th class="col-name   sortable" scope="col" data-sort="name"><button type="button" class="th-sort-btn" onclick="setSort('name')">Nome <span class="sort-arrow" aria-hidden="true">↕</span></button></th>
+            <th class="col-date   sortable" scope="col" data-sort="date"><button type="button" class="th-sort-btn" onclick="setSort('date')">Enviado <span class="sort-arrow" aria-hidden="true">↕</span></button></th>
             <th class="col-dur"             scope="col">Duração</th>
-            <th class="col-mode   sortable" scope="col" data-sort="mode"   onclick="setSort('mode')">Modo <span class="sort-arrow" aria-hidden="true">↕</span></th>
-            <th class="col-status sortable" scope="col" data-sort="status" onclick="setSort('status')">Status <span class="sort-arrow" aria-hidden="true">↕</span></th>
+            <th class="col-mode   sortable" scope="col" data-sort="mode"><button type="button" class="th-sort-btn" onclick="setSort('mode')">Modo <span class="sort-arrow" aria-hidden="true">↕</span></button></th>
+            <th class="col-status sortable" scope="col" data-sort="status"><button type="button" class="th-sort-btn" onclick="setSort('status')">Status <span class="sort-arrow" aria-hidden="true">↕</span></button></th>
             <th class="col-actions" scope="col"><span class="sr-only">Ações</span></th>
           </tr>
         </thead>
@@ -773,7 +173,7 @@
         </div>
         <div class="empty-title">Nenhuma transcrição ainda</div>
         <div class="empty-sub">Envie um áudio ou vídeo e a transcrição fica pronta em minutos.</div>
-        <button class="btn btn-primary-lg" style="max-width:300px" onclick="openModal('file')">
+        <button type="button" class="btn btn-primary-lg" style="max-width:300px" onclick="openModal('file')">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
           Transcrever primeiro arquivo
         </button>
@@ -791,7 +191,7 @@
   <div class="sidebar-backdrop" id="sidebar-backdrop" onclick="closeSidebar()" aria-hidden="true"></div>
 
   <!-- Media Card -->
-  <div class="card" id="card-media" style="display:none;" role="tabpanel" aria-label="Biblioteca de Mídias">
+  <div class="card" id="card-media" style="display:none;" role="tabpanel" aria-labelledby="main-tab-media">
     <div class="card-header">
       <div class="card-title">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -821,7 +221,7 @@
         </div>
         <div class="empty-title">Nenhuma mídia armazenada</div>
         <div class="empty-sub">Cole uma URL ou faça upload de um arquivo para começar a preencher sua biblioteca local.</div>
-        <button class="btn btn-primary-lg" style="max-width:300px" onclick="switchTab('url'); openModal('file');">
+        <button type="button" class="btn btn-primary-lg" style="max-width:300px" onclick="switchTab('url'); openModal('file');">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
           Salvar primeiro link
         </button>
@@ -837,7 +237,7 @@
     <div class="modal-head">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
       <h2 class="modal-title" id="modal-title">Transcrever Arquivo</h2>
-      <button class="modal-close" onclick="closeModal()" aria-label="Fechar">
+      <button type="button" class="modal-close" onclick="closeModal()" aria-label="Fechar">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
@@ -845,26 +245,23 @@
     <div class="modal-body">
 
       <!-- Tabs -->
-      <div class="seg-tabs" role="group" aria-label="Tipo de entrada">
-        <button id="tab-file" class="seg-tab" aria-pressed="true" onclick="switchTab('file')">
+      <div class="seg-tabs" role="tablist" aria-label="Tipo de entrada">
+        <button type="button" id="tab-file" class="seg-tab" role="tab" aria-selected="true" aria-controls="content-file" tabindex="0" onclick="switchTab('file')" onkeydown="onTablistKey(event, 'modal')">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
           Arquivo
         </button>
-        <button id="tab-url" class="seg-tab" aria-pressed="false" onclick="switchTab('url')">
+        <button type="button" id="tab-url" class="seg-tab" role="tab" aria-selected="false" aria-controls="content-url" tabindex="-1" onclick="switchTab('url')" onkeydown="onTablistKey(event, 'modal')">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
           URL / Link
-        </button>
-        <button id="tab-rec" class="seg-tab" aria-pressed="false" onclick="switchTab('rec')">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
-          Gravar
         </button>
       </div>
 
       <!-- FILE tab -->
-      <div id="content-file">
+      <div id="content-file" role="tabpanel" aria-labelledby="tab-file">
         <div class="dropzone" id="dropzone" role="button" tabindex="0"
-          aria-label="Área de upload"
-          ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)">
+          aria-label="Área de upload — Enter ou Espaço para selecionar arquivo"
+          ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)"
+          onkeydown="if((event.key==='Enter'||event.key===' ')&&event.target===this){event.preventDefault();document.getElementById('file-input').click();}">
           <input type="file" id="file-input" multiple
             accept="audio/*,video/*,.mp3,.mp4,.m4a,.mov,.aac,.wav,.ogg,.opus,.mpeg,.wma,.wmv"
             aria-label="Selecionar arquivo" onchange="handleFileSelect(this.files)" />
@@ -874,7 +271,7 @@
           <div class="dz-title">Arraste e solte aqui</div>
           <div class="dz-formats">MP3 · MP4 · M4A · MOV · AAC · WAV · OGG · WMA · WMV</div>
           <div class="dz-or">ou</div>
-          <button class="browse-btn" tabindex="-1" aria-hidden="true">SELECIONAR ARQUIVO</button>
+          <button type="button" class="browse-btn" tabindex="-1" aria-hidden="true">SELECIONAR ARQUIVO</button>
         </div>
 
         <div class="file-chip" id="file-chip" role="status" aria-live="polite">
@@ -885,21 +282,22 @@
             <div class="file-chip-name" id="chip-name">—</div>
             <div class="file-chip-size" id="chip-size">—</div>
           </div>
-          <button class="file-chip-remove" onclick="removeFile()" aria-label="Remover arquivo">
+          <button type="button" class="file-chip-remove" onclick="removeFile()" aria-label="Remover arquivo">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
       </div>
 
       <!-- URL tab -->
-      <div id="content-url" style="display:none">
-        <label class="field-label" for="url-input">URL do vídeo do YouTube</label>
+      <div id="content-url" style="display:none" role="tabpanel" aria-labelledby="tab-url">
+        <label class="field-label" for="url-input">URL de vídeo ou áudio (YouTube, Vimeo, TikTok, etc.)</label>
         <input id="url-input" type="url" class="select" style="height:40px;padding:0 12px;margin-bottom:12px"
           placeholder="https://youtube.com/watch?v=..." aria-label="URL do vídeo ou áudio" />
         
         <div style="display: flex; gap: 12px; margin-bottom: 6px;">
             <div style="flex:1">
-                <label class="field-label" for="dl-type-select">Formato (para "Apenas Baixar")</label>
+                <label class="field-label" for="dl-type-select">Formato</label>
+                <small style="display:block;font-size:11px;color:var(--slate-500);margin:-4px 0 6px">Usado só em "Apenas Baixar"</small>
                 <select id="dl-type-select" class="select" aria-label="Formato de Download" onchange="updateQualityOptions()">
                   <option value="video" selected>Vídeo (.mp4)</option>
                   <option value="audio">Áudio (.mp3)</option>
@@ -916,31 +314,9 @@
             </div>
         </div>
 
-        <p style="font-size:11.5px;color:var(--slate-400);margin-top:12px">
+        <p style="font-size:11.5px;color:var(--slate-500);margin-top:12px">
           ⚠️ <strong>Transcrever</strong> sempre extrai áudio silenciosamente. Requer <strong>yt-dlp e ffmpeg</strong>.
         </p>
-      </div>
-
-      <!-- REC tab -->
-      <div id="content-rec" style="display:none">
-        <div class="rec-area" id="rec-area">
-          <div class="rec-icon" id="rec-icon" aria-hidden="true">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-          </div>
-          <div class="rec-timer" id="rec-timer">00:00</div>
-          <p id="rec-label" style="font-size:13.5px;font-weight:700;color:var(--slate-700)">Gravar do microfone</p>
-          <p id="rec-sub" style="font-size:12px;color:var(--slate-400);margin-top:3px">Clique para iniciar a gravação</p>
-          <div style="margin-top:14px;display:flex;gap:8px;justify-content:center">
-            <button class="btn btn-primary" id="rec-start-btn" onclick="startRecording()">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
-              INICIAR
-            </button>
-            <button class="btn btn-ghost" id="rec-stop-btn" onclick="stopRecording()" style="display:none">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>
-              PARAR
-            </button>
-          </div>
-        </div>
       </div>
 
       <!-- Model -->
@@ -972,9 +348,18 @@
         </select>
       </div>
 
+      <!-- Destination folder -->
+      <div>
+        <label class="field-label" for="folder-select">Salvar na pasta</label>
+        <select id="folder-select" class="select" aria-label="Pasta de destino">
+          <option value="">Sem pasta (raiz)</option>
+          <!-- options populated by _populateFolderSelect() -->
+        </select>
+      </div>
+
       <!-- Advanced -->
       <div>
-        <button class="adv-toggle" id="adv-toggle" onclick="toggleAdvanced()" aria-expanded="false" aria-controls="adv-panel">
+        <button type="button" class="adv-toggle" id="adv-toggle" onclick="toggleAdvanced()" aria-expanded="false" aria-controls="adv-panel">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 1.75 2.3M21.17 10.72A9.93 9.93 0 0 1 21 12M19.07 19.07a10 10 0 0 1-2.3 1.75M13.28 21.17A9.93 9.93 0 0 1 12 21M4.93 19.07a10 10 0 0 1-1.75-2.3M2.83 13.28A9.93 9.93 0 0 1 3 12M4.93 4.93a10 10 0 0 1 2.3-1.75M10.72 2.83A9.93 9.93 0 0 1 12 3"/></svg>
           Configurações avançadas
           <svg class="adv-chevron" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
@@ -1017,10 +402,10 @@
 
     <div class="modal-foot">
       <div style="display: flex; gap: 10px; width: 100%;" id="modal-actions-container">
-        <button class="btn btn-secondary-lg" id="download-only-btn" style="flex: 1; display: none;" onclick="startDownloadOnly()">
+        <button type="button" class="btn btn-secondary-lg" id="download-only-btn" style="flex: 1; display: none;" onclick="startDownloadOnly()">
           APENAS BAIXAR
         </button>
-        <button class="btn btn-primary-lg" id="transcribe-btn" style="flex: 1;" onclick="startTranscription()">
+        <button type="button" class="btn btn-primary-lg" id="transcribe-btn" style="flex: 1;" onclick="startTranscription()">
           TRANSCREVER
         </button>
       </div>
@@ -1037,16 +422,16 @@
     <div class="modal-head">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
       <h2 class="modal-title" id="viewer-title">Transcrição</h2>
-      <button class="modal-close" onclick="closeViewer()" aria-label="Fechar" style="margin-left:auto">
+      <button type="button" class="modal-close" onclick="closeViewer()" aria-label="Fechar" style="margin-left:auto">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
 
     <div class="viewer-tabs" role="tablist">
-      <button class="vtab active" id="vtab-text" role="tab" aria-selected="true"  onclick="switchViewerTab('text')">Texto</button>
-      <button class="vtab"        id="vtab-ts"   role="tab" aria-selected="false" onclick="switchViewerTab('ts')">Timestamps</button>
-      <button class="vtab"        id="vtab-srt"  role="tab" aria-selected="false" onclick="switchViewerTab('srt')">SRT</button>
-      <button class="vtab"        id="vtab-gaps" role="tab" aria-selected="false" onclick="switchViewerTab('gaps')">🫁 Respiros</button>
+      <button type="button" class="vtab active" id="vtab-text" role="tab" aria-selected="true"  onclick="switchViewerTab('text')">Texto</button>
+      <button type="button" class="vtab"        id="vtab-ts"   role="tab" aria-selected="false" onclick="switchViewerTab('ts')">Timestamps</button>
+      <button type="button" class="vtab"        id="vtab-srt"  role="tab" aria-selected="false" onclick="switchViewerTab('srt')">SRT</button>
+      <button type="button" class="vtab"        id="vtab-gaps" role="tab" aria-selected="false" onclick="switchViewerTab('gaps')">🫁 Respiros</button>
     </div>
 
     <div class="viewer-body" style="display:flex;flex-direction:column;">
@@ -1061,7 +446,7 @@
                  onchange="loadGaps(_viewerFile.file)">
           <span style="font-size:12px;color:var(--slate-500)">segundos</span>
           <span id="gaps-count" style="margin-left:auto;font-size:12px;color:var(--blue);font-weight:600"></span>
-          <button class="btn btn-primary" style="padding:6px 12px;font-size:12px;margin-left:10px" onclick="downloadGapsTxt()">
+          <button type="button" class="btn btn-primary" style="padding:6px 12px;font-size:12px;margin-left:10px" onclick="downloadGapsTxt()">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             Exportar TXT
           </button>
@@ -1071,13 +456,13 @@
     </div>
 
     <div class="viewer-dl-row">
-      <button class="btn btn-primary" onclick="dlViewerFile('txt')">
+      <button type="button" class="btn btn-primary" onclick="dlViewerFile('txt')">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         Baixar TXT
       </button>
-      <button class="btn btn-ghost" onclick="dlViewerFile('srt')">Baixar SRT</button>
-      <button class="btn btn-ghost" onclick="dlViewerFile('timestamps')">Timestamps</button>
-      <button class="btn btn-ghost" onclick="dlViewerFile('json')">JSON</button>
+      <button type="button" class="btn btn-ghost" onclick="dlViewerFile('srt')">Baixar SRT</button>
+      <button type="button" class="btn btn-ghost" onclick="dlViewerFile('timestamps')">Timestamps</button>
+      <button type="button" class="btn btn-ghost" onclick="dlViewerFile('json')">JSON</button>
     </div>
 
   </div>
@@ -1089,7 +474,7 @@
     <div class="modal-head">
       <svg id="dialog-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
       <h2 class="modal-title" id="dialog-title">—</h2>
-      <button class="modal-close" onclick="_dialogCancel()" aria-label="Fechar">
+      <button type="button" class="modal-close" onclick="_dialogCancel()" aria-label="Fechar">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
@@ -1109,7 +494,7 @@
     <div class="modal-head">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
       <h2 class="modal-title" id="folder-picker-title">Mover para pasta</h2>
-      <button class="modal-close" onclick="closeFolderPicker()" aria-label="Fechar">
+      <button type="button" class="modal-close" onclick="closeFolderPicker()" aria-label="Fechar">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
@@ -1118,12 +503,12 @@
       <div class="folder-picker-list" id="folder-picker-list"></div>
       <div style="display:flex;gap:8px;align-items:center">
         <input type="text" class="search-input" id="folder-picker-new" placeholder="Ou crie uma nova pasta (ex: Projetos/Cliente X)" style="flex:1"/>
-        <button class="btn btn-ghost" onclick="folderPickerCreateNew()">Criar</button>
+        <button type="button" class="btn btn-ghost" onclick="folderPickerCreateNew()">Criar</button>
       </div>
     </div>
     <div class="modal-foot">
-      <button class="btn btn-primary-lg" onclick="folderPickerConfirm()" id="folder-picker-confirm-btn">Mover</button>
-      <button class="btn btn-secondary-lg" onclick="closeFolderPicker()">Cancelar</button>
+      <button type="button" class="btn btn-primary-lg" onclick="folderPickerConfirm()" id="folder-picker-confirm-btn">Mover</button>
+      <button type="button" class="btn btn-secondary-lg" onclick="closeFolderPicker()">Cancelar</button>
     </div>
   </div>
 </div>
@@ -1131,1918 +516,7 @@
 <!-- Toast container -->
 <div class="toast-area" id="toast-area" aria-live="polite" aria-label="Notificações"></div>
 
-<script>
-// ═══════════════════════════════════════════════════════════════
-//  STATE
-// ═══════════════════════════════════════════════════════════════
-let files    = [];     // [{id, file, name, date, dur, status, mode}]
-let selected = new Set();
-let pendingFiles = []; // File objects queued from input
-let _viewerFile  = null;
-let _viewerData  = {};
-let _autoSyncInterval = null;
-let _syncFingerprint  = '';
 
-// ═══════════════════════════════════════════════════════════════
-//  INIT
-// ═══════════════════════════════════════════════════════════════
-async function init() {
-  await Promise.all([loadHistory(), loadStats(), loadFolders()]);
-  await resumeActivePolling();
-  startAutoSync();
-}
-
-async function resumeActivePolling() {
-  try {
-    // 1. Ask server which tasks are still alive in memory
-    const res   = await fetch('/api/active-tasks');
-    const tasks = await res.json(); // { task_id: {status, filename, ...} }
-
-    // 2. Reset items stuck as queued/processing whose task is gone (server restart)
-    const resetRes = await fetch('/api/reset-stale', { method: 'POST' });
-    const resetData = await resetRes.json();
-    if (resetData.reset > 0) {
-      // Reload history to pick up newly "error" items
-      await loadHistory();
-    }
-
-    // 3. Resume polling for any tasks that are still alive
-    for (const [task_id, task] of Object.entries(tasks)) {
-      const filename = task.filename || task.name;
-      if (!filename || _activePolls[task_id]) continue;
-      pollProgressForRow(task_id, filename);
-    }
-  } catch { /* server may not have active tasks */ }
-}
-
-// ─── helpers ─────────────────────────────────────────────────
-function _historyToFiles(data) {
-  return data.map(h => ({
-    id:      h.file,
-    file:    h.file,
-    name:    h.name || h.file.replace(/\.[^.]+$/, ''),
-    date:    h.date    || '—',
-    dur:     h.duration || '—',
-    dur_secs: h.duration_secs || 0,
-    status:  h.status   || 'done',
-    mode:    h.mode     || 'turbo',
-    lang:    h.lang     || '',
-    words:   h.words    || 0,
-    error:   h.error    || null,
-    task_id: h.task_id  || null,
-    folder:  h.folder   || '',
-    queued_at:      h.queued_at      || 0,
-    started_at:     h.started_at     || null,
-    completed_at:   h.completed_at   || null,
-    processing_secs: h.processing_secs || null,
-  }));
-}
-
-function _makeFingerprint(data) {
-  return data.map(h => `${h.file}|${h.status}|${h.words}|${h.duration}`).join('\n');
-}
-
-async function loadHistory() {
-  try {
-    const res  = await fetch('/api/history');
-    const data = await res.json();
-    files = _historyToFiles(data);
-    _syncFingerprint = _makeFingerprint(data);
-    renderFiles();
-  } catch (e) {
-    console.error('loadHistory:', e);
-    renderFiles([]);
-  }
-}
-
-// ─── AUTO-SYNC ───────────────────────────────────────────────
-// Keeps the page live — checks for history changes every 5s
-// and re-renders only if something actually changed.
-let _etaTickInterval = null;
-function startAutoSync() {
-  if (_autoSyncInterval) return;
-  _autoSyncInterval = setInterval(_autoSyncTick, 5000);
-  // Lighter tick: only update ETAs (no fetch) every 5s so the remaining
-  // time feels "live" while a transcription is running.
-  if (!_etaTickInterval) {
-    _etaTickInterval = setInterval(() => {
-      const hasActive = files.some(f => f.status === 'queued' || f.status === 'processing');
-      if (hasActive) {
-        _renderQueueSummary();
-        // Only re-render rows that have an ETA visible (queued/processing)
-        // — cheap because we're iterating a small subset.
-        for (const f of files) {
-          if (f.status !== 'queued' && f.status !== 'processing') continue;
-          const tr = document.querySelector(`#files-tbody tr[data-id="${CSS.escape(f.file)}"] .col-status`);
-          if (tr) tr.innerHTML = renderStatus(f.status, f);
-        }
-      }
-    }, 5000);
-  }
-}
-
-async function _autoSyncTick() {
-  // Active polls already reload history on done/error — skip to avoid double render
-  if (Object.keys(_activePolls).length > 0) return;
-  try {
-    const res  = await fetch('/api/history');
-    const data = await res.json();
-    const fp   = _makeFingerprint(data);
-    if (fp === _syncFingerprint) return; // nothing changed
-    _syncFingerprint = fp;
-    files = _historyToFiles(data);
-    renderFiles();
-    loadStats();
-    loadFolders(); // counts may have changed
-    // Restart polling for any active tasks discovered (e.g. uploaded from another tab)
-    files.forEach(f => {
-      if ((f.status === 'queued' || f.status === 'processing') && f.task_id && !_activePolls[f.task_id]) {
-        pollProgressForRow(f.task_id, f.file);
-      }
-    });
-  } catch { /* network blip — ignore */ }
-}
-
-async function loadStats() {
-  try {
-    const res  = await fetch('/api/stats');
-    const data = await res.json();
-    document.getElementById('stat-count').textContent = data.total ?? '0';
-    document.getElementById('stat-hours').textContent = data.duration || '0m';
-  } catch { /* ignore */ }
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  IN-SITE DIALOGS (substituem prompt()/confirm() nativos)
-//  Um único modal reutilizável, promise-based. Chamadas:
-//    await showConfirm({ title, message, confirmText, cancelText, danger })
-//    await showPrompt ({ title, message, initialValue, placeholder,
-//                        confirmText, validator })
-//    await showChoice ({ title, message, choices: [{ value, label,
-//                        description?, danger?, icon? (SVG HTML) }] })
-// Todas retornam Promise. Confirm -> true|false, Prompt -> string|null,
-// Choice -> value|null (null = cancelado).
-// ═══════════════════════════════════════════════════════════════
-let _dialogResolver = null; // função que resolve a promise pendente
-
-function _dialogClose(result) {
-  const overlay = document.getElementById('dialog-overlay');
-  if (!overlay) return;
-  overlay.classList.remove('open');
-  document.body.style.overflow = '';
-  if (_dialogResolver) {
-    const fn = _dialogResolver;
-    _dialogResolver = null;
-    fn(result);
-  }
-}
-
-function _dialogCancel() {
-  // Decide o valor "cancelado" com base no tipo ativo (armazenado em dataset)
-  const overlay = document.getElementById('dialog-overlay');
-  const type = overlay?.dataset?.type;
-  if (type === 'confirm')      _dialogClose(false);
-  else                          _dialogClose(null); // prompt ou choice
-}
-
-// Ícones por tipo — ajuda a comunicar intenção visual
-const _DIALOG_ICONS = {
-  info:    `<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>`,
-  edit:    `<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>`,
-  folder:  `<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>`,
-  warning: `<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>`,
-  danger:  `<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/>`,
-};
-
-function _setDialogIcon(kind, color) {
-  const svg = document.getElementById('dialog-icon');
-  if (!svg) return;
-  svg.innerHTML = _DIALOG_ICONS[kind] || _DIALOG_ICONS.info;
-  svg.style.color = color || 'var(--blue)';
-}
-
-function _showDialog({ type, title, iconKind, iconColor, bodyBuilder, footBuilder }) {
-  return new Promise((resolve) => {
-    // Se já existe diálogo aberto, força fechar (cancelar) antes de abrir novo.
-    if (_dialogResolver) { const prev = _dialogResolver; _dialogResolver = null; prev(null); }
-    _dialogResolver = resolve;
-
-    const overlay = document.getElementById('dialog-overlay');
-    overlay.dataset.type = type;
-    document.getElementById('dialog-title').textContent = title || '';
-
-    _setDialogIcon(iconKind || 'info', iconColor);
-
-    // Clear body
-    const msg = document.getElementById('dialog-message');
-    const inp = document.getElementById('dialog-input');
-    const err = document.getElementById('dialog-error');
-    const ch  = document.getElementById('dialog-choices');
-    msg.textContent = '';
-    msg.style.display = 'none';
-    inp.style.display = 'none'; inp.classList.remove('invalid'); inp.value = '';
-    err.style.display = 'none'; err.textContent = '';
-    ch.style.display  = 'none'; ch.innerHTML = '';
-
-    bodyBuilder({ msg, inp, err, ch });
-    document.getElementById('dialog-foot').innerHTML = '';
-    footBuilder(document.getElementById('dialog-foot'));
-
-    overlay.classList.add('open');
-    document.body.style.overflow = 'hidden';
-
-    // Foco: input se houver, senão primeiro botão do footer
-    setTimeout(() => {
-      if (inp.style.display !== 'none') { inp.focus(); inp.select(); }
-      else {
-        const firstBtn = document.querySelector('#dialog-foot button, #dialog-choices button');
-        if (firstBtn) firstBtn.focus();
-      }
-    }, 60);
-  });
-}
-
-function showConfirm({ title = 'Confirmar', message = '', confirmText = 'Confirmar', cancelText = 'Cancelar', danger = false } = {}) {
-  return _showDialog({
-    type: 'confirm',
-    title,
-    iconKind: danger ? 'danger' : 'warning',
-    iconColor: danger ? 'var(--red)' : 'var(--blue)',
-    bodyBuilder: ({ msg }) => {
-      msg.textContent = message;
-      msg.style.display = 'block';
-    },
-    footBuilder: (foot) => {
-      const row = document.createElement('div');
-      row.style.cssText = 'display:flex;gap:10px;width:100%';
-      const ok = document.createElement('button');
-      ok.className = danger ? 'btn btn-danger-lg' : 'btn btn-primary-lg';
-      ok.style.flex = '1';
-      ok.textContent = confirmText;
-      ok.onclick = () => _dialogClose(true);
-      const cancel = document.createElement('button');
-      cancel.className = 'btn btn-secondary-lg';
-      cancel.style.flex = '1';
-      cancel.textContent = cancelText;
-      cancel.onclick = () => _dialogClose(false);
-      row.appendChild(cancel);
-      row.appendChild(ok);
-      foot.appendChild(row);
-    }
-  });
-}
-
-function showPrompt({ title = 'Digite um valor', message = '', initialValue = '', placeholder = '', confirmText = 'Confirmar', cancelText = 'Cancelar', validator = null, iconKind = 'edit' } = {}) {
-  return _showDialog({
-    type: 'prompt',
-    title,
-    iconKind,
-    bodyBuilder: ({ msg, inp, err }) => {
-      if (message) { msg.textContent = message; msg.style.display = 'block'; }
-      inp.style.display = 'block';
-      inp.value = initialValue;
-      inp.placeholder = placeholder || '';
-      const doConfirm = () => {
-        const val = inp.value;
-        if (validator) {
-          const errMsg = validator(val);
-          if (errMsg) {
-            err.textContent = errMsg; err.style.display = 'block';
-            inp.classList.add('invalid'); inp.focus();
-            return;
-          }
-        }
-        _dialogClose(val);
-      };
-      inp.onkeydown = (e) => {
-        if (e.key === 'Enter') { e.preventDefault(); doConfirm(); }
-        else { err.style.display = 'none'; inp.classList.remove('invalid'); }
-      };
-      // Exponha o handler pro footer usar
-      inp.dataset._bound = '1';
-      inp._confirm = doConfirm;
-    },
-    footBuilder: (foot) => {
-      const row = document.createElement('div');
-      row.style.cssText = 'display:flex;gap:10px;width:100%';
-      const ok = document.createElement('button');
-      ok.className = 'btn btn-primary-lg'; ok.style.flex = '1';
-      ok.textContent = confirmText;
-      ok.onclick = () => { document.getElementById('dialog-input')._confirm(); };
-      const cancel = document.createElement('button');
-      cancel.className = 'btn btn-secondary-lg'; cancel.style.flex = '1';
-      cancel.textContent = cancelText;
-      cancel.onclick = () => _dialogClose(null);
-      row.appendChild(cancel);
-      row.appendChild(ok);
-      foot.appendChild(row);
-    }
-  });
-}
-
-function showChoice({ title = 'Selecionar', message = '', choices = [], cancelText = 'Cancelar', iconKind = 'folder' } = {}) {
-  return _showDialog({
-    type: 'choice',
-    title,
-    iconKind,
-    bodyBuilder: ({ msg, ch }) => {
-      if (message) { msg.textContent = message; msg.style.display = 'block'; }
-      ch.style.display = 'flex';
-      ch.innerHTML = '';
-      for (const c of choices) {
-        const btn = document.createElement('button');
-        btn.className = 'dialog-choice' + (c.danger ? ' danger' : '');
-        btn.innerHTML = `
-          <div class="dialog-choice-icon">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${c.icon || _DIALOG_ICONS.folder}</svg>
-          </div>
-          <div class="dialog-choice-body">
-            <div class="dialog-choice-label">${esc(c.label)}</div>
-            ${c.description ? `<div class="dialog-choice-sub">${esc(c.description)}</div>` : ''}
-          </div>`;
-        btn.onclick = () => _dialogClose(c.value);
-        ch.appendChild(btn);
-      }
-    },
-    footBuilder: (foot) => {
-      const cancel = document.createElement('button');
-      cancel.className = 'btn btn-secondary-lg'; cancel.style.width = '100%';
-      cancel.textContent = cancelText;
-      cancel.onclick = () => _dialogClose(null);
-      foot.appendChild(cancel);
-    }
-  });
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  FOLDERS — tree, CRUD, sidebar
-// ═══════════════════════════════════════════════════════════════
-// _folders: flat list of {path, count} returned by backend.
-// _expandedFolders: Set of paths currently expanded in the tree UI.
-let _folders = [];
-const _expandedFolders = new Set();
-
-async function loadFolders() {
-  try {
-    const res = await fetch('/api/folders');
-    if (!res.ok) { _folders = []; renderFolderTree(); return; }
-    _folders = await res.json();
-  } catch { _folders = []; }
-  renderFolderTree();
-}
-
-// Build a nested tree from the flat list of paths + counts.
-// Also injects items with folder='' into the root "(sem pasta)" bucket for display.
-function _buildFolderTree() {
-  const root = { path: '', name: '(raiz)', count: 0, children: {} };
-  for (const f of _folders) {
-    const segments = f.path.split('/');
-    let node = root;
-    let curPath = '';
-    for (const seg of segments) {
-      curPath = curPath ? `${curPath}/${seg}` : seg;
-      if (!node.children[seg]) {
-        node.children[seg] = { path: curPath, name: seg, count: 0, children: {} };
-      }
-      node = node.children[seg];
-    }
-    node.count = f.count;
-  }
-  return root;
-}
-
-function renderFolderTree() {
-  const container = document.getElementById('folder-tree');
-  if (!container) return;
-  const tree = _buildFolderTree();
-
-  // In-memory counts for the special "virtual" buckets
-  const allCount  = files.length;
-  const rootCount = files.filter(f => !(f.folder || '')).length;
-
-  const html = [];
-  html.push(`<ul>`);
-  html.push(_renderFolderNodeHTML({
-    path: '__all__', name: 'Todas', count: allCount, isVirtual: true
-  }));
-  html.push(_renderFolderNodeHTML({
-    path: '__root__', name: '(sem pasta)', count: rootCount, isVirtual: true
-  }));
-  // Top-level folders from the tree
-  for (const name of Object.keys(tree.children).sort()) {
-    html.push(_renderFolderSubtreeHTML(tree.children[name]));
-  }
-  html.push(`</ul>`);
-  container.innerHTML = html.join('');
-}
-
-function _renderFolderNodeHTML(node, hasChildren = false) {
-  const filterKey = node.isVirtual ? (node.path === '__all__' ? 'all' : '__root__') : node.path;
-  const active = _view.folderFilter === filterKey;
-  const expanded = hasChildren && _expandedFolders.has(node.path);
-  const twist = hasChildren
-    ? `<span class="twist" onclick="event.stopPropagation(); toggleFolderExpand('${jsAttr(node.path)}')" aria-hidden="true">▸</span>`
-    : `<span class="twist leaf" aria-hidden="true">▸</span>`;
-  const icon = node.isVirtual && node.path === '__all__'
-    ? `<svg class="ficon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>`
-    : `<svg class="ficon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`;
-  const menuBtn = node.isVirtual ? '' :
-    `<button class="folder-menu-btn" aria-label="Ações da pasta" onclick="event.stopPropagation(); folderMenu('${jsAttr(node.path)}', event)">
-       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="19" r="1" fill="currentColor"/></svg>
-     </button>`;
-  return `
-    <li>
-      <div class="folder-node ${active ? 'active' : ''} ${expanded ? 'expanded' : ''}"
-           role="button" tabindex="0"
-           onclick="selectFolder('${jsAttr(filterKey)}')"
-           onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectFolder('${jsAttr(filterKey)}'); }">
-        ${twist}
-        ${icon}
-        <span class="folder-label" title="${esc(node.name)}">${esc(node.name)}</span>
-        <span class="folder-count">${node.count}</span>
-        ${menuBtn}
-      </div>
-    </li>`;
-}
-
-function _renderFolderSubtreeHTML(node) {
-  const hasChildren = Object.keys(node.children).length > 0;
-  const nodeHTML = _renderFolderNodeHTML(node, hasChildren);
-  if (!hasChildren) return nodeHTML;
-  const expanded = _expandedFolders.has(node.path);
-  const childrenHTML = `<ul class="folder-child-nodes" style="display:${expanded ? 'block' : 'none'}">${Object.keys(node.children).sort().map(n => _renderFolderSubtreeHTML(node.children[n])).join('')}</ul>`;
-  // Inject children UL after the node's LI (still inside the parent UL)
-  // We wrap nodeHTML+childrenHTML into a single <li> structure:
-  return nodeHTML.replace('</li>', childrenHTML + '</li>');
-}
-
-function selectFolder(pathOrKey) {
-  _view.folderFilter = pathOrKey;
-  // Auto-expand ancestors when selecting a nested folder
-  if (pathOrKey !== 'all' && pathOrKey !== '__root__' && pathOrKey) {
-    const segments = pathOrKey.split('/');
-    for (let i = 0; i < segments.length - 1; i++) {
-      _expandedFolders.add(segments.slice(0, i + 1).join('/'));
-    }
-  }
-  closeSidebar();
-  renderFolderTree();
-  renderFiles();
-}
-
-function toggleFolderExpand(path) {
-  if (_expandedFolders.has(path)) _expandedFolders.delete(path);
-  else _expandedFolders.add(path);
-  renderFolderTree();
-}
-
-// Sidebar mobile drawer
-function openSidebar() {
-  document.getElementById('folder-sidebar').classList.add('open');
-  document.getElementById('sidebar-backdrop').classList.add('open');
-}
-function closeSidebar() {
-  document.getElementById('folder-sidebar').classList.remove('open');
-  document.getElementById('sidebar-backdrop').classList.remove('open');
-}
-
-async function folderMenu(path, ev) {
-  const action = await showChoice({
-    title: `Pasta "${path}"`,
-    message: 'O que você deseja fazer?',
-    iconKind: 'folder',
-    choices: [
-      { value: 'subfolder', label: 'Criar subpasta', description: 'Adiciona uma nova pasta dentro desta',
-        icon: `<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/>` },
-      { value: 'rename',    label: 'Renomear pasta',  description: 'Atualiza o nome; descendentes e itens são ajustados',
-        icon: _DIALOG_ICONS.edit },
-      { value: 'delete',    label: 'Excluir pasta',   description: 'Com opção de mover ou apagar o conteúdo',
-        danger: true, icon: _DIALOG_ICONS.danger },
-    ]
-  });
-  if (action === 'subfolder') await promptCreateFolder(path);
-  else if (action === 'rename') await promptRenameFolder(path);
-  else if (action === 'delete') await promptDeleteFolder(path);
-}
-
-async function promptCreateFolder(parentPath) {
-  const name = await showPrompt({
-    title: parentPath ? 'Nova subpasta' : 'Nova pasta',
-    message: parentPath
-      ? `A subpasta será criada dentro de "${parentPath}".`
-      : 'Digite o nome da nova pasta.',
-    placeholder: 'Ex: Projetos 2026',
-    confirmText: 'Criar',
-    iconKind: 'folder',
-    validator: (val) => {
-      const v = (val || '').trim();
-      if (!v) return 'O nome não pode ficar em branco.';
-      if (v.length > 60) return 'Máximo de 60 caracteres por segmento.';
-      if (/[\/\\\x00]/.test(v)) return 'O nome não pode conter /, \\ ou caracteres de controle.';
-      if (v === '.' || v === '..') return 'Nome inválido.';
-      return null;
-    }
-  });
-  if (name === null) return;
-  const clean = name.trim();
-  if (!clean) return;
-  const fullPath = parentPath ? `${parentPath}/${clean}` : clean;
-  try {
-    const fd = new FormData();
-    fd.append('path', fullPath);
-    const res = await fetch('/api/folders/create', { method: 'POST', body: fd });
-    if (!res.ok) {
-      let msg = 'Erro ao criar pasta.';
-      try { const e = await res.json(); if (e.detail) msg = e.detail; } catch {}
-      showToast(msg, 'error');
-      return;
-    }
-    // Auto-expand ancestors
-    if (parentPath) {
-      const segs = parentPath.split('/');
-      for (let i = 0; i < segs.length; i++) _expandedFolders.add(segs.slice(0, i + 1).join('/'));
-    }
-    await loadFolders();
-    showToast(`Pasta "${fullPath}" criada.`, 'success');
-  } catch {
-    showToast('Erro ao criar pasta.', 'error');
-  }
-}
-
-async function promptRenameFolder(oldPath) {
-  const segments = oldPath.split('/');
-  const oldName = segments[segments.length - 1];
-  const newName = await showPrompt({
-    title: 'Renomear pasta',
-    message: `Pasta atual: "${oldPath}"\nDescendentes e itens dentro serão atualizados automaticamente.`,
-    initialValue: oldName,
-    confirmText: 'Renomear',
-    iconKind: 'edit',
-    validator: (val) => {
-      const v = (val || '').trim();
-      if (!v) return 'O nome não pode ficar em branco.';
-      if (v.length > 60) return 'Máximo de 60 caracteres.';
-      if (/[\/\\\x00]/.test(v)) return 'O nome não pode conter /, \\ ou caracteres de controle.';
-      if (v === '.' || v === '..') return 'Nome inválido.';
-      return null;
-    }
-  });
-  if (newName === null) return;
-  const clean = newName.trim();
-  if (!clean || clean === oldName) return;
-  const parent = segments.slice(0, -1).join('/');
-  const newPath = parent ? `${parent}/${clean}` : clean;
-  try {
-    const fd = new FormData();
-    fd.append('old_path', oldPath);
-    fd.append('new_path', newPath);
-    const res = await fetch('/api/folders/rename', { method: 'POST', body: fd });
-    if (!res.ok) {
-      let msg = 'Erro ao renomear pasta.';
-      try { const e = await res.json(); if (e.detail) msg = e.detail; } catch {}
-      showToast(msg, 'error');
-      return;
-    }
-    // If we had this folder selected, update filter to the new path
-    if (_view.folderFilter === oldPath) _view.folderFilter = newPath;
-    else if (_view.folderFilter.startsWith(oldPath + '/')) {
-      _view.folderFilter = newPath + _view.folderFilter.slice(oldPath.length);
-    }
-    await Promise.all([loadFolders(), loadHistory()]);
-    showToast(`Renomeada para "${newPath}".`, 'success');
-  } catch {
-    showToast('Erro ao renomear pasta.', 'error');
-  }
-}
-
-async function promptDeleteFolder(path) {
-  const itemsInside = files.filter(f => (f.folder || '') === path || (f.folder || '').startsWith(path + '/'));
-  let cascade = 'move';
-  if (itemsInside.length > 0) {
-    const parent = path.split('/').slice(0, -1).join('/');
-    const parentLabel = parent || '(raiz)';
-    const choice = await showChoice({
-      title: `Excluir pasta "${path}"`,
-      message: `A pasta contém ${itemsInside.length} item(ns). O que fazer com o conteúdo?`,
-      iconKind: 'warning',
-      choices: [
-        { value: 'move',
-          label: `Mover para ${parentLabel}`,
-          description: 'Os itens são preservados e vão para a pasta-pai.',
-          icon: `<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><polyline points="9 12 12 9 15 12"/><line x1="12" y1="9" x2="12" y2="16"/>` },
-        { value: 'delete',
-          label: 'Excluir todos os itens',
-          description: 'Apaga os arquivos de transcrição do disco. Ação irreversível.',
-          danger: true, icon: _DIALOG_ICONS.danger },
-      ]
-    });
-    if (choice === null) return;
-    cascade = choice;
-  } else {
-    const ok = await showConfirm({
-      title: 'Excluir pasta vazia',
-      message: `Excluir a pasta "${path}"?`,
-      confirmText: 'Excluir',
-      danger: true
-    });
-    if (!ok) return;
-  }
-  try {
-    const fd = new FormData();
-    fd.append('path', path);
-    fd.append('cascade', cascade);
-    const res = await fetch('/api/folders/delete', { method: 'POST', body: fd });
-    if (!res.ok) {
-      let msg = 'Erro ao excluir pasta.';
-      try { const e = await res.json(); if (e.detail) msg = e.detail; } catch {}
-      showToast(msg, 'error');
-      return;
-    }
-    // If we had this folder (or descendant) selected, reset filter to parent/all
-    if (_view.folderFilter === path || _view.folderFilter.startsWith(path + '/')) {
-      const parent = path.split('/').slice(0, -1).join('/');
-      _view.folderFilter = parent || 'all';
-    }
-    await Promise.all([loadFolders(), loadHistory()]);
-    showToast('Pasta excluída.', 'success');
-  } catch {
-    showToast('Erro ao excluir pasta.', 'error');
-  }
-}
-
-// ───── Folder picker modal (usado pelo "Mover para pasta") ─────
-let _pickerTargetFileId = null;
-let _pickerSelected = ''; // '' = raiz
-
-function openFolderPicker(fileId) {
-  _pickerTargetFileId = fileId;
-  const f = files.find(x => x.id === fileId);
-  _pickerSelected = f ? (f.folder || '') : '';
-  document.getElementById('folder-picker-subtitle').textContent =
-    f ? `Mover "${f.name}" para qual pasta?` : 'Selecione a pasta de destino:';
-  document.getElementById('folder-picker-new').value = '';
-  _renderFolderPickerList();
-  document.getElementById('folder-picker-overlay').classList.add('open');
-  document.body.style.overflow = 'hidden';
-}
-
-function closeFolderPicker() {
-  document.getElementById('folder-picker-overlay').classList.remove('open');
-  document.body.style.overflow = '';
-  _pickerTargetFileId = null;
-}
-
-function _renderFolderPickerList() {
-  const list = document.getElementById('folder-picker-list');
-  if (!list) return;
-  const tree = _buildFolderTree();
-  const html = ['<ul>'];
-  html.push(_renderPickerItem({ path: '', name: '(raiz)' }));
-  for (const name of Object.keys(tree.children).sort()) {
-    html.push(_renderPickerSubtree(tree.children[name]));
-  }
-  html.push('</ul>');
-  list.innerHTML = html.join('');
-}
-
-function _renderPickerItem(node) {
-  const selected = _pickerSelected === node.path;
-  return `<li>
-    <div class="folder-picker-item ${selected ? 'selected' : ''}"
-         onclick="_pickerSelect('${jsAttr(node.path)}')">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        ${node.path === '' ? '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>' : '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'}
-      </svg>
-      ${esc(node.name)}
-    </div>
-  </li>`;
-}
-
-function _renderPickerSubtree(node) {
-  let html = _renderPickerItem(node);
-  const names = Object.keys(node.children).sort();
-  if (names.length) {
-    html = html.replace('</li>',
-      `<ul>${names.map(n => _renderPickerSubtree(node.children[n])).join('')}</ul></li>`);
-  }
-  return html;
-}
-
-function _pickerSelect(path) {
-  _pickerSelected = path;
-  _renderFolderPickerList();
-}
-
-async function folderPickerCreateNew() {
-  const inp = document.getElementById('folder-picker-new');
-  const raw = (inp.value || '').trim();
-  if (!raw) return;
-  try {
-    const fd = new FormData();
-    fd.append('path', raw);
-    const res = await fetch('/api/folders/create', { method: 'POST', body: fd });
-    if (!res.ok) {
-      let msg = 'Erro ao criar pasta.';
-      try { const e = await res.json(); if (e.detail) msg = e.detail; } catch {}
-      showToast(msg, 'error');
-      return;
-    }
-    inp.value = '';
-    _pickerSelected = raw;
-    await loadFolders();
-    _renderFolderPickerList();
-  } catch {
-    showToast('Erro ao criar pasta.', 'error');
-  }
-}
-
-async function folderPickerConfirm() {
-  if (_pickerTargetFileId == null) return;
-  const f = files.find(x => x.id === _pickerTargetFileId);
-  if (!f) { closeFolderPicker(); return; }
-  const target = _pickerSelected;
-  try {
-    const fd = new FormData();
-    fd.append('filename', f.file);
-    fd.append('folder', target);
-    const res = await fetch('/api/move-to-folder', { method: 'POST', body: fd });
-    if (!res.ok) {
-      let msg = 'Erro ao mover.';
-      try { const e = await res.json(); if (e.detail) msg = e.detail; } catch {}
-      showToast(msg, 'error');
-      return;
-    }
-    f.folder = target;
-    closeFolderPicker();
-    await loadFolders();
-    renderFiles();
-    showToast(target ? `Movido para "${target}".` : 'Removido da pasta.', 'success');
-  } catch {
-    showToast('Erro ao mover.', 'error');
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  VIEW CONTROLS (sort / filter / folder / queue summary)
-// ═══════════════════════════════════════════════════════════════
-function setStatusFilter(status) {
-  _view.statusFilter = status;
-  document.querySelectorAll('.chip[data-status]').forEach(el => {
-    el.setAttribute('aria-pressed', el.dataset.status === status);
-  });
-  renderFiles();
-}
-
-function setFolderFilter(folder) {
-  _view.folderFilter = folder || 'all';
-  renderFiles();
-}
-
-function setSort(key) {
-  if (_view.sortKey === key) {
-    _view.sortDir = _view.sortDir === 'asc' ? 'desc' : 'asc';
-  } else {
-    _view.sortKey = key;
-    // Sensible default direction per column
-    _view.sortDir = (key === 'date') ? 'desc' : 'asc';
-  }
-  renderFiles();
-}
-
-function _renderSortIndicators() {
-  document.querySelectorAll('.files-table th.sortable').forEach(th => {
-    const active = th.dataset.sort === _view.sortKey;
-    const arrow = th.querySelector('.sort-arrow');
-    if (!active) {
-      th.removeAttribute('aria-sort');
-      if (arrow) arrow.textContent = '↕';
-    } else {
-      th.setAttribute('aria-sort', _view.sortDir === 'asc' ? 'ascending' : 'descending');
-      if (arrow) arrow.textContent = _view.sortDir === 'asc' ? '↑' : '↓';
-    }
-  });
-}
-
-function _renderStatusFilterCounts() {
-  const counts = { all: files.length, queued:0, processing:0, done:0, error:0 };
-  for (const f of files) counts[f.status] = (counts[f.status] || 0) + 1;
-  for (const k of Object.keys(counts)) {
-    const el = document.getElementById('chip-count-' + k);
-    if (el) el.textContent = counts[k];
-  }
-}
-
-// Sync the mobile "current folder" label on the sidebar-toggle button
-function _syncFolderButtonLabel() {
-  const el = document.getElementById('current-folder-label');
-  if (!el) return;
-  const v = _view.folderFilter;
-  el.textContent = v === 'all' ? 'Pastas'
-                  : v === '__root__' ? 'Sem pasta'
-                  : v.split('/').slice(-1)[0];
-}
-
-function _renderQueueSummary() {
-  const box  = document.getElementById('queue-summary');
-  const text = document.getElementById('queue-summary-text');
-  if (!box || !text) return;
-  const { count, totalSecs, unknown } = estimateTotalRemaining();
-  if (count === 0) { box.classList.remove('show'); return; }
-  box.classList.add('show');
-  let msg = `<strong>${count}</strong> pendente${count > 1 ? 's' : ''}`;
-  if (totalSecs > 0)  msg += ` · tempo estimado ~<strong>${fmtSecs(totalSecs)}</strong>`;
-  if (unknown > 0)    msg += ` · ${unknown} sem estimativa`;
-  text.innerHTML = msg;
-}
-
-function promptMoveToFolder(id) {
-  closeAllDDs();
-  openFolderPicker(id);
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  RENDER
-// ═══════════════════════════════════════════════════════════════
-// Escapes for safe insertion into HTML attribute values quoted with double OR single quotes.
-// Critical: filenames may contain ' or " — without escaping these, onclick="..(' + name + ')..."
-// breaks the attribute and allows JS injection.
-function esc(s) {
-  return String(s)
-    .replace(/&/g,  '&amp;')
-    .replace(/</g,  '&lt;')
-    .replace(/>/g,  '&gt;')
-    .replace(/"/g,  '&quot;')
-    .replace(/'/g,  '&#39;')
-    .replace(/`/g,  '&#96;');
-}
-
-// Escapes a string for safe insertion as a JS string LITERAL inside an HTML attribute
-// (e.g. onclick="foo('${jsAttr(name)}')"). Combines JS string escaping with HTML escaping.
-function jsAttr(s) {
-  return esc(String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
-}
-
-// Status types emitidos pelo backend: queued | processing | done | error.
-// (Os antigos 'failed' e 'cancelled' eram código morto — removidos.)
-const STATUS_MAP = {
-  done:       { label:'Concluído',   cls:'done'       },
-  processing: { label:'Processando', cls:'processing'  },
-  queued:     { label:'Aguardando',  cls:'queued'      },
-  error:      { label:'Erro',        cls:'error'       },
-};
-
-// ═══════════════════════════════════════════════════════════════
-//  VIEW STATE (filtros + ordenação)
-// ═══════════════════════════════════════════════════════════════
-// Pipeline: files -> search -> statusFilter -> folderFilter -> sort -> render
-const _view = {
-  search:       '',
-  statusFilter: 'all',      // 'all' | 'queued' | 'processing' | 'done' | 'error'
-  folderFilter: 'all',      // 'all' | '__root__' | '<folder name>'
-  sortKey:      'date',     // 'name' | 'date' | 'mode' | 'status'
-  sortDir:      'desc',     // 'asc' | 'desc'
-};
-
-// Canonical ordering for the "status" column sort.
-const _STATUS_ORDER = { processing: 0, queued: 1, done: 2, error: 3 };
-
-function _cmp(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
-
-function _sortValue(f, key) {
-  switch (key) {
-    case 'name':   return (f.name || '').toLowerCase();
-    case 'mode':   return (f.mode || '').toLowerCase();
-    case 'status': return _STATUS_ORDER[f.status] ?? 99;
-    // Date: queued_at is epoch seconds; falls back to 0 for legacy entries.
-    // Entries are already in "newest first" insertion order on load, so we
-    // use array index as a tiebreaker stored on the object (see applyPipeline).
-    case 'date':
-    default:       return f.queued_at || 0;
-  }
-}
-
-function applyPipeline(allFiles) {
-  // Stamp each file with its original array index so we have a stable
-  // tiebreaker for date sorting of legacy entries without queued_at.
-  const stamped = allFiles.map((f, i) => ({ ...f, _order: i }));
-  const q = _view.search.trim().toLowerCase();
-  let arr = stamped;
-  if (q) arr = arr.filter(f => (f.name || '').toLowerCase().includes(q));
-  if (_view.statusFilter !== 'all') arr = arr.filter(f => f.status === _view.statusFilter);
-  if (_view.folderFilter !== 'all') {
-    if (_view.folderFilter === '__root__') {
-      arr = arr.filter(f => !(f.folder || ''));
-    } else {
-      // Include items in this folder AND in any descendant folder
-      const wanted = _view.folderFilter;
-      const prefix = wanted + '/';
-      arr = arr.filter(f => {
-        const fp = f.folder || '';
-        return fp === wanted || fp.startsWith(prefix);
-      });
-    }
-  }
-  const key = _view.sortKey;
-  const dir = _view.sortDir === 'asc' ? 1 : -1;
-  arr.sort((a, b) => {
-    const av = _sortValue(a, key);
-    const bv = _sortValue(b, key);
-    const c = _cmp(av, bv);
-    // Tiebreaker: original order (so sort is stable + legacy dates keep their order)
-    if (c !== 0) return c * dir;
-    return (a._order - b._order) * (key === 'date' ? dir : 1);
-  });
-  return arr;
-}
-
-function _getVisibleFiles() { return applyPipeline(files); }
-
-// ═══════════════════════════════════════════════════════════════
-//  TIME ESTIMATION
-// ═══════════════════════════════════════════════════════════════
-// Per-model rate: seconds of wall-clock processing per second of audio.
-// Computed from completed history entries. Returns null if no data for that model.
-function _ratePerAudioSec(model) {
-  let totalProc = 0, totalAudio = 0;
-  for (const f of files) {
-    if (f.status !== 'done' || !f.processing_secs || !f.dur_secs) continue;
-    if (f.mode !== model) continue;
-    totalProc  += f.processing_secs;
-    totalAudio += f.dur_secs;
-  }
-  if (totalAudio <= 0) return null;
-  return totalProc / totalAudio;
-}
-
-// Fallback: average total processing time for that model (when we don't know
-// the audio duration of a queued entry yet).
-function _avgTotalProcessingSecs(model) {
-  const samples = files.filter(f => f.status === 'done' && f.processing_secs && f.mode === model);
-  if (!samples.length) return null;
-  return samples.reduce((s, f) => s + f.processing_secs, 0) / samples.length;
-}
-
-// Estimate remaining seconds for a single entry. Returns null if unknown.
-function estimateRemainingSecs(f, nowTs) {
-  nowTs = nowTs || (Date.now() / 1000);
-  if (f.status === 'done' || f.status === 'error') return 0;
-  const rate = _ratePerAudioSec(f.mode);
-  // If we know audio duration (usually not until after transcription) use rate.
-  // For queued/processing before we know duration, use avg total processing time.
-  let total = null;
-  if (f.dur_secs && rate) total = f.dur_secs * rate;
-  else                    total = _avgTotalProcessingSecs(f.mode);
-  if (total == null) return null;
-  if (f.status === 'processing' && f.started_at) {
-    const elapsed = nowTs - f.started_at;
-    return Math.max(0, total - elapsed);
-  }
-  return total;
-}
-
-function estimateTotalRemaining() {
-  const pending = files.filter(f => f.status === 'queued' || f.status === 'processing');
-  let total = 0, unknown = 0;
-  const now = Date.now() / 1000;
-  for (const f of pending) {
-    const est = estimateRemainingSecs(f, now);
-    if (est == null) unknown++;
-    else total += est;
-  }
-  return { count: pending.length, totalSecs: total, unknown };
-}
-
-function fmtSecs(s) {
-  if (s == null || !isFinite(s)) return '—';
-  s = Math.max(0, Math.round(s));
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60), r = s % 60;
-  if (m < 60) return r ? `${m}m ${r}s` : `${m}m`;
-  const h = Math.floor(m / 60), mm = m % 60;
-  return mm ? `${h}h ${mm}m` : `${h}h`;
-}
-
-function renderStatus(status, f) {
-  const s = STATUS_MAP[status] || STATUS_MAP.queued;
-  const extra = status === 'error' ? ' title="Clique para ver o erro"' : '';
-  let eta = '';
-  if (f && (status === 'queued' || status === 'processing')) {
-    const est = estimateRemainingSecs(f);
-    if (est != null && est > 0) eta = `<div class="row-eta">~${fmtSecs(est)} restante${status === 'queued' ? ' (aguardando)' : ''}</div>`;
-  }
-  return `<span class="status-badge ${s.cls}" role="img" aria-label="${s.label}"${extra}>
-    <span class="status-dot"></span>${s.label}
-  </span>${eta}`;
-}
-
-function renderFiles(dataOverride) {
-  // If no explicit data passed, apply the current view pipeline.
-  const data = dataOverride || _getVisibleFiles();
-  const tbody = document.getElementById('files-tbody');
-  const empty = document.getElementById('empty-state');
-  const table = tbody.closest('table');
-  tbody.innerHTML = '';
-
-  _renderSortIndicators();
-  _syncFolderButtonLabel();
-  _renderStatusFilterCounts();
-  _renderQueueSummary();
-
-  if (!data.length) {
-    table.style.display = 'none';
-    empty.style.display = 'flex';
-    return;
-  }
-  table.style.display = '';
-  empty.style.display = 'none';
-
-  data.forEach(f => {
-    const tr = document.createElement('tr');
-    tr.dataset.id = f.id;
-    tr.innerHTML = `
-      <td class="col-check">
-        <input type="checkbox" class="checkbox" aria-label="Selecionar ${esc(f.name)}"
-          ${selected.has(f.id)?'checked':''}
-          onclick="event.stopPropagation()" onchange="toggleSelect('${jsAttr(f.id)}',this)" />
-      </td>
-      <td><div class="file-name">${esc(f.name)}</div></td>
-      <td class="col-date"><div class="file-date">${esc(f.date)}</div></td>
-      <td class="col-dur"><div class="file-dur">${esc(f.dur)}</div></td>
-      <td class="col-mode"><span class="mode-badge">${esc(f.mode)}</span></td>
-      <td class="col-status">${renderStatus(f.status, f)}</td>
-      <td class="col-actions">
-        <div class="action-wrap">
-          <button class="dots-btn" aria-label="Ações — ${esc(f.name)}" aria-haspopup="true" aria-expanded="false"
-            onclick="toggleDD('${jsAttr(f.id)}',this,event)">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="19" r="1" fill="currentColor"/></svg>
-          </button>
-          <div class="dropdown" id="dd-${esc(f.id)}" role="menu">
-            ${f.status === 'error' ? `
-            <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="viewError('${jsAttr(f.id)}')">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-              Ver log de erro
-            </div>
-            <div class="dd-sep"></div>` : `
-            <div class="dd-item" role="menuitem" tabindex="-1" onclick="viewFile('${jsAttr(f.id)}')">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-              Ver transcrição
-            </div>`}
-            <div class="dd-item" role="menuitem" tabindex="-1" onclick="dlFile('${jsAttr(f.id)}','txt')">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              Baixar TXT
-            </div>
-            <div class="dd-item" role="menuitem" tabindex="-1" onclick="dlFile('${jsAttr(f.id)}','srt')">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-              Baixar SRT (legendas)
-            </div>
-            <div class="dd-item" role="menuitem" tabindex="-1" onclick="dlFile('${jsAttr(f.id)}','timestamps')">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-              Baixar Timestamps
-            </div>
-            <div class="dd-item" role="menuitem" tabindex="-1" onclick="dlFile('${jsAttr(f.id)}','json')">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-              Baixar JSON
-            </div>
-            <div class="dd-sep"></div>
-            <div class="dd-item" role="menuitem" tabindex="-1" onclick="promptMoveToFolder('${jsAttr(f.id)}')">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-              Mover para pasta${f.folder ? ` (${esc(f.folder)})` : ''}
-            </div>
-            <div class="dd-sep"></div>
-            <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="deleteFile('${jsAttr(f.id)}')">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
-              Excluir arquivo
-            </div>
-          </div>
-        </div>
-      </td>`;
-    tbody.appendChild(tr);
-  });
-
-  // Event delegation — one listener on tbody survives re-renders
-  tbody.onclick = e => {
-    const tr = e.target.closest('tr');
-    if (!tr) return;
-    if (e.target.closest('.action-wrap') || e.target.closest('input[type="checkbox"]')) return;
-    const id = tr.dataset.id;
-    if (!id) return;
-    // Clicking the error badge opens error viewer
-    if (e.target.closest('.status-badge.error')) { viewError(id); return; }
-    const f = files.find(x => x.id === id);
-    if (f && f.status === 'error') { viewError(id); return; }
-    if (f && (f.status === 'queued' || f.status === 'processing')) return;
-    viewFile(id);
-  };
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  SEARCH
-// ═══════════════════════════════════════════════════════════════
-function toggleSearch() {
-  const bar = document.getElementById('search-bar');
-  const btn = document.getElementById('search-toggle');
-  const open = bar.classList.toggle('open');
-  btn.classList.toggle('active', open);
-  btn.setAttribute('aria-expanded', open);
-  if (open) document.getElementById('search-input').focus();
-  else { document.getElementById('search-input').value = ''; _view.search = ''; renderFiles(); }
-}
-
-function filterFiles(q) {
-  _view.search = q || '';
-  renderFiles();
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  SELECTION
-// ═══════════════════════════════════════════════════════════════
-function toggleSelect(id, cb) {
-  cb.checked ? selected.add(id) : selected.delete(id);
-  syncBulkBar();
-  syncHeaderCheck();
-}
-
-// Select/deselect respects the current filter — toggleAll only affects the
-// visible rows, and header indeterminate state is computed against visible too.
-function toggleAll(cb) {
-  const visible = _getVisibleFiles();
-  visible.forEach(f => cb.checked ? selected.add(f.id) : selected.delete(f.id));
-  renderFiles();
-  syncBulkBar();
-}
-
-function syncHeaderCheck() {
-  const cb = document.getElementById('check-all');
-  const visible = _getVisibleFiles();
-  const visibleSelected = visible.filter(f => selected.has(f.id)).length;
-  cb.checked = visibleSelected === visible.length && visible.length > 0;
-  cb.indeterminate = visibleSelected > 0 && visibleSelected < visible.length;
-}
-
-// Returns only the selected IDs that are currently visible under the active
-// filters — bulk actions should never touch rows the user can't see.
-function selectedVisibleIds() {
-  const visible = _getVisibleFiles();
-  return visible.filter(f => selected.has(f.id)).map(f => f.id);
-}
-
-function syncBulkBar() {
-  const bar = document.getElementById('bulk-bar');
-  const count = selectedVisibleIds().length;
-  document.getElementById('bulk-count').textContent =
-    `${count} selecionado${count !== 1 ? 's' : ''}`;
-  bar.classList.toggle('show', count > 0);
-  syncHeaderCheck();
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  DROPDOWNS
-// ═══════════════════════════════════════════════════════════════
-function toggleDD(id, btn, e) {
-  e.stopPropagation();
-  const dd   = document.getElementById('dd-' + id);
-  const open = dd.classList.contains('open');
-  closeAllDDs();
-  if (!open) {
-    dd.classList.add('open');
-    btn.setAttribute('aria-expanded', 'true');
-  }
-}
-
-function closeAllDDs() {
-  document.querySelectorAll('.dropdown.open').forEach(d => d.classList.remove('open'));
-  document.querySelectorAll('.dots-btn[aria-expanded="true"]').forEach(b => b.setAttribute('aria-expanded','false'));
-}
-
-document.addEventListener('click', closeAllDDs);
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') {
-    // If a dialog is open, cancel it and stop — we don't want ESC to also
-    // close the modal/viewer/etc stacked behind it.
-    const dialog = document.getElementById('dialog-overlay');
-    if (dialog && dialog.classList.contains('open')) { _dialogCancel(); return; }
-    closeAllDDs(); closeModal(); closeViewer(); closeFolderPicker(); closeSidebar();
-  }
-});
-
-// ═══════════════════════════════════════════════════════════════
-//  FILE ACTIONS
-// ═══════════════════════════════════════════════════════════════
-async function viewFile(id) {
-  const f = files.find(x => x.id === id);
-  if (!f) return;
-  if (f.status === 'error')      { viewError(id); return; }
-  if (f.status === 'queued')     { showToast('Aguardando na fila…', ''); return; }
-  if (f.status === 'processing') { showToast('Transcrição em andamento…', ''); return; }
-  try {
-    const res  = await fetch(`/api/result/${encodeURIComponent(f.file)}`);
-    if (!res.ok) throw new Error();
-    const data = await res.json();
-    openViewer(f, data);
-  } catch {
-    showToast('Não foi possível carregar a transcrição.', 'error');
-  }
-}
-
-function viewError(id) {
-  closeAllDDs();
-  const f = files.find(x => x.id === id);
-  if (!f) return;
-  const msg = f.error || 'Nenhuma mensagem de erro registrada.';
-  // Reuse viewer modal to show the error log
-  _viewerFile = f;
-  _viewerData = {
-    text: `❌ ERRO NA TRANSCRIÇÃO\n${'─'.repeat(50)}\nArquivo : ${f.file}\nModelo  : ${f.mode}\nData    : ${f.date}\n${'─'.repeat(50)}\n\n${msg}`,
-    timestamped: '', srt: ''
-  };
-  document.getElementById('viewer-title').textContent = `Erro — ${f.name}`;
-  // Hide tabs that aren't relevant for errors
-  document.getElementById('vtab-ts').style.display  = 'none';
-  document.getElementById('vtab-srt').style.display = 'none';
-  switchViewerTab('text');
-  document.getElementById('viewer-overlay').classList.add('open');
-  document.body.style.overflow = 'hidden';
-}
-
-function dlFile(id, fmt) {
-  closeAllDDs();
-  const f = files.find(x => x.id === id);
-  if (!f) return;
-  window.location = `/api/download/${encodeURIComponent(f.file)}/${fmt}`;
-}
-
-async function deleteFile(id) {
-  closeAllDDs();
-  const f = files.find(x => x.id === id);
-  if (!f) return;
-  const ok = await showConfirm({
-    title: 'Excluir transcrição',
-    message: `"${f.name}" será removido do histórico e todos os arquivos (TXT, SRT, JSON, timestamps) serão apagados do disco.`,
-    confirmText: 'Excluir',
-    danger: true
-  });
-  if (!ok) return;
-  try {
-    const res = await fetch(`/api/delete/${encodeURIComponent(f.file)}`, { method: 'DELETE' });
-    if (!res.ok) throw new Error('delete failed');
-    files.splice(files.findIndex(x => x.id === id), 1);
-    selected.delete(id);
-    renderFiles();
-    syncBulkBar();
-    await loadStats();
-    showToast('Arquivo excluído.', 'success');
-  } catch {
-    showToast('Erro ao excluir.', 'error');
-  }
-}
-
-async function downloadSelected() {
-  const ids = selectedVisibleIds();
-  if (!ids.length) return;
-  let n = 0;
-  for (const id of ids) {
-    const f = files.find(x => x.id === id);
-    if (f && f.status === 'done') {
-      const a = document.createElement('a');
-      a.href = `/api/download/${encodeURIComponent(f.file)}/txt`;
-      a.download = f.name + '.txt';
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      n++;
-      await new Promise(r => setTimeout(r, 300));
-    }
-  }
-  showToast(`${n} arquivo(s) baixado(s).`, 'success');
-}
-
-function downloadAllZip() {
-  window.location = '/api/download-all';
-}
-
-async function deleteSelected() {
-  const ids = selectedVisibleIds();
-  if (!ids.length) return;
-  const count = ids.length;
-  const ok = await showConfirm({
-    title: `Excluir ${count} transcriç${count === 1 ? 'ão' : 'ões'}`,
-    message: `Os arquivos selecionados serão removidos permanentemente do histórico e do disco.`,
-    confirmText: 'Excluir',
-    danger: true
-  });
-  if (!ok) return;
-  let failed = 0;
-  for (const id of ids) {
-    const f = files.find(x => x.id === id);
-    if (f) {
-      try {
-        const res = await fetch(`/api/delete/${encodeURIComponent(f.file)}`, { method: 'DELETE' });
-        if (!res.ok) { failed++; continue; }
-        files.splice(files.findIndex(x => x.id === id), 1);
-        selected.delete(id);
-      } catch { failed++; }
-    }
-  }
-  renderFiles();
-  syncBulkBar();
-  await loadStats();
-  if (failed === 0) {
-    showToast(`${count} arquivo(s) excluído(s).`, 'success');
-  } else {
-    showToast(`${count - failed} excluído(s), ${failed} falha(s).`, 'error');
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  UPLOAD MODAL
-// ═══════════════════════════════════════════════════════════════
-function openModal(tab = 'file') {
-  switchTab(tab);
-  document.getElementById('overlay').classList.add('open');
-  document.body.style.overflow = 'hidden';
-  setTimeout(() => document.querySelector('#overlay .modal-close').focus(), 50);
-}
-
-function closeModal() {
-  document.getElementById('overlay').classList.remove('open');
-  document.body.style.overflow = '';
-  stopRecordingCleanup();
-}
-
-function handleOverlayClick(e) {
-  if (e.target === document.getElementById('overlay')) closeModal();
-}
-
-function switchTab(tab) {
-  ['file', 'url', 'rec'].forEach(t => {
-    const pressed = t === tab;
-    document.getElementById('tab-' + t).setAttribute('aria-pressed', pressed);
-    document.getElementById('content-' + t).style.display = pressed ? '' : 'none';
-  });
-
-  const dlBtn = document.getElementById('download-only-btn');
-  if (dlBtn) dlBtn.style.display = tab === 'url' ? 'block' : 'none';
-
-  // The 'rec' tab has its own INICIAR/PARAR buttons; the footer "TRANSCREVER"
-  // would be a no-op there (it just shows a toast). Hide it to avoid confusion.
-  const txBtn = document.getElementById('transcribe-btn');
-  if (txBtn) txBtn.style.display = tab === 'rec' ? 'none' : 'block';
-}
-
-function switchMainTab(tab) {
-  ['transcriptions', 'media'].forEach(t => {
-    const pressed = t === tab;
-    document.getElementById('main-tab-' + t).setAttribute('aria-pressed', pressed);
-    // Use '' to clear the inline style so the element falls back to its CSS
-    // rule. #card-transcriptions is .card-with-sidebar (display:grid on desktop,
-    // block on mobile via media query); forcing 'block' would break the grid.
-    document.getElementById('card-' + t).style.display = pressed ? '' : 'none';
-  });
-  if (tab === 'media') {
-    loadMedia();
-  }
-}
-
-function formatBytes(bytes, decimals = 1) {
-    if (!+bytes) return '0 Bytes';
-    const k = 1024;
-    const dm = decimals < 0 ? 0 : decimals;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  DROPZONE
-// ═══════════════════════════════════════════════════════════════
-function handleDragOver(e) { e.preventDefault(); document.getElementById('dropzone').classList.add('drag-over'); }
-function handleDragLeave()  { document.getElementById('dropzone').classList.remove('drag-over'); }
-function handleDrop(e) {
-  e.preventDefault();
-  document.getElementById('dropzone').classList.remove('drag-over');
-  if (e.dataTransfer.files.length) handleFileSelect(e.dataTransfer.files);
-}
-
-function handleFileSelect(fileList) {
-  if (!fileList || !fileList.length) return;
-  pendingFiles = Array.from(fileList);
-  const f = pendingFiles[0];
-  document.getElementById('chip-name').textContent =
-    pendingFiles.length > 1 ? `${f.name} + ${pendingFiles.length-1} outro(s)` : f.name;
-  document.getElementById('chip-size').textContent =
-    pendingFiles.reduce((s, x) => s + x.size, 0) < 1048576
-      ? (pendingFiles.reduce((s, x) => s + x.size, 0) / 1024).toFixed(1) + ' KB'
-      : (pendingFiles.reduce((s, x) => s + x.size, 0) / 1048576).toFixed(1) + ' MB';
-  document.getElementById('file-chip').classList.add('show');
-  document.getElementById('dropzone').style.display = 'none';
-}
-
-function removeFile() {
-  pendingFiles = [];
-  document.getElementById('file-input').value = '';
-  document.getElementById('file-chip').classList.remove('show');
-  document.getElementById('dropzone').style.display = '';
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  ADVANCED
-// ═══════════════════════════════════════════════════════════════
-function toggleAdvanced() {
-  const panel = document.getElementById('adv-panel');
-  const btn   = document.getElementById('adv-toggle');
-  const open  = panel.classList.toggle('open');
-  btn.classList.toggle('open', open);
-  btn.setAttribute('aria-expanded', open);
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  TRANSCRIPTION
-// ═══════════════════════════════════════════════════════════════
-async function startTranscription() {
-  const activeTab = document.querySelector('.seg-tab[aria-pressed="true"]')?.id?.replace('tab-','') || 'file';
-
-  if (activeTab === 'url') {
-    const model         = document.getElementById('mode-select').value;
-    const language      = document.getElementById('lang-select').value;
-    const taskType      = document.getElementById('task-select').value;
-    const filterFillers = document.getElementById('filter-toggle').checked;
-
-    const urlVal = document.getElementById('url-input')?.value?.trim();
-    if (!urlVal) { showToast('Cole uma URL do YouTube válida.', 'error'); return; }
-    closeModal();
-    await sendUrl(urlVal, model, language, taskType, filterFillers);
-    return;
-  }
-
-  if (activeTab === 'rec') {
-    // handled by stopRecording
-    showToast('Pare a gravação para transcrever.', '');
-    return;
-  }
-
-  if (!pendingFiles.length) {
-    showToast('Selecione um arquivo primeiro.', 'error');
-    return;
-  }
-
-  const model         = document.getElementById('mode-select').value;
-  const language      = document.getElementById('lang-select').value;
-  const taskType      = document.getElementById('task-select').value;
-  const filterFillers = document.getElementById('filter-toggle').checked;
-
-  closeModal();
-
-  // Queue all pending files
-  for (const file of pendingFiles) {
-    await sendFile(file, model, language, taskType, filterFillers);
-  }
-  removeFile();
-}
-
-async function sendFile(file, model, language, taskType, filterFillers) {
-  const fd = new FormData();
-  fd.append('file',           file);
-  fd.append('model',          model);
-  fd.append('language',       language);
-  fd.append('task',           taskType);
-  fd.append('filter_fillers', filterFillers ? 'true' : 'false');
-
-  showProgress(file.name);
-
-  try {
-    const res = await fetch('/api/transcribe', { method: 'POST', body: fd });
-    if (!res.ok) {
-      let msg = '';
-      try { const errData = await res.json(); msg = errData.detail || ''; } catch {}
-      hideProgress();
-      showToast(`Erro ao enviar "${file.name}"${msg ? ': ' + msg : ''}.`, 'error');
-      return;
-    }
-    const data = await res.json();
-    if (!data.task_id) {
-      hideProgress();
-      showToast(`Erro ao enviar "${file.name}": resposta inválida do servidor.`, 'error');
-      return;
-    }
-    // Reload history immediately so item appears in table as "Aguardando"
-    await loadHistory();
-    pollProgressForRow(data.task_id, data.filename || file.name);
-  } catch {
-    hideProgress();
-    showToast(`Erro ao enviar "${file.name}".`, 'error');
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  PROGRESS POLLING
-// ═══════════════════════════════════════════════════════════════
-function showProgress(name) {
-  document.getElementById('progress-item').style.display = 'flex';
-  document.getElementById('progress-name').textContent  = `Transcrevendo "${name}"…`;
-  setProgressPct(0);
-}
-
-function hideProgress() {
-  document.getElementById('progress-item').style.display = 'none';
-}
-
-function setProgressPct(pct) {
-  document.getElementById('progress-fill').style.width = pct + '%';
-  document.getElementById('progress-pct').textContent  = Math.floor(pct) + '%';
-  document.querySelector('#progress-item [role="progressbar"]')
-          ?.setAttribute('aria-valuenow', Math.floor(pct));
-}
-
-// Per-row polling — updates the table row live without full re-render
-const _activePolls = {}; // task_id → intervalId
-
-function pollProgressForRow(task_id, filename) {
-  if (_activePolls[task_id]) return; // already polling
-
-  showProgress(filename);
-
-  _activePolls[task_id] = setInterval(async () => {
-    try {
-      const res  = await fetch(`/api/progress/${task_id}`);
-      if (!res.ok) { _stopPoll(task_id); return; }
-      const data = await res.json();
-
-      const pct  = data.progress || 0;
-      const name = data.name || filename;
-      setProgressPct(pct);
-      document.getElementById('progress-name').textContent =
-        `Transcrevendo "${name}"… ${Math.floor(pct)}%`;
-
-      // Update row status badge live
-      _updateRowStatus(filename, data.status, pct);
-
-      if (data.status === 'done') {
-        _stopPoll(task_id);
-        hideProgress();
-        await loadHistory();
-        await loadStats();
-        showToast(`"${data.filename || filename}" transcrito com sucesso!`, 'success');
-      } else if (data.status === 'error') {
-        _stopPoll(task_id);
-        hideProgress();
-        await loadHistory(); // reload so error message appears in row
-        const errMsg = data.error || 'Falha na transcrição';
-        showToast(`Erro em "${filename}": ${errMsg}`, 'error');
-      }
-    } catch { /* ignore network blip */ }
-  }, 800);
-}
-
-function _stopPoll(task_id) {
-  if (_activePolls[task_id]) {
-    clearInterval(_activePolls[task_id]);
-    delete _activePolls[task_id];
-  }
-}
-
-function _updateRowStatus(filename, status, pct) {
-  const tr = document.querySelector(`#files-tbody tr[data-id="${CSS.escape(filename)}"]`);
-  if (!tr) return;
-  const badge = tr.querySelector('.status-badge');
-  if (!badge) return;
-  const s = STATUS_MAP[status] || STATUS_MAP.queued;
-  badge.className = `status-badge ${s.cls}`;
-  badge.setAttribute('aria-label', s.label);
-  badge.innerHTML = `<span class="status-dot"></span>${s.label}${status === 'processing' ? ` <small style="opacity:.7">${Math.floor(pct)}%</small>` : ''}`;
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  RECORDING
-// ═══════════════════════════════════════════════════════════════
-let _mediaRecorder = null;
-let _audioChunks   = [];
-let _recTimerInterval = null;
-let _recSeconds    = 0;
-
-async function startRecording() {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    _audioChunks  = [];
-    _mediaRecorder = new MediaRecorder(stream);
-    _mediaRecorder.ondataavailable = e => { if (e.data.size) _audioChunks.push(e.data); };
-    _mediaRecorder.onstop = () => {
-      const blob = new Blob(_audioChunks, { type: 'audio/webm' });
-      const file = new File([blob], `gravacao_${Date.now()}.webm`, { type: 'audio/webm' });
-      pendingFiles = [file];
-      closeModal();
-      const model        = document.getElementById('mode-select').value;
-      const language     = document.getElementById('lang-select').value;
-      const taskType     = document.getElementById('task-select').value;
-      const filterFill   = document.getElementById('filter-toggle').checked;
-      sendFile(file, model, language, taskType, filterFill);
-      stream.getTracks().forEach(t => t.stop());
-    };
-    _mediaRecorder.start();
-    _recSeconds = 0;
-    _recTimerInterval = setInterval(() => {
-      _recSeconds++;
-      const m = String(Math.floor(_recSeconds / 60)).padStart(2, '0');
-      const s = String(_recSeconds % 60).padStart(2, '0');
-      document.getElementById('rec-timer').textContent = `${m}:${s}`;
-    }, 1000);
-
-    document.getElementById('rec-icon').classList.add('recording');
-    document.getElementById('rec-timer').classList.add('show');
-    document.getElementById('rec-label').textContent = 'Gravando…';
-    document.getElementById('rec-sub').textContent   = 'Clique em PARAR quando terminar';
-    document.getElementById('rec-start-btn').style.display = 'none';
-    document.getElementById('rec-stop-btn').style.display  = '';
-  } catch (err) {
-    showToast('Não foi possível acessar o microfone.', 'error');
-  }
-}
-
-function stopRecording() {
-  if (_mediaRecorder && _mediaRecorder.state !== 'inactive') {
-    _mediaRecorder.stop();
-    clearInterval(_recTimerInterval);
-    resetRecUI();
-    showToast('Gravação enviada para transcrição!', 'success');
-  }
-}
-
-function stopRecordingCleanup() {
-  if (_mediaRecorder && _mediaRecorder.state !== 'inactive') {
-    _mediaRecorder.stop();
-  }
-  clearInterval(_recTimerInterval);
-  resetRecUI();
-}
-
-function resetRecUI() {
-  document.getElementById('rec-icon').classList.remove('recording');
-  document.getElementById('rec-timer').classList.remove('show');
-  document.getElementById('rec-label').textContent  = 'Gravar do microfone';
-  document.getElementById('rec-sub').textContent    = 'Clique para iniciar a gravação';
-  document.getElementById('rec-start-btn').style.display = '';
-  document.getElementById('rec-stop-btn').style.display  = 'none';
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  VIEWER MODAL
-// ═══════════════════════════════════════════════════════════════
-function openViewer(f, data) {
-  _viewerFile = f;
-  _viewerData = data;
-  document.getElementById('viewer-title').textContent = f.name;
-  // Ensure all tabs visible (may have been hidden by viewError)
-  document.getElementById('vtab-ts').style.display  = '';
-  document.getElementById('vtab-srt').style.display = '';
-  switchViewerTab('text');
-  document.getElementById('viewer-overlay').classList.add('open');
-  document.body.style.overflow = 'hidden';
-}
-
-function closeViewer() {
-  document.getElementById('viewer-overlay').classList.remove('open');
-  document.body.style.overflow = '';
-}
-
-function handleViewerOverlayClick(e) {
-  if (e.target === document.getElementById('viewer-overlay')) closeViewer();
-}
-
-function switchViewerTab(tab) {
-  const map = { text: 'text', ts: 'timestamped', srt: 'srt', gaps: '' };
-  
-  const isGaps = tab === 'gaps';
-  document.getElementById('viewer-text').style.display = isGaps ? 'none' : 'block';
-  document.getElementById('gaps-panel').style.display = isGaps ? 'flex' : 'none';
-  
-  if (!isGaps) {
-    document.getElementById('viewer-text').value = _viewerData[map[tab]] || '';
-  } else {
-    if (_viewerFile) loadGaps(_viewerFile.file);
-  }
-
-  ['text','ts','srt','gaps'].forEach(t => {
-    const el = document.getElementById('vtab-' + t);
-    if (!el) return;
-    el.classList.toggle('active', t === tab);
-    el.setAttribute('aria-selected', t === tab);
-  });
-}
-
-function dlViewerFile(fmt) {
-  if (!_viewerFile) return;
-  window.location = `/api/download/${encodeURIComponent(_viewerFile.file)}/${fmt}`;
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  TOAST
-// ═══════════════════════════════════════════════════════════════
-const TOAST_ICONS = {
-  success: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`,
-  error:   `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`,
-  '':      `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`,
-};
-
-function showToast(msg, type = '') {
-  const area = document.getElementById('toast-area');
-  const t    = document.createElement('div');
-  t.className = 'toast' + (type ? ' ' + type : '');
-  t.setAttribute('role', 'alert');
-  t.innerHTML = (TOAST_ICONS[type] || TOAST_ICONS['']) + `<span>${msg}</span>`;
-  area.appendChild(t);
-  setTimeout(() => t.remove(), 4500);
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  GLOBAL DRAG
-// ═══════════════════════════════════════════════════════════════
-document.body.addEventListener('dragover', e => {
-  e.preventDefault();
-  if (!document.getElementById('overlay').classList.contains('open')) openModal('file');
-});
-
-// ═══════════════════════════════════════════════════════════════
-//  BOOT
-// ═══════════════════════════════════════════════════════════════
-init();
-    function loadGaps(filename) {
-        if (!filename) return;
-        const minSec = parseFloat(document.getElementById('gaps-min-sec')?.value || 1.0);
-        const textEl = document.getElementById('gaps-text');
-        const countEl = document.getElementById('gaps-count');
-        if (!textEl) return;
-        textEl.value = 'Carregando...';
-        fetch(`/api/gaps/${encodeURIComponent(filename)}?min_gap=${minSec}`)
-            .then(r => r.json())
-            .then(data => {
-                countEl.textContent = data.total_gaps + ' respiro(s) encontrado(s)';
-                textEl.value = data.full_text || 'Nenhum texto disponível.';
-            })
-            .catch(() => { textEl.value = 'Erro ao carregar respiros.'; });
-    }
-
-    function downloadGapsTxt() {
-        if (!_viewerFile) return;
-        const text = document.getElementById('gaps-text').value;
-        const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = _viewerFile.name + '_com_respiros.txt';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(a.href);
-    }
-
-    async function sendUrl(url, model, language, taskType, filterFillers) {
-        showToast('Baixando e transcrevendo URL...', '');
-        try {
-            const fd = new FormData();
-            fd.append('url',            url);
-            fd.append('model',          model);
-            fd.append('language',       language);
-            fd.append('task',           taskType);
-            fd.append('filter_fillers', filterFillers ? 'true' : 'false');
-            const r = await fetch('/api/transcribe-url', { method: 'POST', body: fd });
-            const data = await r.json();
-            if (!r.ok) { showToast(data.detail || 'Erro ao processar URL.', 'error'); return; }
-            showToast('URL enviada para transcrição!', 'success');
-            document.getElementById('url-input').value = '';
-            setTimeout(loadHistory, 1500);
-        } catch(e) { showToast('Erro: ' + e.message, 'error'); }
-    }
-
-    async function loadMedia() {
-      try {
-        const res = await fetch('/api/media-history');
-        const media = await res.json();
-        renderMedia(media);
-      } catch { /* ignore */ }
-    }
-
-    function renderMedia(data) {
-      const tbody = document.getElementById('media-tbody');
-      const empty = document.getElementById('empty-media-state');
-      const table = tbody.closest('table');
-      tbody.innerHTML = '';
-
-      if (!data.length) {
-        table.style.display = 'none';
-        empty.style.display = 'flex';
-        return;
-      }
-      table.style.display = '';
-      empty.style.display = 'none';
-
-      data.forEach(f => {
-        const tr = document.createElement('tr');
-        tr.dataset.id = f.file;
-        tr.innerHTML = `
-          <td></td>
-          <td><div class="file-name">${esc(f.name)}</div></td>
-          <td class="col-date"><div class="file-date">${esc(f.date)}</div></td>
-          <td class="col-dur"><div class="file-dur">${formatBytes(f.size_bytes)}</div></td>
-          <td class="col-status">${renderStatus(f.status, null)}</td>
-          <td class="col-actions">
-            <div class="action-wrap">
-              <button class="dots-btn" aria-label="Ações" onclick="toggleDD('media-${jsAttr(f.id)}',this,event)">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="19" r="1" fill="currentColor"/></svg>
-              </button>
-              <div class="dropdown" id="dd-media-${esc(f.id)}" role="menu">
-                <div class="dd-item" role="menuitem" tabindex="-1" onclick="dlMediaFile('${jsAttr(f.file)}')">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                  Baixar Original para o PC
-                </div>
-                <div class="dd-sep"></div>
-                <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="deleteMediaFile('${jsAttr(f.file)}')">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
-                  Excluir Mídia Hospedada
-                </div>
-              </div>
-            </div>
-          </td>`;
-        tbody.appendChild(tr);
-      });
-    }
-
-    function dlMediaFile(filename) {
-      window.location = `/api/download-media/${encodeURIComponent(filename)}`;
-    }
-
-    async function deleteMediaFile(filename) {
-      const ok = await showConfirm({
-        title: 'Excluir mídia original',
-        message: 'O arquivo físico será removido do cofre local e não poderá mais ser re-baixado ou re-transcrito. Espaço em disco será liberado.',
-        confirmText: 'Excluir mídia',
-        danger: true
-      });
-      if (!ok) return;
-      try {
-        await fetch(`/api/delete-media/${encodeURIComponent(filename)}`, { method: 'DELETE' });
-        showToast('Mídia original excluída', 'success');
-        loadMedia();
-      } catch (e) {
-        showToast('Erro ao remover', 'error');
-      }
-    }
-
-    function updateQualityOptions() {
-        const typeSelect = document.getElementById('dl-type-select').value;
-        const qualSelect = document.getElementById('dl-quality-select');
-        qualSelect.innerHTML = '';
-        if (typeSelect === 'video') {
-            qualSelect.innerHTML = `
-              <option value="best">Melhor (Máxima)</option>
-              <option value="1080p">1080p</option>
-              <option value="720p">720p</option>
-              <option value="480p">480p</option>
-            `;
-        } else {
-            qualSelect.innerHTML = `
-              <option value="best">Melhor Original</option>
-              <option value="worst">Menor Espaço</option>
-            `;
-        }
-    }
-
-    // Track active media-refresh intervals so concurrent downloads don't stack timers.
-    const _mediaRefreshIntervals = new Set();
-    function _stopMediaRefresh(id) {
-        clearInterval(id);
-        _mediaRefreshIntervals.delete(id);
-    }
-
-    async function startDownloadOnly() {
-        const urlVal = document.getElementById('url-input')?.value?.trim();
-        const mediaType = document.getElementById('dl-type-select').value;
-        const quality = document.getElementById('dl-quality-select').value;
-
-        if (!urlVal) { showToast('Cole uma URL do YouTube válida.', 'error'); return; }
-        closeModal();
-        showToast(`Baixando apenas o ${mediaType === 'video' ? 'vídeo' : 'áudio'}...`, '');
-
-        try {
-            const fd = new FormData();
-            fd.append('url', urlVal);
-            fd.append('media_type', mediaType);
-            fd.append('quality', quality);
-
-            const r = await fetch('/api/yt-download-only', { method: 'POST', body: fd });
-            let data = {};
-            try { data = await r.json(); } catch {}
-            if (!r.ok) { showToast(data.detail || 'Erro ao agendar URL.', 'error'); return; }
-            showToast('Mídia adicionada na fila de downloads!', 'success');
-            document.getElementById('url-input').value = '';
-            switchMainTab('media');
-            // NOTE: this is a download-only task — its row lives in the Media tbody,
-            // not in the Transcriptions tbody. We intentionally do NOT call
-            // pollProgressForRow here (it would try to update a non-existent row in
-            // the transcriptions table). Progress is reflected via media list refresh.
-            setTimeout(loadMedia, 1500);
-
-            const intervalId = setInterval(loadMedia, 5000);
-            _mediaRefreshIntervals.add(intervalId);
-            // Auto-stop the refresh after 2 minutes (download usually completes by then).
-            setTimeout(() => _stopMediaRefresh(intervalId), 120000);
-        } catch(e) { showToast('Erro: ' + e.message, 'error'); }
-    }
-</script>
+<script src="/static/app.js" defer></script>
 </body>
 </html>

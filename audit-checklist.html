@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Checklist de Auditoria — Whisper Transcritor</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #f0f2f5;
+    color: #1a1a2e;
+    padding: 20px 14px;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .header {
+    background: linear-gradient(135deg, #1a1a2e, #0f3460);
+    color: white;
+    padding: 20px;
+    border-radius: 12px;
+    margin-bottom: 16px;
+  }
+  .header h1 { font-size: 18px; margin-bottom: 4px; }
+  .header .sub { opacity: 0.65; font-size: 12px; }
+  .type-tag {
+    display: inline-block;
+    background: rgba(255,255,255,0.15);
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    margin-top: 8px;
+  }
+  .score-box {
+    background: white;
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin-bottom: 14px;
+    box-shadow: 0 1px 8px rgba(0,0,0,0.07);
+  }
+  .score-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .score-label { font-size: 12px; color: #64748b; }
+  .score-value { font-size: 28px; font-weight: 700; }
+  .score-value.green { color: #10b981; }
+  .score-value.yellow { color: #f59e0b; }
+  .score-value.red { color: #ef4444; }
+  .bar-bg { background: #e2e8f0; border-radius: 99px; height: 8px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 99px; transition: width 0.4s ease, background 0.4s ease; }
+  .status-pill {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-top: 10px;
+  }
+  .pill-ok { background: #d1fae5; color: #065f46; }
+  .pill-warn { background: #fef3c7; color: #92400e; }
+  .pill-block { background: #fee2e2; color: #991b1b; }
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .stat {
+    background: white;
+    border-radius: 10px;
+    padding: 10px;
+    text-align: center;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+  }
+  .stat .n { font-size: 22px; font-weight: 700; }
+  .stat .l { font-size: 10px; color: #64748b; margin-top: 2px; }
+  .stat.ok .n { color: #10b981; }
+  .stat.crit .n { color: #ef4444; }
+  .stat.warn .n { color: #f59e0b; }
+  .stat.total .n { color: #6366f1; }
+  .section {
+    background: white;
+    border-radius: 12px;
+    margin-bottom: 12px;
+    overflow: hidden;
+    box-shadow: 0 1px 8px rgba(0,0,0,0.06);
+  }
+  .section-header {
+    padding: 12px 16px;
+    font-weight: 700;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
+  }
+  .section-header.crit { background: #fff1f1; color: #b91c1c; border-left: 4px solid #ef4444; }
+  .section-header.warn { background: #fffbeb; color: #92400e; border-left: 4px solid #f59e0b; }
+  .section-header.ok { background: #f0fdf4; color: #065f46; border-left: 4px solid #10b981; }
+  .section-header.info { background: #f0f9ff; color: #0369a1; border-left: 4px solid #38bdf8; }
+  .chevron { transition: transform 0.2s; }
+  .chevron.open { transform: rotate(180deg); }
+  .section-body { display: none; padding: 4px 0; }
+  .section-body.open { display: block; }
+  .item {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 10px 16px;
+    border-bottom: 1px solid #f8fafc;
+    transition: background 0.15s;
+  }
+  .item:last-child { border-bottom: none; }
+  .item:hover { background: #fafafa; }
+  .item.resolved { background: #f0fdf4; }
+  .item.resolved .item-title { text-decoration: line-through; color: #94a3b8; }
+  .item-check {
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    border: 2px solid #d1d5db;
+    flex-shrink: 0;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 1px;
+    transition: all 0.15s;
+  }
+  .item-check.crit { border-color: #fca5a5; }
+  .item-check.warn { border-color: #fcd34d; }
+  .item-check.checked { background: #10b981; border-color: #10b981; }
+  .item-check.checked::after { content: '✓'; color: white; font-size: 12px; font-weight: 700; }
+  .item-content { flex: 1; min-width: 0; }
+  .item-id { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.5; margin-bottom: 2px; }
+  .item-title { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+  .item-where { font-size: 11px; color: #64748b; margin-bottom: 4px; }
+  .item-fix {
+    font-size: 11px;
+    background: #f1f5f9;
+    padding: 6px 8px;
+    border-radius: 6px;
+    color: #475569;
+    margin-top: 4px;
+  }
+  .item-fix strong { display: block; margin-bottom: 2px; color: #334155; }
+  code {
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    background: rgba(0,0,0,0.07);
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
+  .links-wrap { padding: 0 16px 12px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { background: #f8fafc; padding: 8px 10px; text-align: left; border-bottom: 2px solid #e2e8f0; font-weight: 600; }
+  td { padding: 8px 10px; border-bottom: 1px solid #f1f5f9; }
+  tr:last-child td { border-bottom: none; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+  .badge.ok { background: #d1fae5; color: #065f46; }
+  .badge.crit { background: #fee2e2; color: #991b1b; }
+  .badge.warn { background: #fef3c7; color: #92400e; }
+  .badge.na { background: #f1f5f9; color: #64748b; }
+  .child-item {
+    display: flex;
+    gap: 10px;
+    padding: 10px 16px;
+    border-bottom: 1px solid #f8fafc;
+    align-items: flex-start;
+  }
+  .child-item:last-child { border-bottom: none; }
+  .child-icon { font-size: 20px; flex-shrink: 0; }
+  .child-name { font-weight: 600; font-size: 12px; margin-bottom: 2px; }
+  .child-note { font-size: 12px; color: #64748b; }
+  .approved-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    padding: 12px 16px;
+  }
+  .approved-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #065f46;
+    padding: 6px 8px;
+    background: #f0fdf4;
+    border-radius: 6px;
+  }
+  .action { display: flex; gap: 10px; align-items: flex-start; padding: 10px 16px; border-bottom: 1px solid #f8fafc; }
+  .action:last-child { border-bottom: none; }
+  .action-num { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: white; flex-shrink: 0; }
+  .action-num.crit { background: #ef4444; }
+  .action-num.warn { background: #f59e0b; }
+  .action-text { font-size: 13px; }
+  .action-id { font-size: 10px; font-weight: 700; color: #64748b; margin-bottom: 2px; }
+  .footer { text-align: center; color: #94a3b8; font-size: 11px; padding: 16px; }
+  @media (max-width: 480px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .approved-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="sub">2026-05-25 · UX Delivery Auditor</div>
+  <h1>🔍 Whisper Transcritor</h1>
+  <div class="type-tag">HTML / App Local Single-Page</div>
+</div>
+
+<div class="score-box">
+  <div class="score-row">
+    <div>
+      <div class="score-label">Score de qualidade</div>
+      <div class="score-value yellow" id="scoreVal">72%</div>
+    </div>
+    <div style="text-align:right">
+      <div class="score-label">Corrigidos</div>
+      <div style="font-size:18px;font-weight:700;" id="fixedCount">0 / 9</div>
+    </div>
+  </div>
+  <div class="bar-bg">
+    <div class="bar-fill" id="scoreBar" style="width:72%; background:#f59e0b"></div>
+  </div>
+  <div class="status-pill pill-warn" id="statusPill">⚠️ Publicar com ressalvas</div>
+</div>
+
+<div class="stats">
+  <div class="stat total"><div class="n" id="statTotal">32</div><div class="l">Auditados</div></div>
+  <div class="stat ok"><div class="n" id="statOk">23</div><div class="l">✅ OK</div></div>
+  <div class="stat crit"><div class="n" id="statCrit">2</div><div class="l">🔴 Críticos</div></div>
+  <div class="stat warn"><div class="n" id="statWarn">7</div><div class="l">🟡 Atenção</div></div>
+</div>
+
+<div class="section">
+  <div class="section-header crit" onclick="toggle(this)">
+    🔴 Problemas Críticos — 2 bloqueadores
+    <span class="chevron open">▼</span>
+  </div>
+  <div class="section-body open">
+    <div class="item" id="item-C01">
+      <div class="item-check crit" onclick="markDone(this, 'C01')" id="check-C01"></div>
+      <div class="item-content">
+        <div class="item-id">CRÍTICO-01</div>
+        <div class="item-title">Cabeçalhos de tabela sortáveis não funcionam via teclado</div>
+        <div class="item-where">📍 index.html:174–178 — &lt;th class="sortable" onclick="setSort(...)"&gt; (4 colunas)</div>
+        <div class="item-fix">
+          <strong>✏️ Correção:</strong>
+          Envolver o conteúdo do &lt;th&gt; em um &lt;button type="button"&gt; interno com o onclick. Botão é nativamente focável e ativável via Enter/Space.<br>
+          <code>&lt;th class="sortable" scope="col"&gt;&lt;button type="button" class="th-sort-btn" onclick="setSort('name')"&gt;Nome ↕&lt;/button&gt;&lt;/th&gt;</code>
+        </div>
+      </div>
+    </div>
+    <div class="item" id="item-C02">
+      <div class="item-check crit" onclick="markDone(this, 'C02')" id="check-C02"></div>
+      <div class="item-content">
+        <div class="item-id">CRÍTICO-02</div>
+        <div class="item-title">Favicon ausente — aba do navegador com ícone genérico</div>
+        <div class="item-where">📍 &lt;head&gt; do index.html (linhas 1–8)</div>
+        <div class="item-fix">
+          <strong>✏️ Correção:</strong>
+          Criar static/favicon.svg (microfone azul) e adicionar &lt;link rel="icon"&gt; no &lt;head&gt;.<br>
+          <code>&lt;link rel="icon" type="image/svg+xml" href="/static/favicon.svg"&gt;</code>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-header warn" onclick="toggle(this)">
+    🟡 Pontos de Atenção — 7 melhorias
+    <span class="chevron">▼</span>
+  </div>
+  <div class="section-body">
+    <div class="item" id="item-A01">
+      <div class="item-check warn" onclick="markDone(this, 'A01')" id="check-A01"></div>
+      <div class="item-content">
+        <div class="item-id">ATENÇÃO-01</div>
+        <div class="item-title">Página sem &lt;h1&gt; — hierarquia de headings pula para &lt;h2&gt; nos modais</div>
+        <div class="item-where">📍 index.html:9–12 (logo após &lt;body&gt;)</div>
+        <div class="item-fix">
+          <strong>✏️ Correção:</strong>
+          Adicionar &lt;h1 class="sr-only"&gt;Whisper Transcritor — Transcrições&lt;/h1&gt; após &lt;body&gt; OU promover "Arquivos recentes" do card a &lt;h1&gt;.
+        </div>
+      </div>
+    </div>
+    <div class="item" id="item-A02">
+      <div class="item-check warn" onclick="markDone(this, 'A02')" id="check-A02"></div>
+      <div class="item-content">
+        <div class="item-id">ATENÇÃO-02</div>
+        <div class="item-title">Card "Créditos restantes ∞" sem valor informativo</div>
+        <div class="item-where">📍 index.html:25–28</div>
+        <div class="item-fix">
+          <strong>✏️ Correção:</strong>
+          Substituir por algo útil (ex: "Modelo atual: Turbo") OU remover e usar grid-template-columns: repeat(2, 1fr) em .stats-row.
+        </div>
+      </div>
+    </div>
+    <div class="item" id="item-A03">
+      <div class="item-check warn" onclick="markDone(this, 'A03')" id="check-A03"></div>
+      <div class="item-content">
+        <div class="item-id">ATENÇÃO-03</div>
+        <div class="item-title">Botões sem type="button" explícito (~50 ocorrências)</div>
+        <div class="item-where">📍 Vários &lt;button&gt; em index.html</div>
+        <div class="item-fix">
+          <strong>✏️ Correção:</strong>
+          Adicionar type="button" defensivamente em todos os &lt;button&gt; não-submit. Previne submit acidental se um &lt;form&gt; envolver no futuro.
+        </div>
+      </div>
+    </div>
+    <div class="item" id="item-A04">
+      <div class="item-check warn" onclick="markDone(this, 'A04')" id="check-A04"></div>
+      <div class="item-content">
+        <div class="item-id">ATENÇÃO-04</div>
+        <div class="item-title">Label "URL do vídeo do YouTube" desatualizado</div>
+        <div class="item-where">📍 index.html:313</div>
+        <div class="item-fix">
+          <strong>✏️ Correção:</strong>
+          yt-dlp aceita centenas de sites. Mudar para "URL de vídeo/áudio (YouTube, Vimeo, TikTok, etc.)".
+        </div>
+      </div>
+    </div>
+    <div class="item" id="item-A05">
+      <div class="item-check warn" onclick="markDone(this, 'A05')" id="check-A05"></div>
+      <div class="item-content">
+        <div class="item-id">ATENÇÃO-05</div>
+        <div class="item-title">Label "Formato (para 'Apenas Baixar')" deselegante</div>
+        <div class="item-where">📍 index.html:319</div>
+        <div class="item-fix">
+          <strong>✏️ Correção:</strong>
+          Label limpa "Formato" + &lt;small&gt; helper abaixo explicando que só é usado se clicar em "Apenas Baixar".
+        </div>
+      </div>
+    </div>
+    <div class="item" id="item-A06">
+      <div class="item-check warn" onclick="markDone(this, 'A06')" id="check-A06"></div>
+      <div class="item-content">
+        <div class="item-id">ATENÇÃO-06</div>
+        <div class="item-title">Botão "Nova pasta" (+) sem affordance descobrível em mobile</div>
+        <div class="item-where">📍 index.html:51</div>
+        <div class="item-fix">
+          <strong>✏️ Correção:</strong>
+          Em mobile (≤720px), expandir o botão para "+ Nova pasta" textual em vez de só ícone.
+        </div>
+      </div>
+    </div>
+    <div class="item" id="item-A07">
+      <div class="item-check warn" onclick="markDone(this, 'A07')" id="check-A07"></div>
+      <div class="item-content">
+        <div class="item-id">ATENÇÃO-07</div>
+        <div class="item-title">Hierarquia de headings — só &lt;h2&gt; nos modais, pulando &lt;h1&gt;</div>
+        <div class="item-where">📍 index.html:255, 456, 508, 528</div>
+        <div class="item-fix">
+          <strong>✏️ Correção:</strong>
+          Resolvido junto com ATENÇÃO-01 — adicionar &lt;h1&gt; na página e os &lt;h2&gt; dos modais ficam coerentes.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-header info" onclick="toggle(this)">
+    👶 Teste da Criança de 4 Anos
+    <span class="chevron">▼</span>
+  </div>
+  <div class="section-body">
+    <div class="child-item">
+      <div class="child-icon">✅</div>
+      <div>
+        <div class="child-name">Botão "TRANSCREVER ARQUIVOS"</div>
+        <div class="child-note">Verbo + objeto. Intenção clara para qualquer pessoa.</div>
+      </div>
+    </div>
+    <div class="child-item">
+      <div class="child-icon">✅</div>
+      <div>
+        <div class="child-name">Tabs "Transcrições" / "Biblioteca de Mídia"</div>
+        <div class="child-note">Palavras concretas, sem jargão.</div>
+      </div>
+    </div>
+    <div class="child-item">
+      <div class="child-icon">✅</div>
+      <div>
+        <div class="child-name">Dropzone "Arraste e solte aqui"</div>
+        <div class="child-note">Ação direta. Iconografia universal.</div>
+      </div>
+    </div>
+    <div class="child-item">
+      <div class="child-icon">✅</div>
+      <div>
+        <div class="child-name">Filtros (Todos / Aguardando / Processando / Concluído / Erro)</div>
+        <div class="child-note">Estados auto-explicativos.</div>
+      </div>
+    </div>
+    <div class="child-item">
+      <div class="child-icon">✅</div>
+      <div>
+        <div class="child-name">Botão "Cancelar" na barra de progresso</div>
+        <div class="child-note">Verbo claro com contexto visual de progresso.</div>
+      </div>
+    </div>
+    <div class="child-item">
+      <div class="child-icon">❌</div>
+      <div>
+        <div class="child-name">Card "Créditos restantes — ∞ — Plano Ilimitado — Local"</div>
+        <div class="child-note">Significado obscuro. Easter egg que não comunica nada útil. Sugestão: substituir por informação concreta (ex: "Modelo atual: Turbo") ou remover.</div>
+      </div>
+    </div>
+    <div class="child-item">
+      <div class="child-icon">⚠️</div>
+      <div>
+        <div class="child-name">Botão "+" para criar pasta (icon-only)</div>
+        <div class="child-note">Marginal: hover/title ajuda no desktop mas falha em mobile. Vide ATENÇÃO-06.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-header info" onclick="toggle(this)">
+    🔗 Validação de Links
+    <span class="chevron">▼</span>
+  </div>
+  <div class="section-body">
+    <div class="links-wrap">
+      <table>
+        <thead>
+          <tr><th>Elemento</th><th>Destino</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>CSS</td><td><code>/static/style.css</code></td><td><span class="badge ok">OK</span></td></tr>
+          <tr><td>JS</td><td><code>/static/app.js</code></td><td><span class="badge ok">OK</span></td></tr>
+          <tr><td>Fonte</td><td><code>/static/fonts/plus-jakarta-sans-variable.woff2</code></td><td><span class="badge ok">OK</span></td></tr>
+          <tr><td>27 endpoints API</td><td><code>/api/*</code></td><td><span class="badge ok">Todos validados contra backend</span></td></tr>
+          <tr><td>Favicon</td><td><code>—</code></td><td><span class="badge crit">AUSENTE</span></td></tr>
+          <tr><td>Pixel/GA/UTMs/OG</td><td>—</td><td><span class="badge na">N/A (app local)</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-header ok" onclick="toggle(this)">
+    🟢 Itens Aprovados — 23 passaram
+    <span class="chevron">▼</span>
+  </div>
+  <div class="section-body">
+    <div class="approved-grid">
+      <div class="approved-item">✅ DOCTYPE + charset + viewport</div>
+      <div class="approved-item">✅ &lt;title&gt; preenchido</div>
+      <div class="approved-item">✅ lang="pt-BR"</div>
+      <div class="approved-item">✅ HTML válido</div>
+      <div class="approved-item">✅ CSS/JS separados em estáticos</div>
+      <div class="approved-item">✅ Fonte auto-hospedada</div>
+      <div class="approved-item">✅ Sem CDN externo</div>
+      <div class="approved-item">✅ Sem placeholders/lorem</div>
+      <div class="approved-item">✅ 27 endpoints API validados</div>
+      <div class="approved-item">✅ ARIA tablist + aria-selected</div>
+      <div class="approved-item">✅ Focus trap em 4 modais</div>
+      <div class="approved-item">✅ role=dialog + aria-modal</div>
+      <div class="approved-item">✅ Contraste WCAG AA</div>
+      <div class="approved-item">✅ prefers-reduced-motion</div>
+      <div class="approved-item">✅ aria-live em estados dinâmicos</div>
+      <div class="approved-item">✅ Empty states com CTA</div>
+      <div class="approved-item">✅ CTA primário descritivo</div>
+      <div class="approved-item">✅ 7 breakpoints responsivos</div>
+      <div class="approved-item">✅ Tom consistente PT-BR</div>
+      <div class="approved-item">✅ Dropdowns por teclado</div>
+      <div class="approved-item">✅ Dropzone com Enter/Space</div>
+      <div class="approved-item">✅ Cancelar transcrição</div>
+      <div class="approved-item">✅ XSS-safe (textContent em toasts)</div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-header" style="background:#f8fafc;border-left:4px solid #6366f1;color:#3730a3;" onclick="toggle(this)">
+    📋 Plano de Correção Priorizado
+    <span class="chevron">▼</span>
+  </div>
+  <div class="section-body">
+    <div class="action">
+      <div class="action-num crit">1</div>
+      <div class="action-text">
+        <div class="action-id">CRÍTICO-01</div>
+        Envolver conteúdo dos &lt;th&gt; sortáveis em &lt;button type="button"&gt; interno (teclado nativo).
+      </div>
+    </div>
+    <div class="action">
+      <div class="action-num crit">2</div>
+      <div class="action-text">
+        <div class="action-id">CRÍTICO-02</div>
+        Criar static/favicon.svg (microfone) e adicionar &lt;link rel="icon"&gt;.
+      </div>
+    </div>
+    <div class="action">
+      <div class="action-num warn">3</div>
+      <div class="action-text">
+        <div class="action-id">ATENÇÃO-01 + 07</div>
+        Adicionar &lt;h1 class="sr-only"&gt; após &lt;body&gt; para corrigir hierarquia.
+      </div>
+    </div>
+    <div class="action">
+      <div class="action-num warn">4</div>
+      <div class="action-text">
+        <div class="action-id">ATENÇÃO-02</div>
+        Substituir card "Créditos restantes ∞" por métrica útil ou remover.
+      </div>
+    </div>
+    <div class="action">
+      <div class="action-num warn">5</div>
+      <div class="action-text">
+        <div class="action-id">ATENÇÃO-04</div>
+        Reescrever label de URL para refletir suporte multi-plataforma do yt-dlp.
+      </div>
+    </div>
+    <div class="action">
+      <div class="action-num warn">6</div>
+      <div class="action-text">
+        <div class="action-id">ATENÇÃO-03</div>
+        Adicionar type="button" em todos os &lt;button&gt; não-submit.
+      </div>
+    </div>
+    <div class="action">
+      <div class="action-num warn">7</div>
+      <div class="action-text">
+        <div class="action-id">ATENÇÃO-05</div>
+        Refinar label "Formato" com helper text abaixo.
+      </div>
+    </div>
+    <div class="action">
+      <div class="action-num warn">8</div>
+      <div class="action-text">
+        <div class="action-id">ATENÇÃO-06</div>
+        Tornar criação de pasta mais descobrível em mobile.
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="footer">Checklist gerado por UX Delivery Auditor · Claude · 2026-05-25</div>
+
+<script>
+  const TOTAL_PROBLEMAS = 9;
+  const TOTAL_APLICAVEL = 32;
+  const APROVADOS_BASE = 23;
+
+  let resolvedCount = 0;
+
+  function toggle(header) {
+    const body = header.nextElementSibling;
+    const chevron = header.querySelector('.chevron');
+    body.classList.toggle('open');
+    chevron.classList.toggle('open');
+  }
+
+  function markDone(checkEl, id) {
+    const item = document.getElementById('item-' + id);
+    const isChecked = checkEl.classList.toggle('checked');
+    item.classList.toggle('resolved', isChecked);
+    resolvedCount += isChecked ? 1 : -1;
+    updateScore();
+    document.getElementById('fixedCount').textContent = resolvedCount + ' / ' + TOTAL_PROBLEMAS;
+  }
+
+  function updateScore() {
+    const okNow = APROVADOS_BASE + resolvedCount;
+    const pct = Math.round((okNow / TOTAL_APLICAVEL) * 100);
+    const scoreVal = document.getElementById('scoreVal');
+    const bar = document.getElementById('scoreBar');
+    const pill = document.getElementById('statusPill');
+    scoreVal.textContent = pct + '%';
+
+    let color, cls, status;
+    if (pct >= 90) { color = '#10b981'; cls = 'green'; status = '✅ Pronto para publicar'; pill.className = 'status-pill pill-ok'; }
+    else if (pct >= 70) { color = '#f59e0b'; cls = 'yellow'; status = '⚠️ Publicar com ressalvas'; pill.className = 'status-pill pill-warn'; }
+    else { color = '#ef4444'; cls = 'red'; status = '🚫 Não publicar'; pill.className = 'status-pill pill-block'; }
+
+    scoreVal.className = 'score-value ' + cls;
+    bar.style.width = pct + '%';
+    bar.style.background = color;
+    pill.textContent = status;
+  }
+</script>
+</body>
+</html>

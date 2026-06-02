@@ -10,6 +10,7 @@ except ImportError:
     YT_DLP_OK = False
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form, BackgroundTasks
 from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 import uvicorn
 import tqdm
 
@@ -22,8 +23,9 @@ HISTORY_FILE = os.path.join(DATA_DIR, "history.json")
 MEDIA_FILE   = os.path.join(DATA_DIR, "media.json")
 FOLDERS_FILE = os.path.join(DATA_DIR, "folders.json")
 HTML_FILE    = os.path.join(SCRIPT_DIR, "index.html")
+STATIC_DIR   = os.path.join(SCRIPT_DIR, "static")
 
-for d in (RESULTS_DIR, UPLOAD_DIR):
+for d in (RESULTS_DIR, UPLOAD_DIR, STATIC_DIR):
     os.makedirs(d, exist_ok=True)
 
 # ── Model cache ────────────────────────────────────────────────
@@ -48,7 +50,13 @@ def _custom_tqdm_update(self, n=1):
     if hasattr(self, '_task_id') and self._task_id:
         if self.total and self.total > 0:
             pct = 25 + (self.n / self.total) * 57
-            _set_task(self._task_id, progress=pct)
+            # Whisper may create multiple tqdm instances per transcription
+            # (VAD pass, decode loop, etc.). Each new one starts at n=0, which
+            # would *decrease* the reported progress. Clamp to monotonically
+            # increasing values within the 25–82 band.
+            current = (_get_task(self._task_id) or {}).get('progress', 0) or 0
+            if pct > current:
+                _set_task(self._task_id, progress=pct)
 
 tqdm.tqdm.__init__ = _custom_tqdm_init
 tqdm.tqdm.update = _custom_tqdm_update
@@ -83,6 +91,38 @@ def _fmt_ts(t: float, srt: bool = False) -> str:
     ms     = int((t - int(t)) * 1000)
     sep    = "," if srt else "."
     return f"{h:02d}:{m:02d}:{s:02d}{sep}{ms:03d}"
+
+def _original_name_for(filename: str) -> str:
+    """Return the user-facing name (without extension) for a stored filename.
+    Looks up history first (name stored without ext), then media.json
+    (name stored with ext — strip it), then falls back to the internal base."""
+    try:
+        for entry in _load_history():
+            if entry.get("file") == filename and entry.get("name"):
+                return entry["name"]
+        for entry in _load_media():
+            if entry.get("file") == filename and entry.get("name"):
+                return os.path.splitext(entry["name"])[0]
+    except Exception:
+        pass
+    return _result_base(filename)
+
+def _original_media_name_for(filename: str) -> str:
+    """Return the media's original full filename (with extension) for download."""
+    ext = os.path.splitext(filename)[1]
+    try:
+        # History is the most reliable source (name stored as original basename without ext)
+        for entry in _load_history():
+            if entry.get("file") == filename and entry.get("name"):
+                name = entry["name"]
+                return name if os.path.splitext(name)[1] else name + ext
+        for entry in _load_media():
+            if entry.get("file") == filename and entry.get("name"):
+                name = entry["name"]
+                return name if os.path.splitext(name)[1] else name + ext
+    except Exception:
+        pass
+    return filename
 
 def _safe_filename(filename: str) -> str:
     """Reject filenames that try to escape their directory (path traversal).
@@ -181,12 +221,15 @@ def _load_history() -> list:
 
 def _save_to_history(filename: str, result: dict, model_name: str,
                      status: str = "done", error: str | None = None,
-                     task_id: str | None = None, original_name: str | None = None):
+                     task_id: str | None = None, original_name: str | None = None,
+                     folder: str | None = None):
     # Atomic read-modify-write under a single lock to prevent lost updates
     with _history_lock:
         history = _load_history()
         # Preserve original date, folder, and timing fields if entry already exists
         existing = next((h for h in history if h.get("file") == filename), {})
+        # New 'folder' arg wins on first insert; otherwise preserve existing.
+        folder_to_use = folder if folder is not None else existing.get("folder", "")
         name_to_use = original_name or existing.get("name") or _result_base(filename)
         entry = {
             "id":           filename,
@@ -204,7 +247,7 @@ def _save_to_history(filename: str, result: dict, model_name: str,
             "date":         existing.get("date") or datetime.datetime.now().strftime("%d de %b. de %Y, %H:%M"),
             # Sortable timestamp + folder, both preserved across updates
             "queued_at":    existing.get("queued_at") or time.time(),
-            "folder":       existing.get("folder", ""),
+            "folder":       folder_to_use,
             # Timing fields (filled during transcription by _update_history_status)
             "started_at":   existing.get("started_at"),
             "completed_at": existing.get("completed_at"),
@@ -234,10 +277,14 @@ def _save_media(filename: str, original_name: str, url: str | None = None, is_tr
         path = os.path.join(UPLOAD_DIR, filename)
         size_bytes = os.path.getsize(path) if os.path.exists(path) else 0
 
+        # Preserve the name stored on first save (the true original filename).
+        # Later calls from _run_transcription pass the hashed base, which would
+        # otherwise overwrite the good name.
+        name_to_use = existing.get("name") or original_name
         entry = {
             "id": filename,
             "file": filename,
-            "name": original_name,
+            "name": name_to_use,
             "url": url or existing.get("url"),
             "size_bytes": size_bytes,
             "is_transcribed": is_transcribed or existing.get("is_transcribed", False),
@@ -285,6 +332,12 @@ def _run_transcription(task_id, file_path, filename, model_name,
                        language, task_type, do_filter):
     _thread_local.task_id = task_id
     with _transcribe_sem:
+        # Early-out for tasks cancelled while still queued. The actual transcription
+        # below cannot be interrupted (it's a single blocking call into Whisper), but
+        # queued tasks can be skipped entirely.
+        if _get_task(task_id) and _get_task(task_id).get("cancel_requested"):
+            _set_task(task_id, status="cancelled", progress=0)
+            return
         started_at = time.time()
         try:
             _set_task(task_id, status="processing", progress=10, started_at=started_at)
@@ -296,6 +349,15 @@ def _run_transcription(task_id, file_path, filename, model_name,
 
             result = _transcribe_one(file_path, model, language, task_type)
             _set_task(task_id, progress=82)
+
+            # If user requested cancel while the (uninterruptible) transcription
+            # was running, discard the result rather than committing it.
+            if _get_task(task_id).get("cancel_requested"):
+                _set_task(task_id, status="cancelled", progress=0,
+                          completed_at=time.time())
+                _update_history_status(filename, "cancelled",
+                                       completed_at=time.time())
+                return
 
             if do_filter:
                 result["text"]        = _apply_filler_filter(result["text"])
@@ -333,10 +395,25 @@ def _run_transcription(task_id, file_path, filename, model_name,
 # ── FastAPI ────────────────────────────────────────────────────
 app = FastAPI(title="Whisper Transcritor")
 
+# Serve CSS / JS / fonts locally so the UI works offline and avoids CDN dependency.
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
 @app.get("/", response_class=HTMLResponse)
 async def serve_html():
     with open(HTML_FILE, encoding="utf-8") as f:
-        return f.read()
+        html = f.read()
+    # Cache-busting: append ?v=<mtime> to local CSS/JS so the browser always
+    # fetches the latest version after a file change (no manual hard-reload).
+    def _ver(rel_path: str) -> str:
+        try:
+            return str(int(os.path.getmtime(os.path.join(SCRIPT_DIR, rel_path))))
+        except OSError:
+            return "0"
+    html = html.replace('href="/static/style.css"',
+                        f'href="/static/style.css?v={_ver("static/style.css")}"')
+    html = html.replace('src="/static/app.js"',
+                        f'src="/static/app.js?v={_ver("static/app.js")}"')
+    return html
 
 # -- History & stats
 @app.get("/api/history")
@@ -365,7 +442,7 @@ async def api_download_media(filename: str):
     path = os.path.join(UPLOAD_DIR, filename)
     if not os.path.exists(path):
         raise HTTPException(404, "Mídia não encontrada no servidor")
-    return FileResponse(path, filename=filename)
+    return FileResponse(path, filename=_original_media_name_for(filename))
 
 @app.delete("/api/delete-media/{filename}")
 async def api_delete_media(filename: str):
@@ -394,10 +471,20 @@ async def api_transcribe(
     language:        str        = Form("pt"),
     task:            str        = Form("transcribe"),
     filter_fillers:  str        = Form("false"),
+    folder:          str        = Form(""),
 ):
     original_name = file.filename or f"audio_{uuid.uuid4().hex[:8]}.mp3"
     task_id  = str(uuid.uuid4())
     filename = f"{task_id[:8]}_{original_name}"
+
+    # Validate/normalize destination folder (auto-create ancestors so the tree shows it)
+    folder = _validate_folder_name(folder) if folder else ""
+    if folder:
+        with _folders_lock:
+            paths = set(_load_folders_paths())
+            for a in _ancestors_of(folder):
+                paths.add(a)
+            _save_folders_paths(sorted(paths))
 
     upload_path = os.path.join(UPLOAD_DIR, filename)
     with open(upload_path, "wb") as f:
@@ -407,7 +494,7 @@ async def api_transcribe(
               name=original_name, filename=filename)
 
     # Register immediately in history so it survives refresh
-    _save_to_history(filename, {}, model, status="queued", task_id=task_id, original_name=_result_base(original_name))
+    _save_to_history(filename, {}, model, status="queued", task_id=task_id, original_name=_result_base(original_name), folder=folder)
     _save_media(filename, original_name, is_transcribed=True, status="queued")
 
     t = threading.Thread(
@@ -428,6 +515,24 @@ async def api_progress(task_id: str):
     if not task:
         raise HTTPException(404, "Task not found")
     return task
+
+@app.delete("/api/transcribe/{task_id}")
+async def api_cancel_transcribe(task_id: str):
+    """Request cancellation of a queued or in-flight transcription.
+    Queued tasks are skipped immediately. In-flight ones complete the current
+    Whisper call (uninterruptible) but discard the result and free the slot."""
+    if not re.fullmatch(r"[0-9a-fA-F-]{8,40}", task_id or ""):
+        raise HTTPException(400, "task_id inválido")
+    task = _get_task(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    _set_task(task_id, cancel_requested=True)
+    # Mark the history entry so the UI reflects the cancel right away even
+    # before the worker thread reaches its next check.
+    filename = task.get("filename")
+    if filename:
+        _update_history_status(filename, "cancelled")
+    return {"status": "cancel_requested", "task_id": task_id}
 
 @app.get("/api/active-tasks")
 async def api_active_tasks():
@@ -490,7 +595,10 @@ async def api_download(filename: str, fmt: str):
     path = os.path.join(d, fname)
     if not os.path.exists(path):
         raise HTTPException(404, "Arquivo não encontrado")
-    return FileResponse(path, media_type=media, filename=fname)
+    original = _original_name_for(filename)
+    ext_map = {"txt": ".txt", "srt": ".srt", "json": ".json", "timestamps": "_timestamps.txt"}
+    download_name = f"{original}{ext_map[fmt]}"
+    return FileResponse(path, media_type=media, filename=download_name)
 
 @app.get("/api/download-all")
 async def api_download_all():
@@ -502,6 +610,101 @@ async def api_download_all():
                 for fname in os.listdir(full_d):
                     zf.write(os.path.join(full_d, fname), os.path.join(d, fname))
     return FileResponse(zip_path, filename="todas_transcricoes.zip")
+
+@app.post("/api/download-selected-zip")
+async def api_download_selected_zip(files: str = Form(...), formats: str = Form("txt,srt,json,timestamps")):
+    """Download only the selected transcriptions as a ZIP.
+    `files` is a JSON array of filenames (history ids) to include.
+    `formats` is a comma-separated list of formats to include:
+    any subset of {txt, srt, json, timestamps}."""
+    try:
+        filenames = json.loads(files)
+        if not isinstance(filenames, list):
+            raise ValueError("files deve ser uma lista")
+    except (json.JSONDecodeError, ValueError) as e:
+        raise HTTPException(400, f"Parâmetro 'files' inválido: {e}")
+
+    if not filenames:
+        raise HTTPException(400, "Nenhum arquivo selecionado")
+
+    # Parse format whitelist
+    valid_formats = {"txt", "srt", "json", "timestamps"}
+    chosen = {f.strip().lower() for f in formats.split(",") if f.strip()}
+    chosen &= valid_formats
+    if not chosen:
+        raise HTTPException(400, "Selecione ao menos um formato (txt, srt, json, timestamps)")
+
+    # Map each format to the suffix that appears after the internal base filename
+    suffix_for = {
+        "txt":        ".txt",
+        "srt":        ".srt",
+        "json":       ".json",
+        "timestamps": "_timestamps.txt",
+    }
+    allowed_suffixes = {suffix_for[f] for f in chosen}
+
+    # Validate each filename (prevents path traversal) and collect existing dirs
+    results_real = os.path.realpath(RESULTS_DIR)
+    entries = []
+    for fn in filenames:
+        if not isinstance(fn, str):
+            raise HTTPException(400, "Cada item de 'files' deve ser string")
+        fn = _safe_filename(fn)
+        base = _result_base(fn)
+        d = os.path.join(RESULTS_DIR, base)
+        # Defense-in-depth: ensure path stays inside RESULTS_DIR
+        if os.path.commonpath([os.path.realpath(d), results_real]) != results_real:
+            continue
+        if os.path.isdir(d):
+            entries.append((base, d, _original_name_for(fn)))
+
+    if not entries:
+        raise HTTPException(404, "Nenhum resultado encontrado para os arquivos selecionados")
+
+    # Deduplicate on the *final flat filename* (name+suffix), since the ZIP
+    # has no folders. Two entries sharing a display name only collide for
+    # suffixes that both produce — e.g. both end up wanting "aula.txt".
+    used_flat_names: set[str] = set()
+
+    def _unique_name(display: str, suffix: str) -> str:
+        candidate = display + suffix
+        if candidate not in used_flat_names:
+            used_flat_names.add(candidate)
+            return candidate
+        # Keep the extension intact; insert " (N)" before it
+        stem, ext = os.path.splitext(candidate)
+        n = 2
+        while True:
+            cand = f"{stem} ({n}){ext}"
+            if cand not in used_flat_names:
+                used_flat_names.add(cand)
+                return cand
+            n += 1
+
+    zip_name = f"transcricoes_selecionadas_{uuid.uuid4().hex[:8]}.zip"
+    zip_path = os.path.join(DATA_DIR, zip_name)
+    files_written = 0
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for base, d, display in entries:
+            for fname in os.listdir(d):
+                # Only include files whose suffix (relative to base) matches the
+                # user's chosen formats. e.g. base="abc12345_aula",
+                # fname="abc12345_aula_timestamps.txt" -> suffix="_timestamps.txt".
+                if fname.startswith(base):
+                    suffix = fname[len(base):]
+                    if suffix not in allowed_suffixes:
+                        continue
+                    out_name = _unique_name(display, suffix)
+                else:
+                    # Unexpected file — skip entirely; we can't safely apply a suffix
+                    continue
+                # Flat layout: no enclosing folder in the ZIP
+                zf.write(os.path.join(d, fname), out_name)
+                files_written += 1
+
+    if not files_written:
+        raise HTTPException(404, "Nenhum arquivo dos formatos escolhidos foi encontrado")
+    return FileResponse(zip_path, filename="transcricoes_selecionadas.zip")
 
 # -- Delete
 @app.delete("/api/delete/{filename}")
@@ -582,9 +785,18 @@ async def api_transcribe_url(
     language: str = Form("pt"),
     task: str = Form("transcribe"),
     filter_fillers: str = Form("false"),
+    folder: str = Form(""),
 ):
     if not YT_DLP_OK:
         raise HTTPException(400, "yt-dlp não instalado. Execute: pip install yt-dlp")
+
+    folder = _validate_folder_name(folder) if folder else ""
+    if folder:
+        with _folders_lock:
+            paths = set(_load_folders_paths())
+            for a in _ancestors_of(folder):
+                paths.add(a)
+            _save_folders_paths(sorted(paths))
 
     task_id = str(uuid.uuid4())
     safe_name = re.sub(r'[^\w.-]', '_', url.split('/')[-1] or 'video')[:50] or 'video'
@@ -612,7 +824,7 @@ async def api_transcribe_url(
         'nocolor': True,
         'progress_hooks': [_hook_main]
     }
-    _save_to_history(filename, {}, model, status="queued", task_id=task_id, original_name=_result_base(original_name))
+    _save_to_history(filename, {}, model, status="queued", task_id=task_id, original_name=_result_base(original_name), folder=folder)
     _save_media(filename, original_name, url=url, is_transcribed=True, status="queued")
 
     def _run_download_and_transcribe():
@@ -781,16 +993,28 @@ async def api_folders():
     with _media_lock:
         med = list(_load_media())
 
-    # Paths = explicit + every ancestor implied by existing entries
+    # Paths = explicit + every ancestor implied by existing entries.
+    # We merge hist + med here so paths inferred from EITHER source are visible,
+    # but the COUNTS below are deduplicated by file to avoid double-counting
+    # entries that exist in both history.json and media.json (the common case
+    # for transcribed files — _save_to_history and _save_media both fire).
     paths = set(explicit_paths)
     for item in hist + med:
         p = (item.get("folder") or "").strip()
         if p:
             paths.update(_ancestors_of(p))
 
-    # Count items per folder, propagating up to ancestors
+    # Count items per folder, propagating up to ancestors.
+    # Deduplication: when a file appears in both history and media, history wins
+    # (it's the canonical source for transcribed items, and the transcriptions
+    # table is built from history alone, so the sidebar count must match it).
     counts: dict = {p: 0 for p in paths}
+    seen_files: set = set()
     for item in hist + med:
+        file_id = item.get("file")
+        if not file_id or file_id in seen_files:
+            continue
+        seen_files.add(file_id)
         p = (item.get("folder") or "").strip()
         if not p:
             continue
