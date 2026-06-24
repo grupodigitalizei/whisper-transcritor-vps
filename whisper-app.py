@@ -2,6 +2,15 @@
 """Whisper Transcritor — FastAPI + HTML frontend"""
 from __future__ import annotations
 import os, json, shutil, threading, uuid, datetime, re, zipfile, time
+
+# yt-dlp's YouTube extractor needs the Deno runtime (via yt-dlp-ejs) to solve
+# the `n` challenge. Deno is usually installed at ~/.deno/bin/deno but that's
+# not always in $PATH when the server is launched from an IDE/launcher.
+# Prepend it here so the subprocess yt-dlp spawns can find it.
+_deno_bin = os.path.expanduser("~/.deno/bin")
+if os.path.isdir(_deno_bin) and _deno_bin not in os.environ.get("PATH", "").split(":"):
+    os.environ["PATH"] = _deno_bin + ":" + os.environ.get("PATH", "")
+
 import whisper
 try:
     import yt_dlp
@@ -361,7 +370,7 @@ def _load_media() -> list:
     except (json.JSONDecodeError, ValueError):
         return []
 
-def _save_media(filename: str, original_name: str, url: str | None = None, is_transcribed: bool = False, status: str = "done"):
+def _save_media(filename: str, original_name: str, url: str | None = None, is_transcribed: bool = False, status: str = "done", force_name: bool = False):
     # Atomic read-modify-write under a single lock to prevent lost updates
     with _media_lock:
         media = _load_media()
@@ -372,8 +381,9 @@ def _save_media(filename: str, original_name: str, url: str | None = None, is_tr
 
         # Preserve the name stored on first save (the true original filename).
         # Later calls from _run_transcription pass the hashed base, which would
-        # otherwise overwrite the good name.
-        name_to_use = existing.get("name") or original_name
+        # otherwise overwrite the good name. `force_name=True` overrides this —
+        # used once the real media title is known after a yt-dlp download.
+        name_to_use = original_name if force_name else (existing.get("name") or original_name)
         entry = {
             "id": filename,
             "file": filename,
@@ -529,15 +539,19 @@ async def api_history():
         on_disk = set(os.listdir(UPLOAD_DIR))
     except OSError:
         on_disk = set()
-    # Build a {file -> has_url} index from media.json so legacy entries
-    # (no stored source) can be classified by whether they had a yt-dlp URL.
-    media_url_map = {m.get("file"): bool(m.get("url")) for m in _load_media()}
+    # Build a {file -> url} index from media.json so the UI can show/reopen the
+    # original link, and so legacy entries (no stored source) can be classified
+    # by whether they had a yt-dlp URL.
+    media_url_map = {m.get("file"): m.get("url") for m in _load_media()}
     out = []
     for h in history:
         entry = dict(h)
         entry["has_original"] = entry.get("file") in on_disk
+        url = media_url_map.get(entry.get("file"))
+        if url:
+            entry["url"] = url
         if not entry.get("source"):
-            entry["source"] = "url" if media_url_map.get(entry.get("file")) else "upload"
+            entry["source"] = "url" if url else "upload"
         out.append(entry)
     return out
 
@@ -836,6 +850,40 @@ async def api_download(filename: str, fmt: str):
     download_name = f"{original}{ext_map[fmt]}"
     return FileResponse(path, media_type=media, filename=download_name)
 
+@app.get("/api/download-with-original/{filename}")
+async def api_download_with_original(filename: str):
+    """Zip the transcription files (txt, srt, json, timestamps) together with the
+    original audio/video upload — if it's still on disk. Lets the user grab the
+    transcription AND the source media in a single download. If the original was
+    already cleaned up, the ZIP still contains the transcription files."""
+    filename = _safe_filename(filename)
+    base = _result_base(filename)
+    d = os.path.join(RESULTS_DIR, base)
+    # Defense-in-depth: keep the results dir inside RESULTS_DIR
+    if os.path.commonpath([os.path.realpath(d), os.path.realpath(RESULTS_DIR)]) != os.path.realpath(RESULTS_DIR):
+        raise HTTPException(400, "Filename inválido")
+    if not os.path.isdir(d):
+        raise HTTPException(404, "Resultado não encontrado")
+
+    display    = _original_name_for(filename)        # user-facing stem, e.g. "Minha Aula"
+    media_name = _original_media_name_for(filename)   # with extension, e.g. "Minha Aula.mp3"
+
+    zip_name = f"{base}_completo_{uuid.uuid4().hex[:8]}.zip"
+    zip_path = os.path.join(DATA_DIR, zip_name)
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        # Transcription files: rename from internal base to the friendly display name
+        for fname in sorted(os.listdir(d)):
+            if fname.startswith(base):
+                suffix = fname[len(base):]              # ".txt", ".srt", "_timestamps.txt", ...
+                zf.write(os.path.join(d, fname), display + suffix)
+        # Original media, only if it's still present inside UPLOAD_DIR
+        upload_path = os.path.join(UPLOAD_DIR, filename)
+        if (os.path.commonpath([os.path.realpath(upload_path), os.path.realpath(UPLOAD_DIR)])
+                == os.path.realpath(UPLOAD_DIR) and os.path.exists(upload_path)):
+            zf.write(upload_path, media_name)
+
+    return FileResponse(zip_path, filename=f"{display}_completo.zip")
+
 @app.get("/api/download-all")
 async def api_download_all():
     zip_path = os.path.join(DATA_DIR, "todas_transcricoes.zip")
@@ -1065,7 +1113,17 @@ def _kickoff_url_transcription(url: str, model: str, language: str, task: str,
         'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3'}],
         'quiet': True,
         'nocolor': True,
-        'progress_hooks': [_hook_main]
+        'progress_hooks': [_hook_main],
+        # Bypass YouTube's SABR streaming (issue yt-dlp#12482) by preferring
+        # client APIs that still expose progressive URLs. Order matters —
+        # tv_simply is the most reliable today; we keep the default 'web' as
+        # the last fallback so non-YouTube sites still work normally.
+        'extractor_args': {'youtube': {'player_client': ['web', 'tv_simply', 'ios', 'mweb']}},
+        # YouTube now requires PO tokens or login cookies for progressive URLs.
+        # Pull cookies from Chrome (user is logged into YouTube there) so the
+        # request looks authenticated and bypasses the bot wall.
+        'cookiesfrombrowser': ('chrome',),
+        'retries': 3,
     }
     _save_to_history(filename, {}, model, status="queued", task_id=task_id, original_name=_result_base(original_name), folder=folder, source="url")
     _save_media(filename, original_name, url=url, is_transcribed=True, status="queued")
@@ -1074,7 +1132,17 @@ def _kickoff_url_transcription(url: str, model: str, language: str, task: str,
         try:
             with _download_sem:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([url])
+                    info = ydl.extract_info(url, download=True)
+            # Swap the URL-slug placeholder for the real media title so the UI
+            # shows "Minha Aula" instead of "watch?v=abc123". The original link
+            # stays saved in media.json (the `url` field) for re-use.
+            title = (info or {}).get('title')
+            if title:
+                _save_to_history(filename, {}, model, status="queued",
+                                 task_id=task_id, original_name=title,
+                                 folder=folder, source="url")
+                _save_media(filename, f"{title}.mp3", url=url,
+                            is_transcribed=True, status="queued", force_name=True)
         except _UserCancelled:
             _update_history_status(filename, "cancelled")
             _save_media(filename, original_name, url=url, is_transcribed=True, status="cancelled")
@@ -1228,7 +1296,14 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str):
         ydl_opts = {
             'quiet': True,
             'nocolor': True,
-            'progress_hooks': [_hook]
+            'progress_hooks': [_hook],
+            # Same SABR-bypass as the transcribe path (yt-dlp#12482).
+            'extractor_args': {'youtube': {'player_client': ['web', 'tv_simply', 'ios', 'mweb']}},
+        # YouTube now requires PO tokens or login cookies for progressive URLs.
+        # Pull cookies from Chrome (user is logged into YouTube there) so the
+        # request looks authenticated and bypasses the bot wall.
+        'cookiesfrombrowser': ('chrome',),
+            'retries': 3,
         }
 
         if is_video:

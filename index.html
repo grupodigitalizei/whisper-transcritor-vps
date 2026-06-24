@@ -533,7 +533,10 @@
 
     <div class="modal-head">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-      <h2 class="modal-title" id="viewer-title">Transcrição</h2>
+      <div class="viewer-head-text">
+        <h2 class="modal-title" id="viewer-title">Transcrição</h2>
+        <div class="viewer-meta" id="viewer-meta"></div>
+      </div>
       <button type="button" class="modal-close" onclick="closeViewer()" aria-label="Fechar" style="margin-left:auto">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
@@ -567,14 +570,8 @@
       </div>
     </div>
 
-    <div class="viewer-dl-row">
-      <button type="button" class="btn btn-primary" onclick="dlViewerFile('txt')">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        Baixar TXT
-      </button>
-      <button type="button" class="btn btn-ghost" onclick="dlViewerFile('srt')">Baixar SRT</button>
-      <button type="button" class="btn btn-ghost" onclick="dlViewerFile('timestamps')">Timestamps</button>
-      <button type="button" class="btn btn-ghost" onclick="dlViewerFile('json')">JSON</button>
+    <div class="viewer-dl-row" id="viewer-dl-row">
+      <!-- Preenchido dinamicamente por openViewer() conforme o item (original/link/etc.) -->
     </div>
 
   </div>
@@ -646,8 +643,11 @@
         <small style="display:block;font-size:11px;color:var(--slate-500);margin:-4px 0 6px">
           Quantos vídeos/áudios o yt-dlp baixa ao mesmo tempo. Recomendado: 2–4.
         </small>
-        <input id="set-download-concurrent" type="number" min="1" max="16" step="1" inputmode="numeric"
-          class="select" style="height:40px;padding:0 12px" aria-label="Downloads em paralelo" />
+        <select id="set-download-concurrent" class="select" style="height:40px;padding:0 12px" aria-label="Downloads em paralelo">
+          <option value="1">1</option><option value="2">2</option><option value="3" selected>3</option>
+          <option value="4">4</option><option value="5">5</option><option value="6">6</option>
+          <option value="8">8</option><option value="10">10</option><option value="12">12</option><option value="16">16</option>
+        </select>
       </div>
 
       <div>
@@ -655,8 +655,11 @@
         <small style="display:block;font-size:11px;color:var(--slate-500);margin:-4px 0 6px">
           Quantas transcrições Whisper rodam ao mesmo tempo. Cada uma usa CPU/GPU pesada — só aumente em máquinas potentes.
         </small>
-        <input id="set-transcribe-concurrent" type="number" min="1" max="16" step="1" inputmode="numeric"
-          class="select" style="height:40px;padding:0 12px" aria-label="Transcrições em paralelo" />
+        <select id="set-transcribe-concurrent" class="select" style="height:40px;padding:0 12px" aria-label="Transcrições em paralelo">
+          <option value="1" selected>1</option><option value="2">2</option><option value="3">3</option>
+          <option value="4">4</option><option value="5">5</option><option value="6">6</option>
+          <option value="8">8</option><option value="10">10</option><option value="12">12</option><option value="16">16</option>
+        </select>
       </div>
 
       <p id="settings-hint" style="font-size:11.5px;color:var(--slate-500);margin-top:4px;line-height:1.5">

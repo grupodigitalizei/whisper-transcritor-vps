@@ -71,6 +71,7 @@ function _historyToFiles(data) {
       completed_at:   h.completed_at   || null,
       processing_secs: h.processing_secs || null,
       source:         h.source         || 'upload',  // 'upload' | 'url'
+      url:            h.url            || null,       // original link (yt-dlp), if any
       has_original:   h.has_original !== false,      // default true if backend omits
       _progress:      carried._progress,
       _phase:         carried._phase,
@@ -792,16 +793,33 @@ function closeFolderPicker() {
 // ═══════════════════════════════════════════════════════════════
 //  SETTINGS — concurrency for download + transcribe
 // ═══════════════════════════════════════════════════════════════
+// Set a <select>'s value, injecting the option first if the saved value isn't
+// one of the presets (backend allows any 1–16) — avoids a blank dropdown.
+function _setConcurrencyValue(id, val) {
+  const sel = document.getElementById(id);
+  if (!sel) return;
+  const v = String(val);
+  if (![...sel.options].some(o => o.value === v)) {
+    const opt = document.createElement('option');
+    opt.value = v; opt.textContent = v;
+    sel.appendChild(opt);
+  }
+  sel.value = v;
+}
+
 async function openSettings() {
   // Pull current values from backend so the user always sees the live state.
+  // The selects already carry sane defaults (3 / 1) via `selected`, so even if
+  // this fetch fails the dropdowns are never blank.
   try {
     const r = await fetch('/api/settings');
     if (r.ok) {
       const s = await r.json();
-      document.getElementById('set-download-concurrent').value   = s.download_concurrent   ?? 3;
-      document.getElementById('set-transcribe-concurrent').value = s.transcribe_concurrent ?? 1;
+      _settingsCache = s;  // keep ETA wall-clock math in sync with truth
+      _setConcurrencyValue('set-download-concurrent',   s.download_concurrent   ?? 3);
+      _setConcurrencyValue('set-transcribe-concurrent', s.transcribe_concurrent ?? 1);
     }
-  } catch { /* defaults already in DOM */ }
+  } catch { /* defaults already selected in DOM */ }
   document.getElementById('settings-overlay').classList.add('open');
   document.body.style.overflow = 'hidden';
   attachFocusTrap('settings-overlay');
@@ -829,8 +847,10 @@ async function saveSettings() {
     fd.append('transcribe_concurrent', String(tr));
     const r = await fetch('/api/settings', { method: 'POST', body: fd });
     if (!r.ok) { showToast('Não foi possível salvar.', 'error'); return; }
+    _settingsCache = { download_concurrent: dl, transcribe_concurrent: tr };  // refresh local cache
     showToast('Configurações salvas.', 'success');
     closeSettings();
+    _renderQueueSummary(); // ETA total agora reflete o novo paralelismo
   } catch {
     showToast('Erro de rede ao salvar.', 'error');
   } finally {
@@ -1011,9 +1031,35 @@ function _syncFolderButtonLabel() {
 function _renderQueueSummary() {
   const box  = document.getElementById('queue-summary');
   const text = document.getElementById('queue-summary-text');
-  const { count, totalSecs, unknown } = estimateTotalRemaining();
 
-  // Update the stat card too — single source of truth for "queued + processing" count.
+  // Decompõe pendentes em: já-em-transcrição (ETA real) + na-fila (estimativa).
+  // Soma "em série" ÷ concorrência permitida (default 1) — é assim que o lote
+  // realmente vai rolar, dado o _transcribe_sem do backend.
+  const pending     = files.filter(f => f.status === 'queued' || f.status === 'processing');
+  const inProgress  = pending.filter(f => f.status === 'processing');
+  const queued      = pending.filter(f => f.status === 'queued');
+  const count       = pending.length;
+
+  const now = Date.now() / 1000;
+  let inProgressSecs = 0;
+  for (const f of inProgress) {
+    const est = estimateRemainingSecs(f, now);
+    if (est != null) inProgressSecs += est;
+  }
+  let queuedSecs = 0;
+  let queuedUnknown = 0;
+  for (const f of queued) {
+    const est = estimateRemainingSecs(f, now);
+    if (est == null) queuedUnknown++;
+    else queuedSecs += est;
+  }
+  // Concorrência de transcrição (1 por padrão, configurável). Itens em paralelo
+  // levam menos wall-clock total — total ≈ tempo_em_curso + soma_fila / N.
+  const concurrency = Math.max(1, _settingsCache?.transcribe_concurrent || 1);
+  const queueWallClock = queuedSecs / concurrency;
+  const totalSecs = inProgressSecs + queueWallClock;
+
+  // Stat card no topo
   const statVal = document.getElementById('stat-queue');
   const statSub = document.getElementById('stat-queue-sub');
   if (statVal && statSub) {
@@ -1026,11 +1072,36 @@ function _renderQueueSummary() {
   if (!box || !text) return;
   if (count === 0) { box.classList.remove('show'); return; }
   box.classList.add('show');
-  let msg = `<strong>${count}</strong> pendente${count > 1 ? 's' : ''}`;
-  if (totalSecs > 0)  msg += ` · tempo estimado ~<strong>${fmtSecs(totalSecs)}</strong>`;
-  if (unknown > 0)    msg += ` · ${unknown} sem estimativa`;
+
+  // UI breakdown: ETA explícita do que está rolando + contagem na fila + total
+  const parts = [];
+  if (inProgress.length) {
+    parts.push(inProgressSecs > 0
+      ? `${inProgress.length} em transcrição (~<strong>${fmtSecs(inProgressSecs)}</strong> p/ terminar)`
+      : `${inProgress.length} em transcrição`);
+  }
+  if (queued.length) {
+    let s = `${queued.length} na fila`;
+    if (queuedSecs > 0) s += ` · ~<strong>${fmtSecs(queueWallClock)}</strong>`;
+    if (queuedUnknown > 0) s += ` (${queuedUnknown} sem estimativa)`;
+    parts.push(s);
+  }
+  let msg = parts.join(' · ');
+  if (totalSecs > 0 && inProgress.length && queued.length) {
+    msg += ` · <strong>total ~${fmtSecs(totalSecs)}</strong>`;
+  }
   text.innerHTML = msg;
 }
+
+// Cache local das settings — usado pra calcular wall-clock com concorrência.
+// Atualizado em loadSettings/openSettings/saveSettings; default conservador (1).
+let _settingsCache = { download_concurrent: 1, transcribe_concurrent: 1 };
+(async () => {
+  try {
+    const r = await fetch('/api/settings');
+    if (r.ok) _settingsCache = await r.json();
+  } catch { /* defaults serve */ }
+})();
 
 function promptMoveToFolder(id) {
   closeAllDDs();
@@ -1152,12 +1223,19 @@ function _ratePerAudioSec(model) {
   return totalProc / totalAudio;
 }
 
-// Fallback: average total processing time for that model (when we don't know
-// the audio duration of a queued entry yet).
+// Fallback: median total processing time for that model (when we don't know
+// the audio duration of a queued entry yet). Median, not mean — outliers
+// (1 video gigante de 2h) não envenenam o estimate.
 function _avgTotalProcessingSecs(model) {
-  const samples = files.filter(f => f.status === 'done' && f.processing_secs && f.mode === model);
+  const samples = files
+    .filter(f => f.status === 'done' && f.processing_secs && f.mode === model)
+    .map(f => f.processing_secs)
+    .sort((a, b) => a - b);
   if (!samples.length) return null;
-  return samples.reduce((s, f) => s + f.processing_secs, 0) / samples.length;
+  // Prefere amostras recentes (últimas 50) — máquina/rede mudam ao longo do tempo
+  const recent = samples.length > 50 ? samples.slice(-50) : samples;
+  const mid = Math.floor(recent.length / 2);
+  return recent.length % 2 ? recent[mid] : (recent[mid - 1] + recent[mid]) / 2;
 }
 
 // Estimate remaining seconds for a single entry. Returns null if unknown.
@@ -1246,14 +1324,17 @@ function renderStatus(status, f) {
     if (pct != null) pctLabel = ` <small style="opacity:.7">${Math.floor(pct)}%</small>`;
   }
 
+  // ETA só faz sentido para itens REALMENTE em processamento — a estimativa
+  // depende de elapsed_in_phase, e queued não tem elapsed. Mostrar o mesmo "27s"
+  // para 100 itens em fila era enganoso (era a média histórica do modelo).
+  // O resumo do total continua visível no topo da tabela via _renderQueueSummary.
   let eta = '';
-  if (f && (status === 'queued' || status === 'processing')) {
+  if (f && status === 'processing') {
     const est = estimateRemainingSecs(f);
     if (est != null && est > 0) {
-      eta = `<div class="row-eta">~${fmtSecs(est)} restante${status === 'queued' ? ' (aguardando)' : ''}</div>`;
-    } else if (status === 'processing') {
-      // Estimate exhausted but still running — keep the line stable rather than
-      // letting it vanish (the user reported it disappearing).
+      eta = `<div class="row-eta">~${fmtSecs(est)} restante</div>`;
+    } else {
+      // Estimate exhausted but still running — mantém a linha estável.
       eta = `<div class="row-eta">finalizando…</div>`;
     }
   }
@@ -1266,7 +1347,7 @@ function renderStatus(status, f) {
 function _rowSignature(f) {
   return [
     f.id, f.status, f.name, f.date, f.dur, f.mode, f.folder || '',
-    f.source || '', f.has_original ? '1' : '0',
+    f.source || '', f.has_original ? '1' : '0', f.url || '',
     selected.has(f.id) ? '1' : '0',
   ].join('|');
 }
@@ -1339,7 +1420,21 @@ function _buildRowInner(f) {
             <div class="dd-item" role="menuitem" tabindex="-1" onclick="dlOriginalMedia('${jsAttr(f.file)}')">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
               Baixar arquivo original (áudio/vídeo)
+            </div>
+            <div class="dd-item" role="menuitem" tabindex="-1" onclick="dlWithOriginal('${jsAttr(f.file)}')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+              Baixar transcrição + original (ZIP)
             </div>` : ''}
+            <div class="dd-sep"></div>` : ''}
+            ${f.url ? `
+            <div class="dd-item" role="menuitem" tabindex="-1" onclick="openOriginalLink('${jsAttr(f.url)}')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+              Abrir link original
+            </div>
+            <div class="dd-item" role="menuitem" tabindex="-1" onclick="copyOriginalLink('${jsAttr(f.url)}')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              Copiar link original
+            </div>
             <div class="dd-sep"></div>` : ''}
             <div class="dd-item" role="menuitem" tabindex="-1" onclick="promptMoveToFolder('${jsAttr(f.id)}')">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
@@ -1626,6 +1721,8 @@ function viewError(id) {
   // Hide tabs that aren't relevant for errors
   document.getElementById('vtab-ts').style.display  = 'none';
   document.getElementById('vtab-srt').style.display = 'none';
+  _setViewerMeta(f, { errorMode: true });
+  _renderViewerActions(f, { errorMode: true });
   switchViewerTab('text');
   document.getElementById('viewer-overlay').classList.add('open');
   document.body.style.overflow = 'hidden';
@@ -1658,6 +1755,32 @@ async function dlOriginalMedia(filename) {
     return;
   }
   window.location = `/api/download-media/${encodeURIComponent(filename)}`;
+}
+
+// Download the transcription files AND the original media together in one ZIP.
+function dlWithOriginal(filename) {
+  closeAllDDs();
+  if (!filename) return;
+  window.location = `/api/download-with-original/${encodeURIComponent(filename)}`;
+}
+
+// Open the saved source link (yt-dlp URL) in a new tab.
+function openOriginalLink(url) {
+  closeAllDDs();
+  if (!url) return;
+  window.open(url, '_blank', 'noopener');
+}
+
+// Copy the saved source link to the clipboard.
+async function copyOriginalLink(url) {
+  closeAllDDs();
+  if (!url) return;
+  try {
+    await navigator.clipboard.writeText(url);
+    showToast('Link copiado.', 'success');
+  } catch {
+    showToast('Não foi possível copiar o link.', 'error');
+  }
 }
 
 function dlFile(id, fmt) {
@@ -2397,11 +2520,102 @@ function openViewer(f, data) {
   // Ensure all tabs visible (may have been hidden by viewError)
   document.getElementById('vtab-ts').style.display  = '';
   document.getElementById('vtab-srt').style.display = '';
+  _setViewerMeta(f);
+  _renderViewerActions(f);
   switchViewerTab('text');
   document.getElementById('viewer-overlay').classList.add('open');
   document.body.style.overflow = 'hidden';
   attachFocusTrap('viewer-overlay');
   setTimeout(() => document.querySelector('#viewer-overlay .modal-close')?.focus(), 50);
+}
+
+// Build the viewer's action row so it mirrors the row's three-dots menu:
+// the four format downloads plus original/ZIP/link/move/delete when applicable.
+function _renderViewerActions(f, { errorMode = false } = {}) {
+  const row = document.getElementById('viewer-dl-row');
+  if (!row) return;
+  const ic = {
+    dl:   '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
+    orig: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>',
+    zip:  '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><line x1="10" y1="12" x2="14" y2="12"/></svg>',
+    link: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
+    copy: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+    move: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
+    del:  '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>',
+  };
+  const sections = [];
+
+  // 1. Transcription downloads — TXT emphasized, other formats as soft chips.
+  //    Skipped for error items (no transcription files exist on disk).
+  if (!errorMode) {
+    sections.push(`
+      <div class="va-section">
+        <span class="va-label">Transcrição</span>
+        <div class="va-btns">
+          <button type="button" class="btn btn-primary" onclick="dlViewerFile('txt')">${ic.dl}Baixar TXT</button>
+          <button type="button" class="btn btn-soft" onclick="dlViewerFile('srt')">SRT</button>
+          <button type="button" class="btn btn-soft" onclick="dlViewerFile('timestamps')">Timestamps</button>
+          <button type="button" class="btn btn-soft" onclick="dlViewerFile('json')">JSON</button>
+        </div>
+      </div>`);
+  }
+
+  // 2. Original media + source link — side-by-side groups, each shown only if relevant.
+  const cols = [];
+  if (f.has_original) {
+    cols.push(`
+      <div class="va-section">
+        <span class="va-label">Arquivo original</span>
+        <div class="va-btns">
+          <button type="button" class="btn btn-soft" onclick="dlOriginalMedia('${jsAttr(f.file)}')">${ic.orig}Áudio/vídeo</button>
+          <button type="button" class="btn btn-soft" onclick="dlWithOriginal('${jsAttr(f.file)}')">${ic.zip}Tudo em ZIP</button>
+        </div>
+      </div>`);
+  }
+  if (f.url) {
+    cols.push(`
+      <div class="va-section">
+        <span class="va-label">Link de origem</span>
+        <div class="va-btns">
+          <button type="button" class="btn btn-soft" onclick="openOriginalLink('${jsAttr(f.url)}')">${ic.link}Abrir</button>
+          <button type="button" class="btn btn-soft" onclick="copyOriginalLink('${jsAttr(f.url)}')">${ic.copy}Copiar</button>
+        </div>
+      </div>`);
+  }
+  if (cols.length) sections.push(`<div class="va-cols">${cols.join('')}</div>`);
+
+  // 3. Manage — separated from downloads; delete is destructive and right-aligned.
+  if (sections.length) sections.push('<div class="va-div"></div>');
+  sections.push(`
+    <div class="va-manage">
+      <button type="button" class="btn btn-soft" onclick="promptMoveToFolder('${jsAttr(f.id)}')">${ic.move}Mover para pasta</button>
+      <button type="button" class="btn btn-soft danger" onclick="deleteViewerFile()">${ic.del}Excluir</button>
+    </div>`);
+
+  row.innerHTML = sections.join('');
+}
+
+// Compact context line under the viewer title: duration · language · word count.
+function _setViewerMeta(f, { errorMode = false } = {}) {
+  const el = document.getElementById('viewer-meta');
+  if (!el) return;
+  const bits = [];
+  if (errorMode) {
+    bits.push('Falha na transcrição');
+  } else {
+    if (f.dur && f.dur !== '—') bits.push(esc(f.dur));
+    if (f.lang) bits.push(esc(String(f.lang).toUpperCase()));
+    if (f.words) bits.push(`${f.words.toLocaleString('pt-BR')} palavras`);
+  }
+  el.innerHTML = bits.join('<span class="vm-dot"></span>');
+}
+
+// Delete from inside the viewer, then close it if the item is really gone.
+async function deleteViewerFile() {
+  const f = _viewerFile;
+  if (!f) return;
+  await deleteFile(f.id);
+  if (!files.find(x => x.id === f.id)) closeViewer();
 }
 
 function closeViewer() {

@@ -452,7 +452,47 @@
                        font-size:13px; line-height:1.75; color:var(--slate-700);
                        resize:vertical; outline:none; background:var(--slate-50); }
     .viewer-textarea:focus { border-color:var(--blue); background:var(--white); }
-    .viewer-dl-row { display:flex; gap:8px; flex-wrap:wrap; padding:0 24px 20px; flex-shrink:0; }
+    /* VIEWER ACTION BAR — grouped, hierarchical footer (replaces the flat button wall) */
+    .viewer-dl-row { display:flex; flex-direction:column; gap:14px; flex-shrink:0;
+                     padding:16px 24px 18px; background:var(--slate-50);
+                     border-top:1px solid var(--slate-100); }
+    .va-section { display:flex; flex-direction:column; gap:7px; min-width:0; }
+    .va-label { font-size:10.5px; font-weight:800; letter-spacing:.7px; text-transform:uppercase;
+                color:var(--slate-400); }
+    .va-btns { display:flex; gap:7px; flex-wrap:wrap; }
+    /* Side-by-side groups (Original / Link) collapse to stacked on narrow widths */
+    .va-cols { display:flex; gap:22px; flex-wrap:wrap; }
+    .va-cols .va-section { flex:1 1 auto; }
+    .va-div { height:1px; background:var(--slate-200); }
+    .va-manage { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; }
+
+    /* Soft chip button — raised white on the tinted bar; lighter than primary,
+       calmer than the old outlined ghost wall. */
+    .btn-soft { background:var(--white); color:var(--slate-700); font-size:12.5px;
+                padding:8px 13px; border-radius:var(--r-sm); border:1.5px solid var(--slate-200);
+                box-shadow:var(--sh-sm); }
+    .btn-soft:hover { border-color:var(--blue-200); background:var(--blue-50); color:var(--slate-900); }
+    .btn-soft svg { color:var(--slate-400); transition:color var(--t) var(--ease); }
+    .btn-soft:hover svg { color:var(--blue); }
+    .btn-soft.danger { color:var(--red); }
+    .btn-soft.danger svg { color:var(--red); }
+    .btn-soft.danger:hover { background:var(--red-lt); border-color:var(--red); color:var(--red); }
+    .btn-soft.danger:hover svg { color:var(--red); }
+
+    /* Viewer header: truncating title + context meta line */
+    .viewer-head-text { min-width:0; flex:1; display:flex; flex-direction:column; gap:2px; }
+    #viewer-title { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .viewer-meta { display:flex; align-items:center; gap:7px; flex-wrap:wrap;
+                   font-size:12px; font-weight:600; color:var(--slate-500); }
+    .viewer-meta:empty { display:none; }
+    .viewer-meta .vm-dot { width:3px; height:3px; border-radius:50%; background:var(--slate-300); flex-shrink:0; }
+    @media (max-width:560px) {
+      .va-cols { gap:14px; }
+      .va-manage .btn-soft { flex:1 1 auto; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .overlay, .modal, .btn, .btn-soft, .btn-soft svg { transition:none !important; }
+    }
 
     /* RESPONSIVE */
     @media (max-width:720px) {
