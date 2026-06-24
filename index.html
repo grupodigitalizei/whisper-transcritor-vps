@@ -32,6 +32,19 @@
     </div>
   </div>
 
+  <!-- Cleanup banner: mídias antigas (>7 dias) — fica oculto por padrão; mostrado por checkOldMediaCleanup() -->
+  <div class="cleanup-banner" id="cleanup-banner" role="status" aria-live="polite" style="display:none">
+    <svg class="cleanup-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    <div class="cleanup-text">
+      <strong id="cleanup-headline">— vídeos/áudios com mais de 7 dias</strong>
+      <span>Ocupam <span id="cleanup-size">—</span> em disco. As <strong>transcrições continuam salvas</strong> — só os arquivos originais de áudio/vídeo serão apagados.</span>
+    </div>
+    <div class="cleanup-actions">
+      <button type="button" class="btn btn-ghost" onclick="dismissCleanupBanner()">Lembrar depois</button>
+      <button type="button" class="btn btn-primary" onclick="runOldMediaCleanup()" id="cleanup-confirm-btn">Apagar agora</button>
+    </div>
+  </div>
+
   <!-- Main Tabs -->
   <div class="seg-tabs" style="margin-bottom: 24px; max-width: 400px; margin-left: auto; margin-right: auto;" role="tablist" aria-label="Visualização">
     <button type="button" id="main-tab-transcriptions" class="seg-tab" role="tab" aria-selected="true" aria-controls="card-transcriptions" tabindex="0" onclick="switchMainTab('transcriptions')" onkeydown="onTablistKey(event, 'main')">
@@ -97,6 +110,9 @@
       <div class="card-actions">
         <button type="button" class="icon-btn" id="search-toggle" onclick="toggleSearch()" aria-label="Buscar arquivos" aria-expanded="false" title="Buscar">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </button>
+        <button type="button" class="icon-btn" onclick="openSettings()" aria-label="Configurações" title="Configurações">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         </button>
         <button type="button" class="transcribe-btn" onclick="openModal('file')" aria-label="Transcrever arquivos">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
@@ -254,6 +270,10 @@
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
           URL / Link
         </button>
+        <button type="button" id="tab-batch" class="seg-tab" role="tab" aria-selected="false" aria-controls="content-batch" tabindex="-1" onclick="switchTab('batch')" onkeydown="onTablistKey(event, 'modal')">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+          Lote
+        </button>
       </div>
 
       <!-- FILE tab -->
@@ -291,33 +311,126 @@
       <!-- URL tab -->
       <div id="content-url" style="display:none" role="tabpanel" aria-labelledby="tab-url">
         <label class="field-label" for="url-input">URL de vídeo ou áudio (YouTube, Vimeo, TikTok, etc.)</label>
-        <input id="url-input" type="url" class="select" style="height:40px;padding:0 12px;margin-bottom:12px"
+        <input id="url-input" type="url" class="select" style="height:40px;padding:0 12px;margin-bottom:14px"
           placeholder="https://youtube.com/watch?v=..." aria-label="URL do vídeo ou áudio" />
-        
-        <div style="display: flex; gap: 12px; margin-bottom: 6px;">
+
+        <!-- Mode switcher: clear visual separation between transcribe and download -->
+        <div class="mode-switch" role="radiogroup" aria-label="O que fazer com a URL">
+          <button type="button" class="mode-opt" aria-checked="true" data-mode="transcribe" onclick="setModalMode('transcribe')">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+            <div>
+              <div class="mode-title">Transcrever</div>
+              <div class="mode-sub">Baixa, extrai áudio e gera texto</div>
+            </div>
+          </button>
+          <button type="button" class="mode-opt" aria-checked="false" data-mode="download" onclick="setModalMode('download')">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <div>
+              <div class="mode-title">Apenas baixar</div>
+              <div class="mode-sub">Salva o arquivo na Biblioteca</div>
+            </div>
+          </button>
+        </div>
+
+        <!-- Format + Quality only when mode=download -->
+        <div id="url-dl-options" style="display:none">
+          <div style="display:flex; gap:12px;">
             <div style="flex:1">
-                <label class="field-label" for="dl-type-select">Formato</label>
-                <small style="display:block;font-size:11px;color:var(--slate-500);margin:-4px 0 6px">Usado só em "Apenas Baixar"</small>
-                <select id="dl-type-select" class="select" aria-label="Formato de Download" onchange="updateQualityOptions()">
-                  <option value="video" selected>Vídeo (.mp4)</option>
-                  <option value="audio">Áudio (.mp3)</option>
-                </select>
+              <label class="field-label" for="dl-type-select">Formato</label>
+              <select id="dl-type-select" class="select" aria-label="Formato de Download" onchange="updateQualityOptions()">
+                <option value="video" selected>Vídeo (.mp4)</option>
+                <option value="audio">Áudio (.mp3)</option>
+              </select>
             </div>
             <div style="flex:1">
-                <label class="field-label" for="dl-quality-select">Qualidade</label>
-                <select id="dl-quality-select" class="select" aria-label="Qualidade de Download">
-                  <option value="best">Melhor (Máxima)</option>
-                  <option value="1080p">1080p</option>
-                  <option value="720p">720p</option>
-                  <option value="480p">480p</option>
-                </select>
+              <label class="field-label" for="dl-quality-select">Qualidade</label>
+              <select id="dl-quality-select" class="select" aria-label="Qualidade de Download">
+                <option value="best">Melhor (Máxima)</option>
+                <option value="1080p">1080p</option>
+                <option value="720p">720p</option>
+                <option value="480p">480p</option>
+              </select>
             </div>
+          </div>
         </div>
 
         <p style="font-size:11.5px;color:var(--slate-500);margin-top:12px">
-          ⚠️ <strong>Transcrever</strong> sempre extrai áudio silenciosamente. Requer <strong>yt-dlp e ffmpeg</strong>.
+          Requer <strong>yt-dlp e ffmpeg</strong>.
         </p>
       </div>
+
+      <!-- BATCH tab — many URLs from a spreadsheet/CSV or paste -->
+      <div id="content-batch" style="display:none" role="tabpanel" aria-labelledby="tab-batch">
+        <label class="field-label">Importar planilha (CSV ou TXT)</label>
+        <small style="display:block;font-size:11px;color:var(--slate-500);margin:-4px 0 6px">
+          Para XLSX: abra no Excel e use "Salvar como → CSV (separado por vírgula)". Detectamos a coluna com URLs automaticamente.
+        </small>
+        <div class="dropzone" id="batch-dropzone" role="button" tabindex="0"
+          style="padding:18px 16px"
+          aria-label="Área de upload — Enter ou Espaço para selecionar planilha"
+          ondragover="handleBatchDragOver(event)" ondragleave="handleBatchDragLeave(event)" ondrop="handleBatchDrop(event)"
+          onkeydown="if((event.key==='Enter'||event.key===' ')&&event.target===this){event.preventDefault();document.getElementById('batch-file-input').click();}">
+          <input type="file" id="batch-file-input" accept=".csv,.tsv,.txt,text/csv,text/plain"
+            aria-label="Selecionar planilha CSV ou TXT" onchange="handleBatchFile(this.files)" />
+          <div class="dz-title" style="font-size:13px">📄 Selecione ou arraste um CSV/TXT</div>
+          <div class="dz-formats">qualquer arquivo com URLs — uma por linha ou em coluna</div>
+        </div>
+
+        <div class="dz-or">ou cole URLs (uma por linha)</div>
+        <textarea id="batch-urls-input" rows="6" class="select"
+          style="height:auto;padding:10px 12px;resize:vertical;font-family:ui-monospace,monospace;font-size:12.5px;line-height:1.5"
+          placeholder="https://youtube.com/watch?v=...&#10;https://facebook.com/watch/?v=...&#10;https://vimeo.com/...&#10;..."
+          aria-label="URLs em lote (uma por linha)"
+          oninput="updateBatchCount()"></textarea>
+
+        <div id="batch-summary" style="margin-top:12px;padding:10px 14px;background:var(--blue-50);border-radius:var(--r-md);font-size:13px;color:var(--slate-700);display:none">
+          <strong id="batch-count">0</strong> URLs detectadas
+          <span id="batch-extra" style="color:var(--slate-500);font-size:12px"></span>
+        </div>
+
+        <!-- Mode switcher: same UX as URL tab — clear visual separation -->
+        <div class="mode-switch" role="radiogroup" aria-label="O que fazer com o lote">
+          <button type="button" class="mode-opt" aria-checked="true" data-mode="transcribe" onclick="setModalMode('transcribe')">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+            <div>
+              <div class="mode-title">Transcrever lote</div>
+              <div class="mode-sub">Baixa cada URL e gera transcrição</div>
+            </div>
+          </button>
+          <button type="button" class="mode-opt" aria-checked="false" data-mode="download" onclick="setModalMode('download')">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <div>
+              <div class="mode-title">Apenas baixar</div>
+              <div class="mode-sub">Salva todos na Biblioteca de Mídia</div>
+            </div>
+          </button>
+        </div>
+
+        <!-- Format/quality: só aparece em modo download -->
+        <div id="batch-dl-options" style="display:none">
+          <div style="display:flex;gap:12px">
+            <div style="flex:1">
+              <label class="field-label" for="batch-media-type">Formato</label>
+              <select id="batch-media-type" class="select" aria-label="Formato do download" onchange="updateBatchQualityOptions()">
+                <option value="video" selected>Vídeo (.mp4)</option>
+                <option value="audio">Áudio (.mp3)</option>
+              </select>
+            </div>
+            <div style="flex:1">
+              <label class="field-label" for="batch-quality">Qualidade</label>
+              <select id="batch-quality" class="select" aria-label="Qualidade do download">
+                <option value="best">Melhor (Máxima)</option>
+                <option value="1080p">1080p</option>
+                <option value="720p">720p</option>
+                <option value="480p">480p</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Transcribe-only fields: hidden when mode=download in URL or Lote tabs -->
+      <div id="transcribe-fields">
 
       <!-- Model -->
       <div>
@@ -398,13 +511,12 @@
         </div>
       </div>
 
+      </div><!-- /#transcribe-fields -->
+
     </div>
 
     <div class="modal-foot">
       <div style="display: flex; gap: 10px; width: 100%;" id="modal-actions-container">
-        <button type="button" class="btn btn-secondary-lg" id="download-only-btn" style="flex: 1; display: none;" onclick="startDownloadOnly()">
-          APENAS BAIXAR
-        </button>
         <button type="button" class="btn btn-primary-lg" id="transcribe-btn" style="flex: 1;" onclick="startTranscription()">
           TRANSCREVER
         </button>
@@ -509,6 +621,52 @@
     <div class="modal-foot">
       <button type="button" class="btn btn-primary-lg" onclick="folderPickerConfirm()" id="folder-picker-confirm-btn">Mover</button>
       <button type="button" class="btn btn-secondary-lg" onclick="closeFolderPicker()">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════ SETTINGS MODAL ═════════════════ -->
+<div class="overlay" id="settings-overlay" role="dialog" aria-modal="true" aria-labelledby="settings-title" onclick="if (event.target === this) closeSettings()">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-head">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      <h2 class="modal-title" id="settings-title">Configurações</h2>
+      <button type="button" class="modal-close" onclick="closeSettings()" aria-label="Fechar">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+
+    <div class="modal-body">
+      <p style="font-size:12.5px;color:var(--slate-600);line-height:1.55;margin-bottom:4px">
+        Controle quantos downloads e transcrições rodam ao mesmo tempo. Aumente para acelerar o lote; diminua se a máquina ficar lenta ou o site bloquear muitos downloads simultâneos.
+      </p>
+
+      <div>
+        <label class="field-label" for="set-download-concurrent">Downloads em paralelo</label>
+        <small style="display:block;font-size:11px;color:var(--slate-500);margin:-4px 0 6px">
+          Quantos vídeos/áudios o yt-dlp baixa ao mesmo tempo. Recomendado: 2–4.
+        </small>
+        <input id="set-download-concurrent" type="number" min="1" max="16" step="1" inputmode="numeric"
+          class="select" style="height:40px;padding:0 12px" aria-label="Downloads em paralelo" />
+      </div>
+
+      <div>
+        <label class="field-label" for="set-transcribe-concurrent">Transcrições em paralelo</label>
+        <small style="display:block;font-size:11px;color:var(--slate-500);margin:-4px 0 6px">
+          Quantas transcrições Whisper rodam ao mesmo tempo. Cada uma usa CPU/GPU pesada — só aumente em máquinas potentes.
+        </small>
+        <input id="set-transcribe-concurrent" type="number" min="1" max="16" step="1" inputmode="numeric"
+          class="select" style="height:40px;padding:0 12px" aria-label="Transcrições em paralelo" />
+      </div>
+
+      <p id="settings-hint" style="font-size:11.5px;color:var(--slate-500);margin-top:4px;line-height:1.5">
+        ⚙️ Mudanças valem imediatamente — tarefas em andamento terminam normalmente; as novas respeitam o novo limite.
+      </p>
+    </div>
+
+    <div class="modal-foot">
+      <button type="button" class="btn btn-primary-lg" onclick="saveSettings()" id="settings-save-btn">Salvar</button>
+      <button type="button" class="btn btn-secondary-lg" onclick="closeSettings()">Cancelar</button>
     </div>
   </div>
 </div>

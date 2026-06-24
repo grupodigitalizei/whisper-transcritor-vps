@@ -31,12 +31,94 @@ for d in (RESULTS_DIR, UPLOAD_DIR, STATIC_DIR):
 # ── Model cache ────────────────────────────────────────────────
 _models: dict = {}
 _models_lock  = threading.Lock()
-_transcribe_sem = threading.Semaphore(1)  # apenas 1 transcrição por vez
 _history_lock = threading.Lock()           # protege escrita no history.json
 _media_lock   = threading.Lock()           # protege escrita no media.json
 _folders_lock = threading.Lock()           # protege escrita no folders.json
+_settings_lock = threading.Lock()          # protege escrita no settings.json
+
+# ── User-configurable concurrency settings ─────────────────────
+SETTINGS_FILE = os.path.join(SCRIPT_DIR, ".whisper_data", "settings.json")
+_DEFAULT_SETTINGS = {
+    "download_concurrent":   3,   # quantos yt-dlp em paralelo
+    "transcribe_concurrent": 1,   # quantas chamadas Whisper em paralelo
+}
+_SETTINGS_CACHE: dict = {}
+
+def _load_settings() -> dict:
+    """Returns the merged (defaults + persisted) settings dict.
+    Reads from disk once and caches; settings changes invalidate via _save_settings."""
+    global _SETTINGS_CACHE
+    if _SETTINGS_CACHE:
+        return _SETTINGS_CACHE
+    merged = dict(_DEFAULT_SETTINGS)
+    try:
+        with open(SETTINGS_FILE, encoding="utf-8") as f:
+            stored = json.load(f) or {}
+        for k, default in _DEFAULT_SETTINGS.items():
+            v = stored.get(k)
+            if isinstance(v, int) and v >= 1:
+                merged[k] = v
+    except (FileNotFoundError, json.JSONDecodeError, ValueError):
+        pass
+    _SETTINGS_CACHE = merged
+    return merged
+
+def _save_settings(new: dict) -> dict:
+    """Validates + persists settings. Clamps each value to [1, 16] to avoid
+    accidental hangs from a 0 or surprise CPU storms from a 100."""
+    global _SETTINGS_CACHE
+    with _settings_lock:
+        current = _load_settings()
+        out = dict(current)
+        for k in _DEFAULT_SETTINGS.keys():
+            if k in new:
+                try:
+                    v = int(new[k])
+                except (TypeError, ValueError):
+                    continue
+                out[k] = max(1, min(16, v))
+        os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(out, f, ensure_ascii=False, indent=2)
+        _SETTINGS_CACHE = out
+    return out
+
+class _DynamicSem:
+    """Semaphore-like context manager whose limit is read live from settings
+    every time someone tries to enter. Lets the user change concurrency from
+    the UI without restarting the server — in-flight work finishes naturally;
+    new work respects the new ceiling."""
+    def __init__(self, setting_key: str):
+        self._setting_key = setting_key
+        self._lock = threading.Lock()
+        self._cond = threading.Condition(self._lock)
+        self._count = 0
+
+    def _max(self) -> int:
+        return _load_settings().get(self._setting_key, 1)
+
+    def __enter__(self):
+        with self._cond:
+            while self._count >= self._max():
+                self._cond.wait()
+            self._count += 1
+
+    def __exit__(self, *exc):
+        with self._cond:
+            self._count -= 1
+            self._cond.notify_all()
+
+_transcribe_sem = _DynamicSem("transcribe_concurrent")  # was Semaphore(1) — now user-tunable
+_download_sem   = _DynamicSem("download_concurrent")    # NEW — gate yt-dlp jobs
 
 _thread_local = threading.local()
+
+class _UserCancelled(Exception):
+    """Raised inside yt-dlp progress hooks to abort an in-flight download.
+    Distinct exception type so generic try/except blocks don't swallow it
+    silently — we want it to propagate to the runner, which marks the task
+    as 'cancelled' instead of 'error'."""
+    pass
 
 _orig_tqdm_init = tqdm.tqdm.__init__
 _orig_tqdm_update = tqdm.tqdm.update
@@ -55,8 +137,17 @@ def _custom_tqdm_update(self, n=1):
             # would *decrease* the reported progress. Clamp to monotonically
             # increasing values within the 25–82 band.
             current = (_get_task(self._task_id) or {}).get('progress', 0) or 0
+            updates = {}
             if pct > current:
-                _set_task(self._task_id, progress=pct)
+                updates['progress'] = pct
+            # phase_progress is the live 0–100 of the CURRENT phase (transcription);
+            # also clamped monotonically so multiple tqdm instances don't reset it.
+            phase_pct = (self.n / self.total) * 100
+            cur_phase = (_get_task(self._task_id) or {}).get('phase_progress', 0) or 0
+            if phase_pct > cur_phase:
+                updates['phase_progress'] = phase_pct
+            if updates:
+                _set_task(self._task_id, **updates)
 
 tqdm.tqdm.__init__ = _custom_tqdm_init
 tqdm.tqdm.update = _custom_tqdm_update
@@ -222,14 +313,15 @@ def _load_history() -> list:
 def _save_to_history(filename: str, result: dict, model_name: str,
                      status: str = "done", error: str | None = None,
                      task_id: str | None = None, original_name: str | None = None,
-                     folder: str | None = None):
+                     folder: str | None = None, source: str | None = None):
     # Atomic read-modify-write under a single lock to prevent lost updates
     with _history_lock:
         history = _load_history()
         # Preserve original date, folder, and timing fields if entry already exists
         existing = next((h for h in history if h.get("file") == filename), {})
-        # New 'folder' arg wins on first insert; otherwise preserve existing.
+        # New 'folder' / 'source' args win on first insert; otherwise preserve.
         folder_to_use = folder if folder is not None else existing.get("folder", "")
+        source_to_use = source if source is not None else existing.get("source")
         name_to_use = original_name or existing.get("name") or _result_base(filename)
         entry = {
             "id":           filename,
@@ -248,6 +340,7 @@ def _save_to_history(filename: str, result: dict, model_name: str,
             # Sortable timestamp + folder, both preserved across updates
             "queued_at":    existing.get("queued_at") or time.time(),
             "folder":       folder_to_use,
+            "source":       source_to_use,
             # Timing fields (filled during transcription by _update_history_status)
             "started_at":   existing.get("started_at"),
             "completed_at": existing.get("completed_at"),
@@ -336,11 +429,14 @@ def _run_transcription(task_id, file_path, filename, model_name,
         # below cannot be interrupted (it's a single blocking call into Whisper), but
         # queued tasks can be skipped entirely.
         if _get_task(task_id) and _get_task(task_id).get("cancel_requested"):
-            _set_task(task_id, status="cancelled", progress=0)
+            _set_task(task_id, status="cancelled", progress=0, phase="cancelled")
             return
         started_at = time.time()
         try:
-            _set_task(task_id, status="processing", progress=10, started_at=started_at)
+            # Transition into the transcribe phase. phase_progress=0 here so the UI
+            # can show a fresh "Transcrevendo 0%" right after the download phase ended.
+            _set_task(task_id, status="processing", progress=10,
+                      phase="transcribe", phase_progress=0, started_at=started_at)
             _update_history_status(filename, "processing", task_id=task_id,
                                    started_at=started_at)
 
@@ -348,17 +444,19 @@ def _run_transcription(task_id, file_path, filename, model_name,
             _set_task(task_id, progress=25)
 
             result = _transcribe_one(file_path, model, language, task_type)
-            _set_task(task_id, progress=82)
+            _set_task(task_id, progress=82, phase_progress=100)
 
             # If user requested cancel while the (uninterruptible) transcription
             # was running, discard the result rather than committing it.
             if _get_task(task_id).get("cancel_requested"):
-                _set_task(task_id, status="cancelled", progress=0,
+                _set_task(task_id, status="cancelled", progress=0, phase="cancelled",
                           completed_at=time.time())
                 _update_history_status(filename, "cancelled",
                                        completed_at=time.time())
                 return
 
+            # Saving phase — brief but distinct from transcription
+            _set_task(task_id, phase="saving", phase_progress=0)
             if do_filter:
                 result["text"]        = _apply_filler_filter(result["text"])
                 result["timestamped"] = "\n".join(
@@ -375,7 +473,7 @@ def _run_transcription(task_id, file_path, filename, model_name,
                                    completed_at=completed_at,
                                    processing_secs=processing_secs)
 
-            _set_task(task_id, status="done", progress=100,
+            _set_task(task_id, status="done", progress=100, phase="done", phase_progress=100,
                       filename=filename, lang=result["lang"],
                       duration=result["duration"], words=result["words"],
                       completed_at=completed_at, processing_secs=processing_secs)
@@ -385,7 +483,7 @@ def _run_transcription(task_id, file_path, filename, model_name,
             error_msg = str(exc)
             completed_at = time.time()
             processing_secs = round(completed_at - started_at, 2)
-            _set_task(task_id, status="error", progress=0, error=error_msg,
+            _set_task(task_id, status="error", progress=0, phase="error", error=error_msg,
                       completed_at=completed_at, processing_secs=processing_secs)
             _update_history_status(filename, "error", error=error_msg,
                                    completed_at=completed_at,
@@ -418,7 +516,50 @@ async def serve_html():
 # -- History & stats
 @app.get("/api/history")
 async def api_history():
-    return _load_history()
+    """Returns the history with two computed fields injected per entry:
+       - has_original: True if the original audio/video upload is still on disk.
+                       Lets the UI badge each row as 'Original disponível' vs
+                       'Original apagado' (e.g. after the 7-day cleanup ran).
+       - source: how the entry first entered the system. Legacy rows without
+                 a stored source default to 'upload' as a best-guess fallback
+                 so the UI doesn't render a blank chip for them."""
+    history = _load_history()
+    # Single fast listdir + set membership beats one stat per entry on big histories
+    try:
+        on_disk = set(os.listdir(UPLOAD_DIR))
+    except OSError:
+        on_disk = set()
+    # Build a {file -> has_url} index from media.json so legacy entries
+    # (no stored source) can be classified by whether they had a yt-dlp URL.
+    media_url_map = {m.get("file"): bool(m.get("url")) for m in _load_media()}
+    out = []
+    for h in history:
+        entry = dict(h)
+        entry["has_original"] = entry.get("file") in on_disk
+        if not entry.get("source"):
+            entry["source"] = "url" if media_url_map.get(entry.get("file")) else "upload"
+        out.append(entry)
+    return out
+
+@app.get("/api/settings")
+async def api_get_settings():
+    """Returns current concurrency settings."""
+    return _load_settings()
+
+@app.post("/api/settings")
+async def api_set_settings(
+    download_concurrent:   str = Form(None),
+    transcribe_concurrent: str = Form(None),
+):
+    """Updates concurrency settings. Values are clamped to [1, 16].
+    Changes take effect on the NEXT acquire of each semaphore — in-flight
+    work isn't interrupted but new work respects the new limit."""
+    new = {}
+    if download_concurrent   is not None: new["download_concurrent"]   = download_concurrent
+    if transcribe_concurrent is not None: new["transcribe_concurrent"] = transcribe_concurrent
+    if not new:
+        raise HTTPException(400, "Nenhuma configuração informada")
+    return _save_settings(new)
 
 @app.get("/api/stats")
 async def api_stats():
@@ -462,6 +603,92 @@ async def api_delete_media(filename: str):
     return {"status": "ok"}
 
 
+# ── Cleanup of old media files (retention policy) ─────────────
+#
+# Policy: the audio/video originals in .whisper_data/uploads/ are kept on disk
+# so the user can re-download or re-transcribe. After 7 days they are flagged
+# for cleanup. The user may ignore the warning or confirm the deletion — it is
+# never automatic. **Transcriptions are NEVER touched by this** — they live in
+# results/ and history.json and remain available even after the media is gone.
+
+def _audit_old_media(min_age_days: float = 7.0) -> dict:
+    """Return all media uploads older than `min_age_days`, plus totals."""
+    cutoff_secs = min_age_days * 86400
+    now = time.time()
+    items: list[dict] = []
+    total_bytes = 0
+    for entry in _load_media():
+        filename = entry.get("file") or ""
+        if not filename:
+            continue
+        path = os.path.join(UPLOAD_DIR, filename)
+        if not os.path.exists(path):
+            continue  # file already gone (no point listing it for cleanup)
+        # Prefer queued_at (when first ingested); fall back to file mtime.
+        ts = entry.get("queued_at") or os.path.getmtime(path)
+        age = now - ts
+        if age < cutoff_secs:
+            continue
+        size = os.path.getsize(path)
+        total_bytes += size
+        items.append({
+            "file":            filename,
+            "name":            entry.get("name") or filename,
+            "size_bytes":      size,
+            "age_days":        round(age / 86400, 1),
+            "is_transcribed":  bool(entry.get("is_transcribed")),
+            "date":            entry.get("date") or "",
+            "url":             entry.get("url"),
+        })
+    return {
+        "count":       len(items),
+        "total_bytes": total_bytes,
+        "min_age_days": min_age_days,
+        "items":       items,
+    }
+
+@app.get("/api/media/older-than")
+async def api_media_older_than(days: float = 7.0):
+    """List media files older than N days (default 7) so the UI can prompt
+    cleanup. Transcriptions are NEVER included — only the audio/video originals
+    in uploads/ that have aged past the retention window."""
+    days = max(0.0, float(days))
+    return _audit_old_media(days)
+
+@app.post("/api/media/cleanup")
+async def api_media_cleanup(files: str = Form(...)):
+    """Bulk-delete a list of media uploads (audio/video originals only).
+    `files` is a comma-separated list of safe filenames. Transcriptions linked
+    to these files are preserved — they keep working from results/."""
+    requested = [_safe_filename(f.strip()) for f in (files or "").split(",") if f.strip()]
+    if not requested:
+        raise HTTPException(400, "Nenhum arquivo informado")
+
+    deleted = 0
+    freed_bytes = 0
+    failed: list[str] = []
+    for filename in requested:
+        path = os.path.join(UPLOAD_DIR, filename)
+        # Path-traversal guard: ensure final path is still inside UPLOAD_DIR
+        if os.path.commonpath([os.path.realpath(path), os.path.realpath(UPLOAD_DIR)]) != os.path.realpath(UPLOAD_DIR):
+            failed.append(filename); continue
+        if os.path.exists(path):
+            try:
+                freed_bytes += os.path.getsize(path)
+                os.remove(path)
+                deleted += 1
+            except OSError:
+                failed.append(filename)
+
+    # Drop those entries from media.json (transcriptions stay in history.json untouched)
+    with _media_lock:
+        media = [m for m in _load_media() if m.get("file") not in set(requested)]
+        with open(MEDIA_FILE, "w", encoding="utf-8") as f:
+            json.dump(media, f, ensure_ascii=False, indent=2)
+
+    return {"deleted": deleted, "freed_bytes": freed_bytes, "failed": failed}
+
+
 # -- Transcription
 @app.post("/api/transcribe")
 async def api_transcribe(
@@ -494,7 +721,7 @@ async def api_transcribe(
               name=original_name, filename=filename)
 
     # Register immediately in history so it survives refresh
-    _save_to_history(filename, {}, model, status="queued", task_id=task_id, original_name=_result_base(original_name), folder=folder)
+    _save_to_history(filename, {}, model, status="queued", task_id=task_id, original_name=_result_base(original_name), folder=folder, source="upload")
     _save_media(filename, original_name, is_transcribed=True, status="queued")
 
     t = threading.Thread(
@@ -518,20 +745,29 @@ async def api_progress(task_id: str):
 
 @app.delete("/api/transcribe/{task_id}")
 async def api_cancel_transcribe(task_id: str):
-    """Request cancellation of a queued or in-flight transcription.
-    Queued tasks are skipped immediately. In-flight ones complete the current
-    Whisper call (uninterruptible) but discard the result and free the slot."""
+    """Request cancellation of any task (download-only, URL→transcribe, or
+    file→transcribe). Queued tasks are skipped immediately. In-flight downloads
+    abort at the next yt-dlp progress tick. In-flight transcriptions finish the
+    current Whisper call (uninterruptible) but discard the result."""
     if not re.fullmatch(r"[0-9a-fA-F-]{8,40}", task_id or ""):
         raise HTTPException(400, "task_id inválido")
     task = _get_task(task_id)
     if not task:
         raise HTTPException(404, "Task not found")
     _set_task(task_id, cancel_requested=True)
-    # Mark the history entry so the UI reflects the cancel right away even
-    # before the worker thread reaches its next check.
+    # Mark BOTH catalogs so the UI reflects the cancel instantly, regardless of
+    # which tab the user is looking at (transcriptions / media library).
     filename = task.get("filename")
     if filename:
         _update_history_status(filename, "cancelled")
+        with _media_lock:
+            media = _load_media()
+            for entry in media:
+                if entry.get("file") == filename:
+                    entry["status"] = "cancelled"
+                    break
+            with open(MEDIA_FILE, "w", encoding="utf-8") as f:
+                json.dump(media, f, ensure_ascii=False, indent=2)
     return {"status": "cancel_requested", "task_id": task_id}
 
 @app.get("/api/active-tasks")
@@ -709,6 +945,10 @@ async def api_download_selected_zip(files: str = Form(...), formats: str = Form(
 # -- Delete
 @app.delete("/api/delete/{filename}")
 async def api_delete(filename: str):
+    """User-initiated delete from the transcriptions screen.
+    Cascades: history entry + transcription result files + the original upload
+    file + the media.json catalog entry. (The user explicitly asked for this
+    cascade so a single 'Excluir' frees everything related to that item.)"""
     filename = _safe_filename(filename)
     with _history_lock:
         history = [h for h in _load_history() if h.get("file") != filename]
@@ -723,6 +963,20 @@ async def api_delete(filename: str):
         raise HTTPException(400, "Filename inválido")
     if os.path.isdir(d):
         shutil.rmtree(d)
+
+    # Cascade: delete the original audio/video upload tied to this transcription
+    upload_path = os.path.join(UPLOAD_DIR, filename)
+    if os.path.commonpath([os.path.realpath(upload_path), os.path.realpath(UPLOAD_DIR)]) == os.path.realpath(UPLOAD_DIR):
+        if os.path.exists(upload_path):
+            try: os.remove(upload_path)
+            except OSError: pass  # best-effort; we still drop the history+media entries
+
+    # Cascade: drop the media catalog entry too
+    with _media_lock:
+        media = [m for m in _load_media() if m.get("file") != filename]
+        with open(MEDIA_FILE, "w", encoding="utf-8") as f:
+            json.dump(media, f, ensure_ascii=False, indent=2)
+
     return {"ok": True}
 
 
@@ -777,6 +1031,83 @@ async def api_gaps(filename: str, min_gap: float = 1.0):
         "full_text": out_text
     }
 
+# Shared kickoff so /api/transcribe-url (single) and /api/transcribe-batch (many)
+# don't duplicate yt-dlp setup, hook plumbing, and thread spawning.
+def _kickoff_url_transcription(url: str, model: str, language: str, task: str,
+                                filter_fillers: bool, folder: str) -> dict:
+    task_id = str(uuid.uuid4())
+    safe_name = re.sub(r'[^\w.-]', '_', url.split('/')[-1] or 'video')[:50] or 'video'
+    original_name = f"{safe_name}.mp3"
+    filename = f"{task_id[:8]}_{original_name}"
+    upload_path = os.path.join(UPLOAD_DIR, filename)
+
+    _set_task(task_id, status="processing", progress=0, phase="download", phase_progress=0,
+              name="Download (Extraindo áudio...)", filename=filename)
+
+    def _hook_main(d):
+        # Honour cancel requests: raising aborts yt-dlp; we re-mark the task
+        # as 'cancelled' in the runner's exception handler.
+        if (_get_task(task_id) or {}).get('cancel_requested'):
+            raise _UserCancelled('cancel requested during download')
+        if d['status'] == 'downloading':
+            pct_str = d.get('_percent_str', '')
+            try:
+                clean_str = re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', pct_str)
+                dl_pct = float(clean_str.replace('%', '').strip())  # 0–100 of download
+                _set_task(task_id, phase="download", phase_progress=dl_pct,
+                          progress=dl_pct * 0.25)  # overall: download owns 0–25%
+            except (ValueError, TypeError):
+                pass  # malformed progress string — skip this update
+
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'outtmpl': upload_path.replace('.mp3', '.%(ext)s'),
+        'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3'}],
+        'quiet': True,
+        'nocolor': True,
+        'progress_hooks': [_hook_main]
+    }
+    _save_to_history(filename, {}, model, status="queued", task_id=task_id, original_name=_result_base(original_name), folder=folder, source="url")
+    _save_media(filename, original_name, url=url, is_transcribed=True, status="queued")
+
+    def _run_download_and_transcribe():
+        try:
+            with _download_sem:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([url])
+        except _UserCancelled:
+            _update_history_status(filename, "cancelled")
+            _save_media(filename, original_name, url=url, is_transcribed=True, status="cancelled")
+            _set_task(task_id, status="cancelled", progress=0, phase="cancelled",
+                      name="Download cancelado", filename=filename)
+            return
+        except Exception as e:
+            _update_history_status(filename, "error", error=f"Erro ao baixar URL: {e}")
+            _save_media(filename, original_name, url=url, is_transcribed=True, status="error")
+            _set_task(task_id, status="error", progress=0, phase="error",
+                      name="Erro no Download", error=str(e), filename=filename)
+            return
+
+        # Bridge to transcribe phase — if user cancelled between download end and
+        # acquiring the sem, _run_transcription will catch it at the top.
+        if (_get_task(task_id) or {}).get('cancel_requested'):
+            _set_task(task_id, status="cancelled", progress=0, phase="cancelled")
+            _update_history_status(filename, "cancelled")
+            return
+
+        final_path = upload_path if os.path.exists(upload_path) else upload_path.replace('.mp3', '') + '.mp3'
+        if not os.path.exists(final_path):
+            for f in os.listdir(UPLOAD_DIR):
+                if task_id[:8] in f:
+                    final_path = os.path.join(UPLOAD_DIR, f)
+                    break
+
+        _run_transcription(task_id, final_path, filename, model, language, task, filter_fillers)
+
+    t = threading.Thread(target=_run_download_and_transcribe, daemon=True)
+    t.start()
+    return {"task_id": task_id, "filename": filename}
+
 @app.post("/api/transcribe-url")
 async def api_transcribe_url(
     background_tasks: BackgroundTasks,
@@ -798,57 +1129,76 @@ async def api_transcribe_url(
                 paths.add(a)
             _save_folders_paths(sorted(paths))
 
-    task_id = str(uuid.uuid4())
-    safe_name = re.sub(r'[^\w.-]', '_', url.split('/')[-1] or 'video')[:50] or 'video'
-    original_name = f"{safe_name}.mp3"
-    filename = f"{task_id[:8]}_{original_name}"
-    upload_path = os.path.join(UPLOAD_DIR, filename)
+    return _kickoff_url_transcription(url, model, language, task,
+                                       filter_fillers == "true", folder)
 
-    _set_task(task_id, status="processing", progress=0, name="Download (Extraindo áudio...)", filename=filename)
 
-    def _hook_main(d):
-        if d['status'] == 'downloading':
-            pct_str = d.get('_percent_str', '')
-            try:
-                clean_str = re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', pct_str)
-                pct = float(clean_str.replace('%', '').strip()) * 0.25
-                _set_task(task_id, progress=pct)
-            except (ValueError, TypeError):
-                pass  # malformed progress string — skip this update
+# Batch dispatch — accepts a newline / comma separated list of URLs and fires
+# each one. Two modes:
+#   transcribe="true"  (default) → download + transcribe (full pipeline)
+#   transcribe="false"           → download only (media_type + quality apply)
+# Returns counts + the first few task_ids so the UI can hook polling.
+@app.post("/api/transcribe-batch")
+async def api_transcribe_batch(
+    urls:           str  = Form(...),
+    model:          str  = Form("turbo"),
+    language:       str  = Form("pt"),
+    task:           str  = Form("transcribe"),
+    filter_fillers: str  = Form("false"),
+    folder:         str  = Form(""),
+    transcribe:     str  = Form("true"),   # NEW: "false" = download-only
+    media_type:     str  = Form("video"),  # NEW: used when transcribe=false
+    quality:        str  = Form("best"),   # NEW: used when transcribe=false
+):
+    if not YT_DLP_OK:
+        raise HTTPException(400, "yt-dlp não instalado. Execute: pip install yt-dlp")
 
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': upload_path.replace('.mp3', '.%(ext)s'),
-        'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3'}],
-        'quiet': True,
-        'nocolor': True,
-        'progress_hooks': [_hook_main]
-    }
-    _save_to_history(filename, {}, model, status="queued", task_id=task_id, original_name=_result_base(original_name), folder=folder)
-    _save_media(filename, original_name, url=url, is_transcribed=True, status="queued")
+    # Split on newline or comma; trim; drop blanks and non-http entries
+    raw = re.split(r'[\n,;]+', urls or "")
+    clean: list[str] = []
+    seen: set = set()
+    for line in raw:
+        u = line.strip()
+        if not u or not u.startswith(("http://", "https://")):
+            continue
+        if u in seen:  # dedup so accidentally-pasted duplicates don't double-fire
+            continue
+        seen.add(u)
+        clean.append(u)
+    if not clean:
+        raise HTTPException(400, "Nenhuma URL válida (deve começar com http:// ou https://)")
 
-    def _run_download_and_transcribe():
+    # Folder validation only applies to transcribe mode (download-only items
+    # live in media.json and don't have a folder concept the user picks here).
+    do_transcribe = transcribe == "true"
+    if do_transcribe:
+        folder = _validate_folder_name(folder) if folder else ""
+        if folder:
+            with _folders_lock:
+                paths = set(_load_folders_paths())
+                for a in _ancestors_of(folder):
+                    paths.add(a)
+                _save_folders_paths(sorted(paths))
+
+    do_filter = filter_fillers == "true"
+    task_ids: list[str] = []
+    for u in clean:
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
-        except Exception as e:
-            _update_history_status(filename, "error", error=f"Erro ao baixar URL: {e}")
-            _save_media(filename, original_name, url=url, is_transcribed=True, status="error")
-            _set_task(task_id, status="error", progress=0, name="Erro no Download", error=str(e), filename=filename)
-            return
-
-        final_path = upload_path if os.path.exists(upload_path) else upload_path.replace('.mp3', '') + '.mp3'
-        if not os.path.exists(final_path):
-            for f in os.listdir(UPLOAD_DIR):
-                if task_id[:8] in f:
-                    final_path = os.path.join(UPLOAD_DIR, f)
-                    break
-
-        _run_transcription(task_id, final_path, filename, model, language, task, filter_fillers == "true")
-
-    t = threading.Thread(target=_run_download_and_transcribe, daemon=True)
-    t.start()
-    return {"task_id": task_id, "filename": filename}
+            if do_transcribe:
+                res = _kickoff_url_transcription(u, model, language, task, do_filter, folder)
+            else:
+                res = _kickoff_download_only(u, media_type, quality)
+            task_ids.append(res["task_id"])
+        except Exception:
+            # Don't fail the whole batch if one URL trips at kickoff; record skip.
+            task_ids.append(None)
+    return {
+        "submitted":  sum(1 for t in task_ids if t),
+        "skipped":    sum(1 for t in task_ids if not t),
+        "total":      len(clean),
+        "transcribe": do_transcribe,
+        "task_ids":   [t for t in task_ids if t][:50],  # cap response size
+    }
 
 def _run_download_only(task_id: str, url: str, media_type: str, quality: str):
     is_video = media_type == "video"
@@ -856,15 +1206,20 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str):
     filename = f"{task_id[:8]}_download.{ext}"
     try:
         _save_media(filename, f"Obtendo {'vídeo' if is_video else 'áudio'}...", url=url, is_transcribed=False, status="processing")
-        _set_task(task_id, status="processing", progress=0, name="Download Media", filename=filename)
+        _set_task(task_id, status="processing", progress=0,
+                  phase="download", phase_progress=0,
+                  name="Download Media", filename=filename)
 
         def _hook(d):
+            if (_get_task(task_id) or {}).get('cancel_requested'):
+                raise _UserCancelled('cancel requested during download')
             if d['status'] == 'downloading':
                 pct_str = d.get('_percent_str', '')
                 try:
                     clean_str = re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', pct_str)
                     pct = float(clean_str.replace('%', '').strip())
-                    _set_task(task_id, progress=pct)
+                    # Download-only: this IS the whole job, so progress == phase_progress
+                    _set_task(task_id, phase="download", phase_progress=pct, progress=pct)
                 except (ValueError, TypeError):
                     pass  # malformed progress string — skip this update
 
@@ -890,9 +1245,10 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str):
             ydl_opts['outtmpl'] = upload_path.replace('.mp3', '.%(ext)s')
             ydl_opts['postprocessors'] = [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3'}]
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            title = info.get('title', 'Media Secundária')
+        with _download_sem:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                title = info.get('title', 'Media Secundária')
             
         actual_path = upload_path if os.path.exists(upload_path) else upload_path.replace(f'.{ext}', '') + f'.{ext}'
         if not os.path.exists(actual_path):
@@ -903,23 +1259,42 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str):
                     break
                     
         _save_media(filename, f"{title}.{ext}", url=url, is_transcribed=False, status="done")
-        _set_task(task_id, status="done", progress=100, name=f"{title}.{ext}", filename=filename)
+        _set_task(task_id, status="done", progress=100, phase="done", phase_progress=100,
+                  name=f"{title}.{ext}", filename=filename)
+    except _UserCancelled:
+        # Best-effort: remove the partial file so disk doesn't fill with .part / aborted writes
+        for f in os.listdir(UPLOAD_DIR):
+            if task_id[:8] in f:
+                try: os.remove(os.path.join(UPLOAD_DIR, f))
+                except OSError: pass
+        _save_media(filename, "Download cancelado", url=url, is_transcribed=False, status="cancelled")
+        _set_task(task_id, status="cancelled", progress=0, phase="cancelled",
+                  name="Download cancelado", filename=filename)
     except Exception as e:
         _save_media(filename, "Erro no Download", url=url, is_transcribed=False, status="error")
-        _set_task(task_id, status="error", progress=0, name="Erro no Download", error=str(e), filename=filename)
+        _set_task(task_id, status="error", progress=0, phase="error",
+                  name="Erro no Download", error=str(e), filename=filename)
+
+# Thin shared kickoff so single + batch download-only paths spawn the same
+# threaded worker. Returns dict with task_id so callers can poll progress.
+def _kickoff_download_only(url: str, media_type: str, quality: str) -> dict:
+    task_id = str(uuid.uuid4())
+    t = threading.Thread(target=_run_download_only,
+                         args=(task_id, url, media_type, quality), daemon=True)
+    t.start()
+    return {"task_id": task_id}
 
 @app.post("/api/yt-download-only")
 async def api_yt_download_only(
-    background_tasks: BackgroundTasks, 
+    background_tasks: BackgroundTasks,
     url: str = Form(...),
     media_type: str = Form("video"),
     quality: str = Form("best")
 ):
     if not YT_DLP_OK:
         raise HTTPException(400, "yt-dlp não instalado.")
-    task_id = str(uuid.uuid4())
-    background_tasks.add_task(_run_download_only, task_id, url, media_type, quality)
-    return {"message": "Download_start", "task_id": task_id}
+    res = _kickoff_download_only(url, media_type, quality)
+    return {"message": "Download_start", "task_id": res["task_id"]}
 
 # ── Folders (nested, path-based) ───────────────────────────────
 # Folder paths use '/' as separator, e.g. "Projetos/Cliente X/Q1".

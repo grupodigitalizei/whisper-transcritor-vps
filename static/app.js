@@ -16,6 +16,8 @@ async function init() {
   await Promise.all([loadHistory(), loadStats(), loadFolders()]);
   await resumeActivePolling();
   startAutoSync();
+  // Non-blocking — banner appears later if there are old media files to clean
+  checkOldMediaCleanup();
 }
 
 async function resumeActivePolling() {
@@ -43,29 +45,38 @@ async function resumeActivePolling() {
 
 // ─── helpers ─────────────────────────────────────────────────
 function _historyToFiles(data) {
-  // Carry over live progress (%) from the current in-memory list so a history
-  // refresh mid-transcription doesn't drop the percentage being displayed.
-  const prevProgress = new Map((files || []).map(f => [f.file, f._progress]));
-  return data.map(h => ({
-    id:      h.file,
-    file:    h.file,
-    name:    h.name || h.file.replace(/\.[^.]+$/, ''),
-    date:    h.date    || '—',
-    dur:     h.duration || '—',
-    dur_secs: h.duration_secs || 0,
-    status:  h.status   || 'done',
-    mode:    h.mode     || 'turbo',
-    lang:    h.lang     || '',
-    words:   h.words    || 0,
-    error:   h.error    || null,
-    task_id: h.task_id  || null,
-    folder:  h.folder   || '',
-    queued_at:      h.queued_at      || 0,
-    started_at:     h.started_at     || null,
-    completed_at:   h.completed_at   || null,
-    processing_secs: h.processing_secs || null,
-    _progress:      prevProgress.get(h.file),
-  }));
+  // Carry over live progress (%) and phase from the current in-memory list so a
+  // history refresh mid-transcription doesn't drop what's being displayed.
+  const prev = new Map((files || []).map(f => [f.file, {
+    _progress: f._progress, _phase: f._phase, _phaseProgress: f._phaseProgress,
+  }]));
+  return data.map(h => {
+    const carried = prev.get(h.file) || {};
+    return {
+      id:      h.file,
+      file:    h.file,
+      name:    h.name || h.file.replace(/\.[^.]+$/, ''),
+      date:    h.date    || '—',
+      dur:     h.duration || '—',
+      dur_secs: h.duration_secs || 0,
+      status:  h.status   || 'done',
+      mode:    h.mode     || 'turbo',
+      lang:    h.lang     || '',
+      words:   h.words    || 0,
+      error:   h.error    || null,
+      task_id: h.task_id  || null,
+      folder:  h.folder   || '',
+      queued_at:      h.queued_at      || 0,
+      started_at:     h.started_at     || null,
+      completed_at:   h.completed_at   || null,
+      processing_secs: h.processing_secs || null,
+      source:         h.source         || 'upload',  // 'upload' | 'url'
+      has_original:   h.has_original !== false,      // default true if backend omits
+      _progress:      carried._progress,
+      _phase:         carried._phase,
+      _phaseProgress: carried._phaseProgress,
+    };
+  });
 }
 
 function _makeFingerprint(data) {
@@ -778,6 +789,55 @@ function closeFolderPicker() {
   _pickerTargetFileIds = [];
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  SETTINGS — concurrency for download + transcribe
+// ═══════════════════════════════════════════════════════════════
+async function openSettings() {
+  // Pull current values from backend so the user always sees the live state.
+  try {
+    const r = await fetch('/api/settings');
+    if (r.ok) {
+      const s = await r.json();
+      document.getElementById('set-download-concurrent').value   = s.download_concurrent   ?? 3;
+      document.getElementById('set-transcribe-concurrent').value = s.transcribe_concurrent ?? 1;
+    }
+  } catch { /* defaults already in DOM */ }
+  document.getElementById('settings-overlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+  attachFocusTrap('settings-overlay');
+  setTimeout(() => document.getElementById('set-download-concurrent')?.focus(), 50);
+}
+
+function closeSettings() {
+  document.getElementById('settings-overlay').classList.remove('open');
+  document.body.style.overflow = '';
+  detachFocusTrap('settings-overlay');
+}
+
+async function saveSettings() {
+  const dl = parseInt(document.getElementById('set-download-concurrent').value, 10);
+  const tr = parseInt(document.getElementById('set-transcribe-concurrent').value, 10);
+  if (!(dl >= 1 && dl <= 16) || !(tr >= 1 && tr <= 16)) {
+    showToast('Valores devem estar entre 1 e 16.', 'error');
+    return;
+  }
+  const btn = document.getElementById('settings-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Salvando…'; }
+  try {
+    const fd = new FormData();
+    fd.append('download_concurrent',   String(dl));
+    fd.append('transcribe_concurrent', String(tr));
+    const r = await fetch('/api/settings', { method: 'POST', body: fd });
+    if (!r.ok) { showToast('Não foi possível salvar.', 'error'); return; }
+    showToast('Configurações salvas.', 'success');
+    closeSettings();
+  } catch {
+    showToast('Erro de rede ao salvar.', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Salvar'; }
+  }
+}
+
 function _renderFolderPickerList() {
   const list = document.getElementById('folder-picker-list');
   if (!list) return;
@@ -1105,11 +1165,19 @@ function estimateRemainingSecs(f, nowTs) {
   nowTs = nowTs || (Date.now() / 1000);
   if (f.status === 'done' || f.status === 'error') return 0;
 
-  // PREFERRED: derive remaining time directly from the live progress %, so the
-  // ETA always stays consistent with the bar the user is watching. If we're at
-  // p% after `elapsed` seconds, the observed speed implies:
+  // PREFERRED: derive remaining time from the percentage the user is actually
+  // looking at — phase_progress (0–100 of the current phase). The backend
+  // sets `started_at` when the transcribe phase starts, so for that phase
+  // `elapsed` is genuinely the transcription elapsed time:
   //   remaining ≈ elapsed * (100 - p) / p
-  // This self-corrects to the real machine speed and matches the percentage.
+  // This makes ETA self-correct to the real machine speed and match the bar.
+  if (f.status === 'processing' && f.started_at && f._phase === 'transcribe'
+      && typeof f._phaseProgress === 'number' && f._phaseProgress >= 3) {
+    const elapsed = nowTs - f.started_at;
+    const p = Math.min(99.5, f._phaseProgress);
+    if (elapsed > 0 && p > 0) return Math.max(0, elapsed * (100 - p) / p);
+  }
+  // Same idea, fallback when only overall progress is known.
   if (f.status === 'processing' && f.started_at && typeof f._progress === 'number' && f._progress >= 3) {
     const elapsed = nowTs - f.started_at;
     const p = Math.min(99.5, f._progress);
@@ -1152,14 +1220,30 @@ function fmtSecs(s) {
   return mm ? `${h}h ${mm}m` : `${h}h`;
 }
 
+// Phase labels — show "Baixando 35%" vs "Transcrevendo 67%" so the user
+// can tell download from transcription at a glance.
+const _PHASE_LABEL = {
+  download:   'Baixando',
+  transcribe: 'Transcrevendo',
+  saving:     'Salvando',
+};
+
 function renderStatus(status, f) {
   const s = STATUS_MAP[status] || STATUS_MAP.queued;
   const extra = status === 'error' ? ' title="Clique para ver o erro"' : '';
 
-  // Live percentage — shown for processing rows whenever we have a value.
+  // Label + live percentage — phase-aware when processing.
+  let label = s.label;
   let pctLabel = '';
-  if (f && status === 'processing' && typeof f._progress === 'number') {
-    pctLabel = ` <small style="opacity:.7">${Math.floor(f._progress)}%</small>`;
+  if (f && status === 'processing') {
+    const phaseLabel = _PHASE_LABEL[f._phase];
+    if (phaseLabel) label = phaseLabel;
+    // Prefer phase_progress (the 0–100 of the CURRENT phase — more intuitive).
+    // Fall back to overall progress if phase_progress isn't reported yet.
+    const pct = (typeof f._phaseProgress === 'number') ? f._phaseProgress
+              : (typeof f._progress === 'number')      ? f._progress
+              : null;
+    if (pct != null) pctLabel = ` <small style="opacity:.7">${Math.floor(pct)}%</small>`;
   }
 
   let eta = '';
@@ -1173,14 +1257,18 @@ function renderStatus(status, f) {
       eta = `<div class="row-eta">finalizando…</div>`;
     }
   }
-  return `<span class="status-badge ${s.cls}" role="img" aria-label="${s.label}"${extra}>
-    <span class="status-dot"></span>${s.label}${pctLabel}
+  return `<span class="status-badge ${s.cls}" role="img" aria-label="${label}"${extra}>
+    <span class="status-dot"></span>${label}${pctLabel}
   </span>${eta}`;
 }
 
 // Signature used to decide whether a given row needs DOM work
 function _rowSignature(f) {
-  return [f.id, f.status, f.name, f.date, f.dur, f.mode, f.folder || '', selected.has(f.id) ? '1' : '0'].join('|');
+  return [
+    f.id, f.status, f.name, f.date, f.dur, f.mode, f.folder || '',
+    f.source || '', f.has_original ? '1' : '0',
+    selected.has(f.id) ? '1' : '0',
+  ].join('|');
 }
 
 // Track last-rendered signatures so we can skip rebuilds when nothing changed.
@@ -1193,7 +1281,17 @@ function _buildRowInner(f) {
           ${selected.has(f.id)?'checked':''}
           onclick="handleCheckboxClick('${jsAttr(f.id)}', this, event)" />
       </td>
-      <td><div class="file-name">${esc(f.name)}</div></td>
+      <td>
+        <div class="file-name">${esc(f.name)}</div>
+        <div class="file-tags">
+          ${f.source === 'url'
+            ? `<span class="ftag ftag-url" title="Adicionado via URL (yt-dlp)"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>URL</span>`
+            : `<span class="ftag ftag-upload" title="Adicionado por upload"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Upload</span>`}
+          ${f.has_original
+            ? `<span class="ftag ftag-orig-ok" title="O arquivo de áudio/vídeo original ainda está em uploads/"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>Original disponível</span>`
+            : `<span class="ftag ftag-orig-gone" title="Arquivo original foi apagado — a transcrição continua disponível"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>Original apagado</span>`}
+        </div>
+      </td>
       <td class="col-date"><div class="file-date">${esc(f.date)}</div></td>
       <td class="col-dur"><div class="file-dur">${esc(f.dur)}</div></td>
       <td class="col-mode"><span class="mode-badge">${esc(f.mode)}</span></td>
@@ -1236,6 +1334,12 @@ function _buildRowInner(f) {
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
               Baixar JSON
             </div>
+            ${f.has_original ? `
+            <div class="dd-sep"></div>
+            <div class="dd-item" role="menuitem" tabindex="-1" onclick="dlOriginalMedia('${jsAttr(f.file)}')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+              Baixar arquivo original (áudio/vídeo)
+            </div>` : ''}
             <div class="dd-sep"></div>` : ''}
             <div class="dd-item" role="menuitem" tabindex="-1" onclick="promptMoveToFolder('${jsAttr(f.id)}')">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
@@ -1484,7 +1588,7 @@ document.addEventListener('keydown', e => {
     // close the modal/viewer/etc stacked behind it.
     const dialog = document.getElementById('dialog-overlay');
     if (dialog && dialog.classList.contains('open')) { _dialogCancel(); return; }
-    closeAllDDs(); closeModal(); closeViewer(); closeFolderPicker(); closeSidebar();
+    closeAllDDs(); closeModal(); closeViewer(); closeFolderPicker(); closeSidebar(); closeSettings();
   }
 });
 
@@ -1525,6 +1629,35 @@ function viewError(id) {
   switchViewerTab('text');
   document.getElementById('viewer-overlay').classList.add('open');
   document.body.style.overflow = 'hidden';
+}
+
+// Download the original audio/video file tied to a transcription.
+// Same backend endpoint used by the Media Library tab. Probes existence with
+// a tiny Range GET so we can show a clear toast if the user previously cleaned
+// the original (the 7-day cleanup deletes the upload but keeps the transcription).
+async function dlOriginalMedia(filename) {
+  closeAllDDs();
+  if (!filename) return;
+  try {
+    const probe = await fetch(`/api/download-media/${encodeURIComponent(filename)}`,
+                              { headers: { 'Range': 'bytes=0-0' } });
+    // 200 = ok, 206 = partial content (Range honored), both mean file exists
+    if (probe.status !== 200 && probe.status !== 206) {
+      showToast(
+        probe.status === 404
+          ? 'Arquivo original não está mais disponível (foi apagado da Biblioteca).'
+          : 'Não foi possível baixar o arquivo original.',
+        'error'
+      );
+      probe.body?.cancel?.();
+      return;
+    }
+    probe.body?.cancel?.();
+  } catch {
+    showToast('Erro de rede ao verificar o arquivo.', 'error');
+    return;
+  }
+  window.location = `/api/download-media/${encodeURIComponent(filename)}`;
 }
 
 function dlFile(id, fmt) {
@@ -1673,6 +1806,11 @@ async function deleteSelected() {
 //  UPLOAD MODAL
 // ═══════════════════════════════════════════════════════════════
 function openModal(tab = 'file') {
+  // Reset BOTH mode-switches to the default ("transcribe") on every open so
+  // the user doesn't inherit a previous session's "Apenas baixar" selection.
+  document.querySelectorAll('#overlay .mode-opt').forEach(b => {
+    b.setAttribute('aria-checked', String(b.dataset.mode === 'transcribe'));
+  });
   switchTab(tab);
   _populateFolderSelect();
   document.getElementById('overlay').classList.add('open');
@@ -1716,7 +1854,7 @@ function handleOverlayClick(e) {
 }
 
 function switchTab(tab) {
-  ['file', 'url'].forEach(t => {
+  ['file', 'url', 'batch'].forEach(t => {
     const selected = t === tab;
     const btn = document.getElementById('tab-' + t);
     if (!btn) return;
@@ -1725,18 +1863,29 @@ function switchTab(tab) {
     document.getElementById('content-' + t).style.display = selected ? '' : 'none';
   });
 
+  // Apply mode for the new tab — reads from the .mode-switch cards (file is always transcribe)
+  setModalMode(tab === 'file' ? 'transcribe'
+              : (document.querySelector(`#content-${tab} .mode-opt[aria-checked="true"]`)?.dataset.mode || 'transcribe'));
+
+  // Visibility of the old #download-only-btn (kept as no-op for safety; the
+  // single transcribe-btn now handles both actions via setModalMode's label).
   const dlBtn = document.getElementById('download-only-btn');
-  if (dlBtn) dlBtn.style.display = tab === 'url' ? 'block' : 'none';
+  if (dlBtn) dlBtn.style.display = 'none';
 
   const txBtn = document.getElementById('transcribe-btn');
-  if (txBtn) txBtn.style.display = 'block';
+  if (txBtn) {
+    txBtn.style.display = 'block';
+    if (tab === 'file') {
+      txBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>TRANSCREVER';
+    }
+  }
 }
 
 // Roving-tabindex keyboard handler for tablists (ArrowLeft/Right/Home/End).
 // Group = 'main' for the page tabs, 'modal' for the upload modal tabs.
 const _TABLIST_GROUPS = {
   main:  ['main-tab-transcriptions', 'main-tab-media'],
-  modal: ['tab-file', 'tab-url'],
+  modal: ['tab-file', 'tab-url', 'tab-batch'],
 };
 function onTablistKey(e, group) {
   const ids = _TABLIST_GROUPS[group];
@@ -1820,6 +1969,202 @@ function removeFile() {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  BATCH IMPORT — CSV / TXT planilha → muitas URLs de uma vez
+// ═══════════════════════════════════════════════════════════════
+const _URL_RE = /\bhttps?:\/\/[^\s,"'<>() ]+/g;
+
+// Detects URLs from arbitrary text (CSV, TSV, TXT, paste). Returns deduped list
+// preserving order. Strips surrounding quotes/whitespace that spreadsheets add.
+function _extractUrlsFromText(text) {
+  if (!text) return [];
+  const matches = text.match(_URL_RE) || [];
+  const seen = new Set();
+  const out = [];
+  for (const m of matches) {
+    // CSV often wraps URLs in quotes — match doesn't include them but trailing
+    // punctuation can sneak in. Trim common offenders.
+    const cleaned = m.replace(/[)\]}>,;.'"]+$/g, '');
+    if (cleaned && !seen.has(cleaned)) { seen.add(cleaned); out.push(cleaned); }
+  }
+  return out;
+}
+
+function _parseBatchUrls() {
+  // Source of truth: textarea (file uploads populate it, paste is direct)
+  const text = document.getElementById('batch-urls-input')?.value || '';
+  return _extractUrlsFromText(text);
+}
+
+function updateBatchCount() {
+  const urls = _parseBatchUrls();
+  const summary = document.getElementById('batch-summary');
+  const count   = document.getElementById('batch-count');
+  const extra   = document.getElementById('batch-extra');
+  if (!summary || !count) return;
+  if (!urls.length) { summary.style.display = 'none'; return; }
+  summary.style.display = 'block';
+  count.textContent = urls.length;
+  // Show a hint with the first host so the user knows we parsed correctly
+  try {
+    const hosts = new Map();
+    for (const u of urls) {
+      const h = new URL(u).hostname;
+      hosts.set(h, (hosts.get(h) || 0) + 1);
+    }
+    const top = [...hosts.entries()].sort((a,b) => b[1] - a[1]).slice(0, 3);
+    extra.textContent = ' · ' + top.map(([h,c]) => `${c}× ${h}`).join(', ');
+  } catch { extra.textContent = ''; }
+}
+
+async function handleBatchFile(fileList) {
+  const file = fileList && fileList[0];
+  if (!file) return;
+  // CSV/TXT/TSV — read as text; URLs extracted regardless of structure
+  if (file.size > 20 * 1024 * 1024) {
+    showToast('Arquivo > 20 MB — exporte só a coluna de URLs.', 'error');
+    return;
+  }
+  try {
+    const text = await file.text();
+    const urls = _extractUrlsFromText(text);
+    if (!urls.length) {
+      showToast('Nenhuma URL http(s):// encontrada no arquivo.', 'error');
+      return;
+    }
+    document.getElementById('batch-urls-input').value = urls.join('\n');
+    updateBatchCount();
+    showToast(`${urls.length} URLs carregadas de "${file.name}"`, 'success');
+  } catch {
+    showToast('Não consegui ler o arquivo.', 'error');
+  }
+}
+
+function handleBatchDragOver(e) { e.preventDefault(); document.getElementById('batch-dropzone').classList.add('drag-over'); }
+function handleBatchDragLeave()  { document.getElementById('batch-dropzone').classList.remove('drag-over'); }
+function handleBatchDrop(e) {
+  e.preventDefault();
+  document.getElementById('batch-dropzone').classList.remove('drag-over');
+  if (e.dataTransfer.files.length) handleBatchFile(e.dataTransfer.files);
+}
+
+// Returns the active modal tab name ('file' | 'url' | 'batch') by reading
+// the seg-tab buttons inside the upload overlay. Used by mode logic.
+function _activeModalTab() {
+  return document.querySelector('#overlay .seg-tab[aria-selected="true"]')
+                 ?.id?.replace('tab-', '') || 'file';
+}
+
+// Read the currently-selected mode for the active tab. Arquivo is always
+// 'transcribe' (no download choice — the file is already local).
+function _currentModalMode() {
+  const tab = _activeModalTab();
+  if (tab === 'file') return 'transcribe';
+  const opt = document.querySelector(`#content-${tab} .mode-opt[aria-checked="true"]`);
+  return opt?.dataset.mode || 'transcribe';
+}
+
+// Switch between 'transcribe' and 'download' for the active URL/Lote tab.
+// Updates the visual card selection, hides/shows mode-specific option panels,
+// hides transcribe-only fields (model/lang/folder/advanced) in download mode,
+// and relabels the primary action button.
+function setModalMode(mode) {
+  const tab = _activeModalTab();
+  if (tab === 'file') mode = 'transcribe';  // forced — see above
+
+  // 1. Update the cards in THIS tab's .mode-switch
+  document.querySelectorAll(`#content-${tab} .mode-opt`).forEach(btn => {
+    btn.setAttribute('aria-checked', String(btn.dataset.mode === mode));
+  });
+
+  // 2. Toggle mode-specific options
+  const urlDl   = document.getElementById('url-dl-options');
+  const batchDl = document.getElementById('batch-dl-options');
+  if (urlDl)   urlDl.style.display   = (tab === 'url'   && mode === 'download') ? 'block' : 'none';
+  if (batchDl) batchDl.style.display = (tab === 'batch' && mode === 'download') ? 'block' : 'none';
+
+  // 3. Model/lang/folder/advanced only matter when actually transcribing
+  const transcribeFields = document.getElementById('transcribe-fields');
+  if (transcribeFields) transcribeFields.style.display = (mode === 'download') ? 'none' : '';
+
+  // 4. Relabel the primary action button to match what's about to happen
+  const txBtn = document.getElementById('transcribe-btn');
+  if (txBtn) {
+    const labels = {
+      'file|transcribe':   'TRANSCREVER',
+      'url|transcribe':    'TRANSCREVER',
+      'url|download':      'BAIXAR',
+      'batch|transcribe':  'TRANSCREVER LOTE',
+      'batch|download':    'BAIXAR LOTE',
+    };
+    const isDownload = mode === 'download';
+    const icon = isDownload
+      ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>'
+      : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>';
+    txBtn.innerHTML = icon + (labels[`${tab}|${mode}`] || 'TRANSCREVER');
+  }
+}
+
+// Back-compat shim — old call sites used updateBatchMode(); now route through setModalMode
+function updateBatchMode() { setModalMode(_currentModalMode()); }
+
+// Mirror of updateQualityOptions for the batch tab's own selects.
+function updateBatchQualityOptions() {
+  const type = document.getElementById('batch-media-type')?.value;
+  const q    = document.getElementById('batch-quality');
+  if (!q) return;
+  q.innerHTML = type === 'video'
+    ? `<option value="best">Melhor (Máxima)</option>
+       <option value="1080p">1080p</option>
+       <option value="720p">720p</option>
+       <option value="480p">480p</option>`
+    : `<option value="best">Melhor Original</option>
+       <option value="worst">Menor Espaço</option>`;
+}
+
+async function dispatchBatch(urls, model, language, taskType, filterFillers, folder) {
+  // Mode now comes from the visual cards (.mode-opt), not a hidden checkbox.
+  const downloadOnly = (document.querySelector('#content-batch .mode-opt[aria-checked="true"]')?.dataset.mode === 'download');
+  const mediaType    = document.getElementById('batch-media-type')?.value || 'video';
+  const quality      = document.getElementById('batch-quality')?.value    || 'best';
+  const verb         = downloadOnly ? 'downloads' : 'transcrições';
+  showToast(`Enfileirando ${urls.length} ${verb}…`, '');
+  try {
+    const fd = new FormData();
+    fd.append('urls',           urls.join('\n'));
+    fd.append('model',          model);
+    fd.append('language',       language);
+    fd.append('task',           taskType);
+    fd.append('filter_fillers', filterFillers ? 'true' : 'false');
+    fd.append('folder',         folder);
+    fd.append('transcribe',     downloadOnly ? 'false' : 'true');
+    fd.append('media_type',     mediaType);
+    fd.append('quality',        quality);
+    const r = await fetch('/api/transcribe-batch', { method: 'POST', body: fd });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) { showToast(data.detail || 'Erro ao enfileirar lote.', 'error'); return; }
+    showToast(`${data.submitted}/${data.total} ${verb} enfileirad${verb.endsWith('s') ? 'as' : 'os'}!`, 'success');
+    // Clear the textarea so the user knows it landed
+    const ta = document.getElementById('batch-urls-input');
+    if (ta) { ta.value = ''; updateBatchCount(); }
+    if (downloadOnly) {
+      // Download-only items live in the Media Library tab, not Transcriptions
+      switchMainTab('media');
+      if (typeof loadMedia === 'function') loadMedia();
+    } else {
+      await loadHistory();
+      // Hook polling for the first handful so the user gets immediate visual feedback
+      // (the rest will be picked up by resumeActivePolling on next tick / auto-sync).
+      for (const tid of (data.task_ids || []).slice(0, 5)) {
+        const f = files.find(x => x.task_id === tid);
+        if (f) pollProgressForRow(tid, f.file);
+      }
+    }
+  } catch {
+    showToast('Erro de rede ao enfileirar lote.', 'error');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  ADVANCED
 // ═══════════════════════════════════════════════════════════════
 function toggleAdvanced() {
@@ -1843,15 +2188,36 @@ async function startTranscription() {
   const folder = document.getElementById('folder-select')?.value || '';
 
   if (activeTab === 'url') {
+    const mode = _currentModalMode();
+    const urlVal = document.getElementById('url-input')?.value?.trim();
+    if (!urlVal) { showToast('Cole uma URL válida.', 'error'); return; }
+
+    if (mode === 'download') {
+      // Existing single-URL download-only path (it closes the modal itself).
+      await startDownloadOnly();
+      return;
+    }
+    // Transcribe path
     const model         = document.getElementById('mode-select').value;
     const language      = document.getElementById('lang-select').value;
     const taskType      = document.getElementById('task-select').value;
     const filterFillers = document.getElementById('filter-toggle').checked;
-
-    const urlVal = document.getElementById('url-input')?.value?.trim();
-    if (!urlVal) { showToast('Cole uma URL do YouTube válida.', 'error'); return; }
     closeModal();
     await sendUrl(urlVal, model, language, taskType, filterFillers, folder);
+    return;
+  }
+
+  if (activeTab === 'batch') {
+    const urls = _parseBatchUrls();
+    if (!urls.length) { showToast('Nenhuma URL detectada — selecione um arquivo ou cole URLs.', 'error'); return; }
+    // model/lang/folder only matter for transcribe mode; dispatchBatch reads the
+    // mode from the cards and skips these for download-only.
+    const model         = document.getElementById('mode-select')?.value   || 'turbo';
+    const language      = document.getElementById('lang-select')?.value   || 'pt';
+    const taskType      = document.getElementById('task-select')?.value   || 'transcribe';
+    const filterFillers = document.getElementById('filter-toggle')?.checked || false;
+    closeModal();
+    await dispatchBatch(urls, model, language, taskType, filterFillers, folder);
     return;
   }
 
@@ -1954,27 +2320,37 @@ function pollProgressForRow(task_id, filename) {
       if (!res.ok) { _stopPoll(task_id); return; }
       const data = await res.json();
 
-      const pct  = data.progress || 0;
-
-      // Update row status badge live (the only progress indicator now)
-      _updateRowStatus(filename, data.status, pct);
+      // Push phase + phase_progress + overall progress to the row state, so the
+      // badge can show "Baixando 35%" → "Transcrevendo 67%" → "Salvando…".
+      _updateRowStatus(filename, data.status, data.progress || 0,
+                       data.phase, data.phase_progress);
 
       if (data.status === 'done') {
         _stopPoll(task_id);
         hideProgress();
         await loadHistory();
         await loadStats();
-        showToast(`"${data.filename || filename}" transcrito com sucesso!`, 'success');
+        if (typeof loadMedia === 'function') loadMedia();
+        // Download-only tasks don't have a history entry — distinguish here so
+        // the toast matches what actually happened.
+        const isTranscribe = files.some(f => f.file === filename);
+        showToast(
+          isTranscribe ? `"${data.filename || filename}" transcrito com sucesso!`
+                       : 'Download concluído.',
+          'success'
+        );
       } else if (data.status === 'error') {
         _stopPoll(task_id);
         hideProgress();
         await loadHistory(); // reload so error message appears in row
-        const errMsg = data.error || 'Falha na transcrição';
+        if (typeof loadMedia === 'function') loadMedia();
+        const errMsg = data.error || 'Falha';
         showToast(`Erro em "${filename}": ${errMsg}`, 'error');
       } else if (data.status === 'cancelled') {
         _stopPoll(task_id);
         hideProgress();
         await loadHistory();
+        if (typeof loadMedia === 'function') loadMedia();
       }
     } catch { /* ignore network blip */ }
   }, 800);
@@ -1987,16 +2363,28 @@ function _stopPoll(task_id) {
   }
 }
 
-function _updateRowStatus(filename, status, pct) {
-  // Persist live progress + status on the in-memory entry so EVERY render path
+function _updateRowStatus(filename, status, pct, phase, phasePct) {
+  // Persist live progress + phase on the in-memory entry so EVERY render path
   // (this poll, the 5s ETA tick, and full re-renders) produces identical output —
   // the % and ETA stay visible the whole time instead of flickering.
   const f = files.find(x => x.file === filename);
-  if (f) { f.status = status; f._progress = pct; }
+  if (f) {
+    f.status = status;
+    f._progress = pct;
+    if (phase) f._phase = phase;
+    if (typeof phasePct === 'number') f._phaseProgress = phasePct;
+  }
   const tr = document.querySelector(`#files-tbody tr[data-id="${CSS.escape(filename)}"]`);
-  if (!tr) return;
-  const cell = tr.querySelector('.col-status');
-  if (cell) cell.innerHTML = renderStatus(status, f || { _progress: pct });
+  if (tr) {
+    const cell = tr.querySelector('.col-status');
+    if (cell) cell.innerHTML = renderStatus(status, f || { _progress: pct, _phase: phase, _phaseProgress: phasePct });
+  }
+  // Mirror to the media library tab — download-only tasks live there.
+  const mediaTr = document.querySelector(`#media-tbody tr[data-id="${CSS.escape(filename)}"]`);
+  if (mediaTr) {
+    const mcell = mediaTr.querySelector('.col-status');
+    if (mcell) mcell.innerHTML = renderStatus(status, f || { _progress: pct, _phase: phase, _phaseProgress: phasePct });
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -2073,6 +2461,98 @@ function showToast(msg, type = '') {
   t.appendChild(span);
   area.appendChild(t);
   setTimeout(() => t.remove(), 4500);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CLEANUP — warn about audio/video files older than 7 days
+// ═══════════════════════════════════════════════════════════════
+// Retention rule: source audio/video files in .whisper_data/uploads/ may be
+// flagged for deletion after 7 days. Transcriptions are NEVER touched by this
+// flow — only user-initiated transcription deletion cascades to the upload.
+const _CLEANUP_RETENTION_DAYS = 7;
+const _CLEANUP_DISMISS_KEY    = 'wt:cleanup-dismissed-until';
+let _cleanupOldItems = []; // cached list from server for the "Apagar agora" action
+
+function _formatBytes(bytes) {
+  if (!bytes || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  return `${(bytes / Math.pow(1024, i)).toFixed(i ? 1 : 0)} ${units[i]}`;
+}
+
+async function checkOldMediaCleanup() {
+  // Skip if the user dismissed the banner recently (24h cooldown)
+  try {
+    const until = parseFloat(localStorage.getItem(_CLEANUP_DISMISS_KEY) || '0');
+    if (until && Date.now() < until) return;
+  } catch { /* localStorage may be blocked in some contexts — proceed anyway */ }
+
+  try {
+    const res = await fetch(`/api/media/older-than?days=${_CLEANUP_RETENTION_DAYS}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.count) return;
+
+    _cleanupOldItems = data.items || [];
+    const headline = document.getElementById('cleanup-headline');
+    const sizeEl   = document.getElementById('cleanup-size');
+    if (headline) {
+      headline.textContent = `${data.count} ${data.count === 1 ? 'arquivo' : 'arquivos'} `
+        + `de áudio/vídeo com mais de ${_CLEANUP_RETENTION_DAYS} dias`;
+    }
+    if (sizeEl) sizeEl.textContent = _formatBytes(data.total_bytes);
+    document.getElementById('cleanup-banner').style.display = 'flex';
+  } catch { /* network blip — just don't show the banner this time */ }
+}
+
+function dismissCleanupBanner() {
+  // Dismiss for 24h so the user isn't nagged every page refresh.
+  try {
+    localStorage.setItem(_CLEANUP_DISMISS_KEY, String(Date.now() + 24 * 3600 * 1000));
+  } catch {}
+  const banner = document.getElementById('cleanup-banner');
+  if (banner) banner.style.display = 'none';
+}
+
+async function runOldMediaCleanup() {
+  if (!_cleanupOldItems.length) { dismissCleanupBanner(); return; }
+  const totalBytes = _cleanupOldItems.reduce((s, x) => s + (x.size_bytes || 0), 0);
+  const ok = await showConfirm({
+    title: `Apagar ${_cleanupOldItems.length} arquivos antigos?`,
+    message: `Vai liberar ~${_formatBytes(totalBytes)} de espaço. `
+           + `Apenas os arquivos originais de áudio/vídeo serão removidos — `
+           + `as transcrições continuam disponíveis para visualização e download.`,
+    confirmText: 'Apagar arquivos',
+    cancelText:  'Cancelar',
+    danger: true,
+  });
+  if (!ok) return;
+
+  const btn = document.getElementById('cleanup-confirm-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Apagando…'; }
+  try {
+    const fd = new FormData();
+    fd.append('files', _cleanupOldItems.map(x => x.file).join(','));
+    const res = await fetch('/api/media/cleanup', { method: 'POST', body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast(data.detail || 'Erro ao apagar arquivos.', 'error');
+      return;
+    }
+    showToast(
+      `${data.deleted} ${data.deleted === 1 ? 'arquivo apagado' : 'arquivos apagados'}` +
+      ` — ${_formatBytes(data.freed_bytes)} liberados.`,
+      'success'
+    );
+    document.getElementById('cleanup-banner').style.display = 'none';
+    _cleanupOldItems = [];
+    // Refresh media list in case the user has the Library tab open
+    if (typeof loadMedia === 'function') loadMedia();
+  } catch {
+    showToast('Erro de rede ao apagar arquivos.', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Apagar agora'; }
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -2174,6 +2654,29 @@ init();
         const res = await fetch('/api/media-history');
         const media = await res.json();
         renderMedia(media);
+        _ensureMediaProgressPolling(media);
+      } catch { /* ignore */ }
+    }
+
+    // For any media row whose status is "processing" (mid-download), look up
+    // its task_id via /api/active-tasks and start the standard row poller —
+    // the badge will then live-update with "Baixando X%" until done/error/cancelled.
+    async function _ensureMediaProgressPolling(mediaList) {
+      const active = (mediaList || []).filter(m => m.status === 'processing' || m.status === 'queued');
+      if (!active.length) return;
+      try {
+        const res = await fetch('/api/active-tasks');
+        if (!res.ok) return;
+        const tasks = await res.json();
+        // Index tasks by filename for O(1) lookup
+        const byFile = new Map();
+        for (const [tid, t] of Object.entries(tasks)) {
+          if (t.filename) byFile.set(t.filename, tid);
+        }
+        for (const m of active) {
+          const tid = byFile.get(m.file);
+          if (tid && !_activePolls[tid]) pollProgressForRow(tid, m.file);
+        }
       } catch { /* ignore */ }
     }
 
@@ -2194,6 +2697,23 @@ init();
       data.forEach(f => {
         const tr = document.createElement('tr');
         tr.dataset.id = f.file;
+        const isActive = (f.status === 'processing' || f.status === 'queued');
+        // Show cancel option for in-flight downloads; the regular file-management
+        // items only make sense for completed media.
+        const actionItems = isActive ? `
+                <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="cancelMediaDownload('${jsAttr(f.file)}')">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                  Cancelar download
+                </div>` : `
+                <div class="dd-item" role="menuitem" tabindex="-1" onclick="dlMediaFile('${jsAttr(f.file)}')">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  Baixar Original para o PC
+                </div>
+                <div class="dd-sep"></div>
+                <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="deleteMediaFile('${jsAttr(f.file)}')">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+                  Excluir Mídia Hospedada
+                </div>`;
         tr.innerHTML = `
           <td></td>
           <td><div class="file-name">${esc(f.name)}</div></td>
@@ -2205,21 +2725,47 @@ init();
               <button type="button" class="dots-btn" aria-label="Ações" aria-haspopup="menu" aria-expanded="false" onclick="toggleDD('media-${jsAttr(f.id)}',this,event)">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="19" r="1" fill="currentColor"/></svg>
               </button>
-              <div class="dropdown" id="dd-media-${esc(f.id)}" role="menu">
-                <div class="dd-item" role="menuitem" tabindex="-1" onclick="dlMediaFile('${jsAttr(f.file)}')">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                  Baixar Original para o PC
-                </div>
-                <div class="dd-sep"></div>
-                <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="deleteMediaFile('${jsAttr(f.file)}')">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
-                  Excluir Mídia Hospedada
-                </div>
+              <div class="dropdown" id="dd-media-${esc(f.id)}" role="menu">${actionItems}
               </div>
             </div>
           </td>`;
         tbody.appendChild(tr);
       });
+    }
+
+    // Cancel a download-only or URL→transcribe task via the same /api/transcribe/{tid}
+    // endpoint (which is task-type agnostic on the backend).
+    async function cancelMediaDownload(filename) {
+      closeAllDDs();
+      try {
+        // Resolve task_id from active tasks (download-only doesn't store task_id in media.json)
+        const res = await fetch('/api/active-tasks');
+        const tasks = await res.json();
+        let taskId = null;
+        for (const [tid, t] of Object.entries(tasks)) {
+          if (t.filename === filename) { taskId = tid; break; }
+        }
+        if (!taskId) {
+          showToast('Tarefa não está mais ativa (já terminou?).', 'error');
+          loadMedia();
+          return;
+        }
+        const ok = await showConfirm({
+          title: 'Cancelar download',
+          message: 'O download em andamento será interrompido. O arquivo parcial é descartado.',
+          confirmText: 'Cancelar download',
+          cancelText: 'Continuar',
+          danger: true,
+        });
+        if (!ok) return;
+        const r = await fetch(`/api/transcribe/${encodeURIComponent(taskId)}`, { method: 'DELETE' });
+        if (!r.ok) { showToast('Não foi possível cancelar.', 'error'); return; }
+        _stopPoll(taskId);
+        await loadMedia();
+        showToast('Download cancelado.', '');
+      } catch {
+        showToast('Erro de rede ao cancelar.', 'error');
+      }
     }
 
     function dlMediaFile(filename) {
