@@ -9,56 +9,31 @@
 </head>
 <body>
 
-<h1 class="sr-only">Whisper Transcritor — Transcrições locais de áudio e vídeo</h1>
+<div class="app-shell">
 
-<div class="page">
+  <!-- ═══ SIDEBAR GLOBAL ═══ -->
+  <aside class="app-sidebar" id="app-sidebar" aria-label="Navegação principal">
+    <div class="app-brand">
+      <div class="app-brand-mark" aria-hidden="true">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="10" x2="4" y2="14"/><line x1="8" y1="6" x2="8" y2="18"/><line x1="12" y1="3" x2="12" y2="21"/><line x1="16" y1="6" x2="16" y2="18"/><line x1="20" y1="10" x2="20" y2="14"/></svg>
+      </div>
+      <span class="app-brand-name">Transcritor</span>
+    </div>
 
-  <!-- Stats Cards -->
-  <div class="stats-row" role="region" aria-label="Estatísticas de uso">
-    <div class="stat-card">
-      <div class="stat-label">Arquivos transcritos</div>
-      <div class="stat-value" id="stat-count">—</div>
-      <div class="stat-sub">total acumulado</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Horas transcritas</div>
-      <div class="stat-value" id="stat-hours">—</div>
-      <div class="stat-sub">total acumulado</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Tarefas na fila</div>
-      <div class="stat-value" id="stat-queue">—</div>
-      <div class="stat-sub" id="stat-queue-sub">aguardando ou processando</div>
-    </div>
-  </div>
-
-  <!-- Cleanup banner: mídias antigas (>7 dias) — fica oculto por padrão; mostrado por checkOldMediaCleanup() -->
-  <div class="cleanup-banner" id="cleanup-banner" role="status" aria-live="polite" style="display:none">
-    <svg class="cleanup-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-    <div class="cleanup-text">
-      <strong id="cleanup-headline">— vídeos/áudios com mais de 7 dias</strong>
-      <span>Ocupam <span id="cleanup-size">—</span> em disco. As <strong>transcrições continuam salvas</strong> — só os arquivos originais de áudio/vídeo serão apagados.</span>
-    </div>
-    <div class="cleanup-actions">
-      <button type="button" class="btn btn-ghost" onclick="dismissCleanupBanner()">Lembrar depois</button>
-      <button type="button" class="btn btn-primary" onclick="runOldMediaCleanup()" id="cleanup-confirm-btn">Apagar agora</button>
-    </div>
-  </div>
-
-  <!-- Main Tabs -->
-  <div class="seg-tabs" style="margin-bottom: 24px; max-width: 400px; margin-left: auto; margin-right: auto;" role="tablist" aria-label="Visualização">
-    <button type="button" id="main-tab-transcriptions" class="seg-tab" role="tab" aria-selected="true" aria-controls="card-transcriptions" tabindex="0" onclick="switchMainTab('transcriptions')" onkeydown="onTablistKey(event, 'main')">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right:6px; margin-top:-2px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-      Transcrições
-    </button>
-    <button type="button" id="main-tab-media" class="seg-tab" role="tab" aria-selected="false" aria-controls="card-media" tabindex="-1" onclick="switchMainTab('media')" onkeydown="onTablistKey(event, 'main')">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right:6px; margin-top:-2px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-      Biblioteca de Mídia
-    </button>
-  </div>
-
-  <!-- Files Card + Sidebar -->
-  <div class="card-with-sidebar" id="card-transcriptions" role="tabpanel" aria-labelledby="main-tab-transcriptions">
+    <nav class="app-nav" role="tablist" aria-label="Seções">
+      <button type="button" id="main-tab-transcriptions" class="app-nav-item" role="tab" aria-selected="true" aria-controls="card-transcriptions" tabindex="0" onclick="switchMainTab('transcriptions')" onkeydown="onTablistKey(event, 'main')">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+        Transcrições
+      </button>
+      <button type="button" id="main-tab-media" class="app-nav-item" role="tab" aria-selected="false" aria-controls="card-media" tabindex="-1" onclick="switchMainTab('media')" onkeydown="onTablistKey(event, 'main')">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Biblioteca de Mídia
+      </button>
+      <button type="button" class="app-nav-item" onclick="openSettings()">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        Configurações
+      </button>
+    </nav>
 
     <!-- Sidebar de pastas -->
     <aside class="folder-sidebar" id="folder-sidebar" aria-label="Pastas">
@@ -73,6 +48,79 @@
         <!-- populated by renderFolderTree() -->
       </div>
     </aside>
+  </aside>
+
+  <!-- ═══ COLUNA PRINCIPAL ═══ -->
+  <div class="app-main">
+
+    <!-- Header -->
+    <header class="topbar">
+      <button type="button" class="topbar-menu" onclick="openSidebar()" aria-label="Abrir menu">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+      <div class="topbar-head">
+        <div class="breadcrumb"><span class="bc-home">Início</span> · <span id="breadcrumb-folder">Todas</span></div>
+        <h1 class="topbar-title" id="page-title">Transcrições</h1>
+      </div>
+      <div class="topbar-search" role="search">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="search" id="topbar-search-input" placeholder="Buscar..." aria-label="Buscar arquivos" oninput="filterFiles(this.value)" />
+      </div>
+      <button type="button" class="topbar-cta" onclick="openModal('file')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+        Transcrever
+      </button>
+    </header>
+
+    <!-- Conteúdo -->
+    <div class="app-content">
+
+    <!-- Stats Cards -->
+    <div class="stats-row" role="region" aria-label="Estatísticas de uso">
+      <div class="stat-card">
+        <div class="stat-icon stat-icon-blue" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        </div>
+        <div class="stat-body">
+          <div class="stat-value" id="stat-count">—</div>
+          <div class="stat-label">Arquivos transcritos</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon stat-icon-violet" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>
+        </div>
+        <div class="stat-body">
+          <div class="stat-value" id="stat-hours">—</div>
+          <div class="stat-label">Horas transcritas</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon stat-icon-green" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        </div>
+        <div class="stat-body">
+          <div class="stat-value" id="stat-queue">—</div>
+          <div class="stat-label">Tarefas na fila</div>
+          <div class="stat-sub" id="stat-queue-sub">aguardando ou processando</div>
+        </div>
+      </div>
+    </div>
+
+  <!-- Cleanup banner: mídias antigas (>7 dias) — fica oculto por padrão; mostrado por checkOldMediaCleanup() -->
+  <div class="cleanup-banner" id="cleanup-banner" role="status" aria-live="polite" style="display:none">
+    <svg class="cleanup-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    <div class="cleanup-text">
+      <strong id="cleanup-headline">— vídeos/áudios com mais de 7 dias</strong> · ocupa <span id="cleanup-size">—</span> — as <strong>transcrições continuam salvas</strong>.
+    </div>
+    <div class="cleanup-actions">
+      <button type="button" class="btn btn-ghost" onclick="dismissCleanupBanner()">Lembrar depois</button>
+      <button type="button" class="btn btn-primary" onclick="runOldMediaCleanup()" id="cleanup-confirm-btn">Apagar agora</button>
+    </div>
+  </div>
+
+    <!-- Files Card -->
+    <div class="card" id="card-transcriptions" role="tabpanel" aria-labelledby="main-tab-transcriptions">
 
     <!-- Card principal (conte\u00fado original) -->
     <div id="card-transcriptions-main" style="display:flex;flex-direction:column;min-width:0;">
@@ -106,18 +154,6 @@
       <div class="card-title">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
         Arquivos recentes
-      </div>
-      <div class="card-actions">
-        <button type="button" class="icon-btn" id="search-toggle" onclick="toggleSearch()" aria-label="Buscar arquivos" aria-expanded="false" title="Buscar">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        </button>
-        <button type="button" class="icon-btn" onclick="openSettings()" aria-label="Configurações" title="Configurações">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        </button>
-        <button type="button" class="transcribe-btn" onclick="openModal('file')" aria-label="Transcrever arquivos">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
-          TRANSCREVER ARQUIVOS
-        </button>
       </div>
     </div>
 
@@ -201,13 +237,10 @@
     </div>
 
     </div><!-- /#card-transcriptions-main -->
-  </div>
+    </div><!-- /#card-transcriptions -->
 
-  <!-- Backdrop da sidebar em mobile -->
-  <div class="sidebar-backdrop" id="sidebar-backdrop" onclick="closeSidebar()" aria-hidden="true"></div>
-
-  <!-- Media Card -->
-  <div class="card" id="card-media" style="display:none;" role="tabpanel" aria-labelledby="main-tab-media">
+    <!-- Media Card -->
+    <div class="card" id="card-media" style="display:none;" role="tabpanel" aria-labelledby="main-tab-media">
     <div class="card-header">
       <div class="card-title">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -243,8 +276,14 @@
         </button>
       </div>
     </div>
-  </div>
-</div>
+  </div><!-- /#card-media -->
+
+    </div><!-- /.app-content -->
+  </div><!-- /.app-main -->
+</div><!-- /.app-shell -->
+
+<!-- Backdrop do drawer (sidebar global no mobile) -->
+<div class="sidebar-backdrop" id="sidebar-backdrop" onclick="closeSidebar()" aria-hidden="true"></div>
 
 <!-- ═══════════════════════════════ UPLOAD MODAL ═══════════════ -->
 <div class="overlay" id="overlay" role="dialog" aria-modal="true" aria-labelledby="modal-title" onclick="handleOverlayClick(event)">
@@ -464,10 +503,22 @@
       <!-- Destination folder -->
       <div>
         <label class="field-label" for="folder-select">Salvar na pasta</label>
-        <select id="folder-select" class="select" aria-label="Pasta de destino">
+        <select id="folder-select" class="select" aria-label="Pasta de destino" onchange="onFolderSelectChange()">
           <option value="">Sem pasta (raiz)</option>
           <!-- options populated by _populateFolderSelect() -->
+          <option value="__new__">➕ Criar nova pasta…</option>
         </select>
+        <!-- Aparece só quando "Criar nova pasta…" está selecionado. A pasta é
+             criada automaticamente ao transcrever (o backend cria a árvore). -->
+        <div id="new-folder-wrap" style="display:none; margin-top:8px">
+          <input type="text" id="new-folder-input" class="select" autocomplete="off"
+                 placeholder="Nome da nova pasta (ex.: Clientes/Adriana)"
+                 aria-label="Nome da nova pasta"
+                 oninput="validateNewFolderInput()"/>
+          <p id="new-folder-hint" style="font-size:12px;color:var(--slate-600);margin-top:6px">
+            Use <code>/</code> para criar subpastas. A pasta será criada ao transcrever.
+          </p>
+        </div>
       </div>
 
       <!-- Advanced -->
