@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Whisper Transcritor — FastAPI + HTML frontend"""
 from __future__ import annotations
-import os, json, shutil, threading, uuid, datetime, re, zipfile, time
+import os, json, shutil, threading, uuid, datetime, re, zipfile, time, tempfile, ipaddress
+from urllib.parse import urlparse
+from contextlib import asynccontextmanager
 
 # yt-dlp's YouTube extractor needs the Deno runtime (via yt-dlp-ejs) to solve
 # the `n` challenge. Deno is usually installed at ~/.deno/bin/deno but that's
@@ -17,9 +19,10 @@ try:
     YT_DLP_OK = True
 except ImportError:
     YT_DLP_OK = False
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form, BackgroundTasks
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, BackgroundTasks, Request
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 import uvicorn
 import tqdm
 
@@ -36,6 +39,108 @@ STATIC_DIR   = os.path.join(SCRIPT_DIR, "static")
 
 for d in (RESULTS_DIR, UPLOAD_DIR, STATIC_DIR):
     os.makedirs(d, exist_ok=True)
+
+# ── Limits & security config ───────────────────────────────────
+# Max upload size (streamed to disk in chunks — never buffered whole in RAM).
+# Override with WHISPER_MAX_UPLOAD_MB. Default 4 GB covers long videos.
+MAX_UPLOAD_BYTES = int(os.environ.get("WHISPER_MAX_UPLOAD_MB", "4096")) * 1024 * 1024
+UPLOAD_CHUNK     = 4 * 1024 * 1024  # 4 MiB streaming chunk
+
+# Hosts allowed to receive the Chrome profile's cookies during a yt-dlp download.
+# Cookies are attached ONLY when the target URL's host matches one of these,
+# so a random/malicious URL can never harvest the user's authenticated
+# Google/YouTube cookies (audit finding #1).
+COOKIE_ALLOWED_SUFFIXES = (
+    "youtube.com", "youtu.be", "youtube-nocookie.com",
+    "google.com", "googlevideo.com", "ggpht.com",
+)
+
+# Same-origin hosts accepted for state-changing requests (CSRF guard, finding #3).
+ALLOWED_ORIGIN_HOSTS = {"127.0.0.1:7860", "localhost:7860"}
+
+def _atomic_write_json(path: str, data) -> None:
+    """Write JSON to `path` atomically: dump to a temp file in the same dir,
+    fsync, then os.replace (atomic on POSIX). A crash mid-write can no longer
+    truncate history.json / media.json / folders.json (audit finding #6)."""
+    d = os.path.dirname(path) or "."
+    os.makedirs(d, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".tmp_", suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try: os.remove(tmp)
+        except OSError: pass
+        raise
+
+def _safe_remove(path: str) -> None:
+    """Best-effort file removal (used as a response BackgroundTask to delete
+    temp ZIPs after they've been streamed to the client — finding #4)."""
+    try: os.remove(path)
+    except OSError: pass
+
+def _validate_media_url(url: str) -> str:
+    """Validate a user-supplied media URL before handing it to yt-dlp.
+    Only http/https, must have a hostname, and blocks obvious SSRF targets
+    (localhost, link-local, private ranges) — audit finding #10. Returns the
+    trimmed URL or raises HTTPException(400)."""
+    url = (url or "").strip()
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(400, "URL inválida: use http:// ou https://")
+    host = parsed.hostname
+    if not host:
+        raise HTTPException(400, "URL inválida: host ausente")
+    low = host.lower()
+    if low == "localhost" or low.endswith(".local") or low.endswith(".internal"):
+        raise HTTPException(400, "URL não permitida (host interno)")
+    try:
+        ip = ipaddress.ip_address(low)
+        if ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved:
+            raise HTTPException(400, "URL não permitida (endereço interno)")
+    except ValueError:
+        pass  # not a literal IP — a regular hostname, which is fine
+    return url
+
+def _host_allows_cookies(url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    return any(host == s or host.endswith("." + s) for s in COOKIE_ALLOWED_SUFFIXES)
+
+def _build_ydl_opts(url: str, progress_hook, base: dict | None = None) -> dict:
+    """Shared yt-dlp options for every download path (dedups the block that was
+    copied across the transcribe + download-only flows — finding #11). Attaches
+    Chrome cookies ONLY for allowlisted hosts (finding #1)."""
+    opts = {
+        'quiet': True,
+        'nocolor': True,
+        'progress_hooks': [progress_hook],
+        # Bypass YouTube's SABR streaming (yt-dlp#12482) by preferring clients
+        # that still expose progressive URLs; 'web' stays last as fallback.
+        'extractor_args': {'youtube': {'player_client': ['web', 'tv_simply', 'ios', 'mweb']}},
+        'retries': 3,
+    }
+    if _host_allows_cookies(url):
+        # YouTube/Google need login cookies for progressive URLs. Only sent to
+        # allowlisted hosts so cookies never leak to arbitrary domains.
+        opts['cookiesfrombrowser'] = ('chrome',)
+    if base:
+        opts.update(base)
+    return opts
+
+def _cleanup_task_files(task_id: str) -> None:
+    """Best-effort removal of any (partial/.part) files this task wrote to
+    UPLOAD_DIR. Called on download error/cancel so aborted writes don't pile up
+    (audit finding #5)."""
+    try:
+        for f in os.listdir(UPLOAD_DIR):
+            if task_id[:8] in f:
+                try: os.remove(os.path.join(UPLOAD_DIR, f))
+                except OSError: pass
+    except OSError:
+        pass
 
 # ── Model cache ────────────────────────────────────────────────
 _models: dict = {}
@@ -87,8 +192,7 @@ def _save_settings(new: dict) -> dict:
                     continue
                 out[k] = max(1, min(16, v))
         os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
-        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-            json.dump(out, f, ensure_ascii=False, indent=2)
+        _atomic_write_json(SETTINGS_FILE, out)
         _SETTINGS_CACHE = out
     return out
 
@@ -357,8 +461,7 @@ def _save_to_history(filename: str, result: dict, model_name: str,
         }
         history = [h for h in history if h.get("file") != filename]
         history.insert(0, entry)
-        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(history, f, ensure_ascii=False, indent=2)
+        _atomic_write_json(HISTORY_FILE, history)
 
 # ── Media Tracking ─────────────────────────────────────────────
 def _load_media() -> list:
@@ -400,8 +503,7 @@ def _save_media(filename: str, original_name: str, url: str | None = None, is_tr
         media = [m for m in media if m.get("file") != filename]
         media.insert(0, entry)
 
-        with open(MEDIA_FILE, "w", encoding="utf-8") as f:
-            json.dump(media, f, ensure_ascii=False, indent=2)
+        _atomic_write_json(MEDIA_FILE, media)
 
 def _update_history_status(filename: str, status: str,
                            error: str | None = None, **extra):
@@ -416,16 +518,30 @@ def _update_history_status(filename: str, status: str,
                     entry["error"] = error
                 entry.update(extra)
                 break
-        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(history, f, ensure_ascii=False, indent=2)
+        _atomic_write_json(HISTORY_FILE, history)
 
 # ── Task tracking ──────────────────────────────────────────────
 _tasks:      dict = {}
 _tasks_lock        = threading.Lock()
+_TERMINAL_STATES   = ("done", "error", "cancelled")
+_MAX_TERMINAL_TASKS = 300   # cap so _tasks doesn't grow forever (audit finding #8)
+
+def _prune_tasks_locked():
+    """Drop the oldest terminal (done/error/cancelled) tasks once they exceed the
+    cap. Active (queued/processing) tasks are always kept. Relies on dict
+    insertion order — oldest terminal entries are removed first. Caller holds
+    _tasks_lock."""
+    terminal_ids = [tid for tid, t in _tasks.items()
+                    if t.get("status") in _TERMINAL_STATES]
+    excess = len(terminal_ids) - _MAX_TERMINAL_TASKS
+    for tid in terminal_ids[:max(0, excess)]:
+        _tasks.pop(tid, None)
 
 def _set_task(task_id: str, **kw):
     with _tasks_lock:
         _tasks.setdefault(task_id, {}).update(kw)
+        if kw.get("status") in _TERMINAL_STATES:
+            _prune_tasks_locked()
 
 def _get_task(task_id: str) -> dict | None:
     with _tasks_lock:
@@ -501,7 +617,48 @@ def _run_transcription(task_id, file_path, filename, model_name,
             _save_media(filename, _result_base(filename), is_transcribed=False, status="error")
 
 # ── FastAPI ────────────────────────────────────────────────────
-app = FastAPI(title="Whisper Transcritor")
+def _reset_stale_on_boot():
+    """On boot, no task is in memory, so any history entry still marked
+    queued/processing is a leftover from a previous run that was interrupted by
+    a restart. Mark them as errored automatically instead of waiting for someone
+    to open the UI (audit finding #9)."""
+    with _history_lock:
+        history = _load_history()
+        changed = 0
+        for entry in history:
+            if entry.get("status") in ("queued", "processing"):
+                entry["status"] = "error"
+                entry["error"]  = ("Transcrição interrompida — o servidor foi reiniciado "
+                                   "durante o processamento. Envie o arquivo novamente.")
+                changed += 1
+        if changed:
+            _atomic_write_json(HISTORY_FILE, history)
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    _reset_stale_on_boot()
+    yield
+
+app = FastAPI(title="Whisper Transcritor", lifespan=_lifespan)
+
+@app.middleware("http")
+async def _csrf_guard(request: Request, call_next):
+    """CSRF guard (audit finding #3). For state-changing methods, require that
+    any Origin/Referer header points at our own host. Requests with NO Origin
+    and NO Referer (native clients like curl, the initial page load) are allowed
+    so local tooling keeps working — a malicious cross-site page always sends its
+    own Origin, which won't match ALLOWED_ORIGIN_HOSTS and is rejected."""
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        origin  = request.headers.get("origin")
+        referer = request.headers.get("referer")
+        host_ok = True
+        if origin:
+            host_ok = urlparse(origin).netloc in ALLOWED_ORIGIN_HOSTS
+        elif referer:
+            host_ok = urlparse(referer).netloc in ALLOWED_ORIGIN_HOSTS
+        if not host_ok:
+            return JSONResponse({"detail": "Origem não permitida (CSRF)"}, status_code=403)
+    return await call_next(request)
 
 # Serve CSS / JS / fonts locally so the UI works offline and avoids CDN dependency.
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -612,8 +769,7 @@ async def api_delete_media(filename: str):
     with _media_lock:
         media = _load_media()
         media = [m for m in media if m.get("file") != filename]
-        with open(MEDIA_FILE, "w", encoding="utf-8") as f:
-            json.dump(media, f, ensure_ascii=False, indent=2)
+        _atomic_write_json(MEDIA_FILE, media)
     return {"status": "ok"}
 
 
@@ -697,8 +853,7 @@ async def api_media_cleanup(files: str = Form(...)):
     # Drop those entries from media.json (transcriptions stay in history.json untouched)
     with _media_lock:
         media = [m for m in _load_media() if m.get("file") not in set(requested)]
-        with open(MEDIA_FILE, "w", encoding="utf-8") as f:
-            json.dump(media, f, ensure_ascii=False, indent=2)
+        _atomic_write_json(MEDIA_FILE, media)
 
     return {"deleted": deleted, "freed_bytes": freed_bytes, "failed": failed}
 
@@ -720,16 +875,29 @@ async def api_transcribe(
 
     # Validate/normalize destination folder (auto-create ancestors so the tree shows it)
     folder = _validate_folder_name(folder) if folder else ""
-    if folder:
-        with _folders_lock:
-            paths = set(_load_folders_paths())
-            for a in _ancestors_of(folder):
-                paths.add(a)
-            _save_folders_paths(sorted(paths))
+    _ensure_folder_tree(folder)
 
+    # Stream the upload to disk in chunks (never buffer the whole file in RAM)
+    # and enforce a size ceiling — prevents memory exhaustion (audit finding #2).
     upload_path = os.path.join(UPLOAD_DIR, filename)
-    with open(upload_path, "wb") as f:
-        f.write(await file.read())
+    size = 0
+    try:
+        with open(upload_path, "wb") as f:
+            while True:
+                chunk = await file.read(UPLOAD_CHUNK)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    raise HTTPException(
+                        413, f"Arquivo excede o limite de {MAX_UPLOAD_BYTES // (1024*1024)} MB")
+                f.write(chunk)
+    except HTTPException:
+        _safe_remove(upload_path)   # drop the partial upload
+        raise
+    except Exception as e:
+        _safe_remove(upload_path)
+        raise HTTPException(500, f"Erro ao salvar upload: {e}")
 
     _set_task(task_id, status="queued", progress=0,
               name=original_name, filename=filename)
@@ -780,8 +948,7 @@ async def api_cancel_transcribe(task_id: str):
                 if entry.get("file") == filename:
                     entry["status"] = "cancelled"
                     break
-            with open(MEDIA_FILE, "w", encoding="utf-8") as f:
-                json.dump(media, f, ensure_ascii=False, indent=2)
+            _atomic_write_json(MEDIA_FILE, media)
     return {"status": "cancel_requested", "task_id": task_id}
 
 @app.get("/api/active-tasks")
@@ -814,8 +981,7 @@ async def api_reset_stale():
                     )
                     changed += 1
         if changed:
-            with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-                json.dump(history, f, ensure_ascii=False, indent=2)
+            _atomic_write_json(HISTORY_FILE, history)
     return {"reset": changed}
 
 # -- Results
@@ -882,18 +1048,23 @@ async def api_download_with_original(filename: str):
                 == os.path.realpath(UPLOAD_DIR) and os.path.exists(upload_path)):
             zf.write(upload_path, media_name)
 
-    return FileResponse(zip_path, filename=f"{display}_completo.zip")
+    # Delete the temp ZIP once it's been streamed to the client (finding #4)
+    return FileResponse(zip_path, filename=f"{display}_completo.zip",
+                        background=BackgroundTask(_safe_remove, zip_path))
 
 @app.get("/api/download-all")
 async def api_download_all():
-    zip_path = os.path.join(DATA_DIR, "todas_transcricoes.zip")
+    # Unique temp name so concurrent requests don't corrupt each other's ZIP
+    # (finding #4); deleted after the response is streamed.
+    zip_path = os.path.join(DATA_DIR, f"todas_transcricoes_{uuid.uuid4().hex[:8]}.zip")
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for d in os.listdir(RESULTS_DIR):
             full_d = os.path.join(RESULTS_DIR, d)
             if os.path.isdir(full_d):
                 for fname in os.listdir(full_d):
                     zf.write(os.path.join(full_d, fname), os.path.join(d, fname))
-    return FileResponse(zip_path, filename="todas_transcricoes.zip")
+    return FileResponse(zip_path, filename="todas_transcricoes.zip",
+                        background=BackgroundTask(_safe_remove, zip_path))
 
 @app.post("/api/download-selected-zip")
 async def api_download_selected_zip(files: str = Form(...), formats: str = Form("txt,srt,json,timestamps")):
@@ -988,7 +1159,8 @@ async def api_download_selected_zip(files: str = Form(...), formats: str = Form(
 
     if not files_written:
         raise HTTPException(404, "Nenhum arquivo dos formatos escolhidos foi encontrado")
-    return FileResponse(zip_path, filename="transcricoes_selecionadas.zip")
+    return FileResponse(zip_path, filename="transcricoes_selecionadas.zip",
+                        background=BackgroundTask(_safe_remove, zip_path))
 
 # -- Delete
 @app.delete("/api/delete/{filename}")
@@ -1000,8 +1172,7 @@ async def api_delete(filename: str):
     filename = _safe_filename(filename)
     with _history_lock:
         history = [h for h in _load_history() if h.get("file") != filename]
-        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(history, f, ensure_ascii=False, indent=2)
+        _atomic_write_json(HISTORY_FILE, history)
     base = _result_base(filename)
     if not base:
         raise HTTPException(400, "Filename inválido")
@@ -1022,8 +1193,7 @@ async def api_delete(filename: str):
     # Cascade: drop the media catalog entry too
     with _media_lock:
         media = [m for m in _load_media() if m.get("file") != filename]
-        with open(MEDIA_FILE, "w", encoding="utf-8") as f:
-            json.dump(media, f, ensure_ascii=False, indent=2)
+        _atomic_write_json(MEDIA_FILE, media)
 
     return {"ok": True}
 
@@ -1107,24 +1277,11 @@ def _kickoff_url_transcription(url: str, model: str, language: str, task: str,
             except (ValueError, TypeError):
                 pass  # malformed progress string — skip this update
 
-    ydl_opts = {
+    ydl_opts = _build_ydl_opts(url, _hook_main, base={
         'format': 'bestaudio/best',
         'outtmpl': upload_path.replace('.mp3', '.%(ext)s'),
         'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3'}],
-        'quiet': True,
-        'nocolor': True,
-        'progress_hooks': [_hook_main],
-        # Bypass YouTube's SABR streaming (issue yt-dlp#12482) by preferring
-        # client APIs that still expose progressive URLs. Order matters —
-        # tv_simply is the most reliable today; we keep the default 'web' as
-        # the last fallback so non-YouTube sites still work normally.
-        'extractor_args': {'youtube': {'player_client': ['web', 'tv_simply', 'ios', 'mweb']}},
-        # YouTube now requires PO tokens or login cookies for progressive URLs.
-        # Pull cookies from Chrome (user is logged into YouTube there) so the
-        # request looks authenticated and bypasses the bot wall.
-        'cookiesfrombrowser': ('chrome',),
-        'retries': 3,
-    }
+    })
     _save_to_history(filename, {}, model, status="queued", task_id=task_id, original_name=_result_base(original_name), folder=folder, source="url")
     _save_media(filename, original_name, url=url, is_transcribed=True, status="queued")
 
@@ -1144,12 +1301,14 @@ def _kickoff_url_transcription(url: str, model: str, language: str, task: str,
                 _save_media(filename, f"{title}.mp3", url=url,
                             is_transcribed=True, status="queued", force_name=True)
         except _UserCancelled:
+            _cleanup_task_files(task_id)   # drop partial/.part downloads (finding #5)
             _update_history_status(filename, "cancelled")
             _save_media(filename, original_name, url=url, is_transcribed=True, status="cancelled")
             _set_task(task_id, status="cancelled", progress=0, phase="cancelled",
                       name="Download cancelado", filename=filename)
             return
         except Exception as e:
+            _cleanup_task_files(task_id)   # drop partial/.part downloads (finding #5)
             _update_history_status(filename, "error", error=f"Erro ao baixar URL: {e}")
             _save_media(filename, original_name, url=url, is_transcribed=True, status="error")
             _set_task(task_id, status="error", progress=0, phase="error",
@@ -1189,13 +1348,9 @@ async def api_transcribe_url(
     if not YT_DLP_OK:
         raise HTTPException(400, "yt-dlp não instalado. Execute: pip install yt-dlp")
 
+    url = _validate_media_url(url)   # SSRF + scheme guard (finding #10)
     folder = _validate_folder_name(folder) if folder else ""
-    if folder:
-        with _folders_lock:
-            paths = set(_load_folders_paths())
-            for a in _ancestors_of(folder):
-                paths.add(a)
-            _save_folders_paths(sorted(paths))
+    _ensure_folder_tree(folder)
 
     return _kickoff_url_transcription(url, model, language, task,
                                        filter_fillers == "true", folder)
@@ -1241,24 +1396,20 @@ async def api_transcribe_batch(
     do_transcribe = transcribe == "true"
     if do_transcribe:
         folder = _validate_folder_name(folder) if folder else ""
-        if folder:
-            with _folders_lock:
-                paths = set(_load_folders_paths())
-                for a in _ancestors_of(folder):
-                    paths.add(a)
-                _save_folders_paths(sorted(paths))
+        _ensure_folder_tree(folder)
 
     do_filter = filter_fillers == "true"
     task_ids: list[str] = []
     for u in clean:
         try:
+            u = _validate_media_url(u)   # SSRF + scheme guard per URL (finding #10)
             if do_transcribe:
                 res = _kickoff_url_transcription(u, model, language, task, do_filter, folder)
             else:
                 res = _kickoff_download_only(u, media_type, quality)
             task_ids.append(res["task_id"])
         except Exception:
-            # Don't fail the whole batch if one URL trips at kickoff; record skip.
+            # Don't fail the whole batch if one URL trips validation/kickoff; skip it.
             task_ids.append(None)
     return {
         "submitted":  sum(1 for t in task_ids if t),
@@ -1292,19 +1443,8 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str):
                     pass  # malformed progress string — skip this update
 
         upload_path = os.path.join(UPLOAD_DIR, filename)
-        
-        ydl_opts = {
-            'quiet': True,
-            'nocolor': True,
-            'progress_hooks': [_hook],
-            # Same SABR-bypass as the transcribe path (yt-dlp#12482).
-            'extractor_args': {'youtube': {'player_client': ['web', 'tv_simply', 'ios', 'mweb']}},
-        # YouTube now requires PO tokens or login cookies for progressive URLs.
-        # Pull cookies from Chrome (user is logged into YouTube there) so the
-        # request looks authenticated and bypasses the bot wall.
-        'cookiesfrombrowser': ('chrome',),
-            'retries': 3,
-        }
+
+        ydl_opts = _build_ydl_opts(url, _hook)
 
         if is_video:
             if quality == '1080p': format_str = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best'
@@ -1337,15 +1477,12 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str):
         _set_task(task_id, status="done", progress=100, phase="done", phase_progress=100,
                   name=f"{title}.{ext}", filename=filename)
     except _UserCancelled:
-        # Best-effort: remove the partial file so disk doesn't fill with .part / aborted writes
-        for f in os.listdir(UPLOAD_DIR):
-            if task_id[:8] in f:
-                try: os.remove(os.path.join(UPLOAD_DIR, f))
-                except OSError: pass
+        _cleanup_task_files(task_id)   # remove partial/.part downloads (finding #5)
         _save_media(filename, "Download cancelado", url=url, is_transcribed=False, status="cancelled")
         _set_task(task_id, status="cancelled", progress=0, phase="cancelled",
                   name="Download cancelado", filename=filename)
     except Exception as e:
+        _cleanup_task_files(task_id)   # remove partial/.part downloads (finding #5)
         _save_media(filename, "Erro no Download", url=url, is_transcribed=False, status="error")
         _set_task(task_id, status="error", progress=0, phase="error",
                   name="Erro no Download", error=str(e), filename=filename)
@@ -1368,6 +1505,7 @@ async def api_yt_download_only(
 ):
     if not YT_DLP_OK:
         raise HTTPException(400, "yt-dlp não instalado.")
+    url = _validate_media_url(url)   # SSRF + scheme guard (finding #10)
     res = _kickoff_download_only(url, media_type, quality)
     return {"message": "Download_start", "task_id": res["task_id"]}
 
@@ -1427,8 +1565,19 @@ def _load_folders_paths() -> list[str]:
 def _save_folders_paths(paths: list[str]):
     # Deduplicate + sort for determinism, inside the caller's lock context
     paths = sorted(set(paths))
-    with open(FOLDERS_FILE, "w", encoding="utf-8") as f:
-        json.dump(paths, f, ensure_ascii=False, indent=2)
+    _atomic_write_json(FOLDERS_FILE, paths)
+
+def _ensure_folder_tree(folder: str) -> None:
+    """Persist `folder` and all its ancestors into folders.json so the sidebar
+    tree keeps them visible. Idempotent no-op for the root ("") — dedups the
+    ancestor-creation block that was copied across 4 endpoints (finding #11)."""
+    if not folder:
+        return
+    with _folders_lock:
+        paths = set(_load_folders_paths())
+        for a in _ancestors_of(folder):
+            paths.add(a)
+        _save_folders_paths(sorted(paths))
 
 @app.get("/api/folders")
 async def api_folders():
@@ -1532,8 +1681,7 @@ async def api_folders_rename(old_path: str = Form(...), new_path: str = Form(...
             if r is not None:
                 entry["folder"] = r
                 renamed_count += 1
-        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(history, f, ensure_ascii=False, indent=2)
+        _atomic_write_json(HISTORY_FILE, history)
 
     # Rename folder field in media entries
     with _media_lock:
@@ -1543,8 +1691,7 @@ async def api_folders_rename(old_path: str = Form(...), new_path: str = Form(...
             if r is not None:
                 entry["folder"] = r
                 renamed_count += 1
-        with open(MEDIA_FILE, "w", encoding="utf-8") as f:
-            json.dump(media, f, ensure_ascii=False, indent=2)
+        _atomic_write_json(MEDIA_FILE, media)
 
     return {"ok": True, "path": new_path, "renamed": renamed_count}
 
@@ -1603,8 +1750,7 @@ async def api_folders_delete(path: str = Form(...), cascade: str = Form("move"))
                 if f == path or f.startswith(prefix):
                     entry["folder"] = parent
                     affected_items += 1
-        with open(HISTORY_FILE, "w", encoding="utf-8") as fh:
-            json.dump(history, fh, ensure_ascii=False, indent=2)
+        _atomic_write_json(HISTORY_FILE, history)
 
     # Update media entries — on 'delete' we only strip the folder tag
     # (we don't delete the physical upload files; user can still do that via DELETE /api/delete-media)
@@ -1624,8 +1770,7 @@ async def api_folders_delete(path: str = Form(...), cascade: str = Form("move"))
                 if f == path or f.startswith(prefix):
                     entry["folder"] = parent
                     affected_items += 1
-        with open(MEDIA_FILE, "w", encoding="utf-8") as fh:
-            json.dump(media, fh, ensure_ascii=False, indent=2)
+        _atomic_write_json(MEDIA_FILE, media)
 
     return {
         "ok": True,
@@ -1643,12 +1788,7 @@ async def api_move_to_folder(filename: str = Form(...), folder: str = Form("")):
     folder   = _validate_folder_name(folder)
 
     # Auto-create ancestor folders in folders.json so the UI tree keeps them visible
-    if folder:
-        with _folders_lock:
-            paths = set(_load_folders_paths())
-            for a in _ancestors_of(folder):
-                paths.add(a)
-            _save_folders_paths(sorted(paths))
+    _ensure_folder_tree(folder)
 
     moved = False
     with _history_lock:
@@ -1659,8 +1799,7 @@ async def api_move_to_folder(filename: str = Form(...), folder: str = Form("")):
                 moved = True
                 break
         if moved:
-            with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-                json.dump(history, f, ensure_ascii=False, indent=2)
+            _atomic_write_json(HISTORY_FILE, history)
 
     with _media_lock:
         media = _load_media()
@@ -1671,8 +1810,7 @@ async def api_move_to_folder(filename: str = Form(...), folder: str = Form("")):
                 changed = True
                 break
         if changed:
-            with open(MEDIA_FILE, "w", encoding="utf-8") as f:
-                json.dump(media, f, ensure_ascii=False, indent=2)
+            _atomic_write_json(MEDIA_FILE, media)
 
     if not moved and not changed:
         raise HTTPException(404, "Arquivo não encontrado em histórico nem mídia")

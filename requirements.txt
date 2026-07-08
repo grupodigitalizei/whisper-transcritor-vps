@@ -34,3 +34,6 @@ urllib3==2.6.3
 uvicorn==0.46.0
 yt-dlp>=2026.6.9
 yt-dlp-ejs
+
+# Dev/test only
+pytest>=8.0
