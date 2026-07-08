@@ -582,12 +582,12 @@ function toggleFolderExpand(path) {
 
 // Sidebar mobile drawer
 function openSidebar() {
-  document.getElementById('folder-sidebar').classList.add('open');
-  document.getElementById('sidebar-backdrop').classList.add('open');
+  document.getElementById('app-sidebar')?.classList.add('open');
+  document.getElementById('sidebar-backdrop')?.classList.add('open');
 }
 function closeSidebar() {
-  document.getElementById('folder-sidebar').classList.remove('open');
-  document.getElementById('sidebar-backdrop').classList.remove('open');
+  document.getElementById('app-sidebar')?.classList.remove('open');
+  document.getElementById('sidebar-backdrop')?.classList.remove('open');
 }
 
 async function folderMenu(path, ev) {
@@ -1018,14 +1018,16 @@ function _renderStatusFilterCounts() {
   }
 }
 
-// Sync the mobile "current folder" label on the sidebar-toggle button
+// Sync the mobile "current folder" label + o breadcrumb do header
 function _syncFolderButtonLabel() {
-  const el = document.getElementById('current-folder-label');
-  if (!el) return;
   const v = _view.folderFilter;
-  el.textContent = v === 'all' ? 'Pastas'
-                  : v === '__root__' ? 'Sem pasta'
-                  : v.split('/').slice(-1)[0];
+  const folderName = v === 'all' ? 'Todas'
+                   : v === '__root__' ? 'Sem pasta'
+                   : v.split('/').slice(-1)[0];
+  const el = document.getElementById('current-folder-label');
+  if (el) el.textContent = v === 'all' ? 'Pastas' : folderName;
+  const bc = document.getElementById('breadcrumb-folder');
+  if (bc) bc.textContent = folderName;
 }
 
 function _renderQueueSummary() {
@@ -1631,6 +1633,7 @@ function toggleDD(id, btn, e) {
   const open = dd.classList.contains('open');
   closeAllDDs();
   if (!open) {
+    _positionDD(dd, btn);
     dd.classList.add('open');
     btn.setAttribute('aria-expanded', 'true');
     _ddOpenTrigger = btn;
@@ -1638,6 +1641,28 @@ function toggleDD(id, btn, e) {
     const first = dd.querySelector('[role="menuitem"]');
     if (first) setTimeout(() => first.focus(), 0);
   }
+}
+
+// Posiciona o menu de ações como `fixed`, ancorado no botão. Isso o faz
+// escapar do `overflow:hidden` do card e do scroll horizontal da tabela —
+// senão o menu fica cortado em telas estreitas / linhas na borda.
+function _positionDD(dd, btn) {
+  const r = btn.getBoundingClientRect();
+  const w = dd.offsetWidth  || 192;
+  const h = dd.offsetHeight || 240;
+  const M = 8;
+  let left = r.right - w;                    // alinha a borda direita ao botão
+  if (left + w > window.innerWidth - M) left = window.innerWidth - M - w;
+  if (left < M) left = M;
+  let top = r.bottom + 4;
+  if (top + h > window.innerHeight - M) {     // não cabe embaixo → abre pra cima
+    const up = r.top - 4 - h;
+    top = up >= M ? up : Math.max(M, window.innerHeight - M - h);
+  }
+  dd.style.position = 'fixed';
+  dd.style.right = 'auto';
+  dd.style.left = left + 'px';
+  dd.style.top  = top + 'px';
 }
 
 function closeAllDDs(restoreFocus = false) {
@@ -1677,6 +1702,12 @@ document.addEventListener('keydown', e => {
 });
 
 document.addEventListener('click', closeAllDDs);
+// Menu de ações é `fixed`: fecha ao rolar (que não seja dentro dele) ou redimensionar
+document.addEventListener('scroll', e => {
+  if (e.target && e.target.closest && e.target.closest('.dropdown')) return;
+  closeAllDDs();
+}, true);
+window.addEventListener('resize', () => closeAllDDs());
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     // If a dialog is open, cancel it and stop — we don't want ESC to also
@@ -1953,9 +1984,15 @@ function _populateFolderSelect() {
     ? _view.folderFilter : '';
   const paths = (_folders || []).map(f => f.path).sort();
   sel.innerHTML = '<option value="">Sem pasta (raiz)</option>'
-    + paths.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('');
+    + paths.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('')
+    + '<option value="__new__">➕ Criar nova pasta…</option>';
   // Restore previous choice, else default to the folder currently in view.
-  sel.value = paths.includes(prev) ? prev : (paths.includes(activeFolder) ? activeFolder : '');
+  // "__new__" is preserved too so re-populating (e.g. on folder reload) doesn't
+  // kick the user out of the create-folder flow they just started.
+  sel.value = (prev === '__new__' || paths.includes(prev))
+    ? prev
+    : (paths.includes(activeFolder) ? activeFolder : '');
+  onFolderSelectChange();
 
   // Belt-and-suspenders: if the folder list hasn't loaded yet (modal opened
   // before init finished), fetch it and re-populate once it arrives.
@@ -1964,6 +2001,77 @@ function _populateFolderSelect() {
       if ((_folders || []).length) _populateFolderSelect();
     });
   }
+}
+
+// Show/hide the "new folder" text field based on the dropdown selection.
+// The field only appears when the user picks "➕ Criar nova pasta…".
+function onFolderSelectChange() {
+  const sel  = document.getElementById('folder-select');
+  const wrap = document.getElementById('new-folder-wrap');
+  if (!sel || !wrap) return;
+  const creating = sel.value === '__new__';
+  wrap.style.display = creating ? '' : 'none';
+  if (creating) {
+    const inp = document.getElementById('new-folder-input');
+    if (inp) setTimeout(() => inp.focus(), 30);
+  }
+}
+
+// Live client-side check of the typed folder name. Mirrors the backend rules in
+// _validate_folder_name (segments 1-60 chars, no '\', no control/null, no '.'/'..',
+// no empty/double-slash segments). Returns '' if invalid, else the canonical path.
+// Shows an inline hint so the user gets feedback before submitting.
+function _canonicalNewFolder(raw) {
+  const folder = (raw || '').trim().replace(/^\/+|\/+$/g, '');
+  if (!folder) return { ok: false, path: '', error: '' };
+  if (folder.includes('\\') || /[\x00-\x1f]/.test(folder)) {
+    return { ok: false, path: '', error: 'Caractere inválido (barra invertida ou controle).' };
+  }
+  const segs = folder.split('/');
+  for (const s of segs) {
+    const seg = s.trim();
+    if (!seg) return { ok: false, path: '', error: 'Segmento vazio (barras duplicadas?).' };
+    if (seg === '.' || seg === '..') return { ok: false, path: '', error: `Segmento inválido: "${seg}".` };
+    if (seg.length > 60) return { ok: false, path: '', error: 'Cada parte deve ter no máximo 60 caracteres.' };
+  }
+  return { ok: true, path: segs.map(s => s.trim()).join('/'), error: '' };
+}
+
+function validateNewFolderInput() {
+  const inp  = document.getElementById('new-folder-input');
+  const hint = document.getElementById('new-folder-hint');
+  if (!inp || !hint) return;
+  const raw = inp.value;
+  if (!raw.trim()) {
+    hint.textContent = 'Use / para criar subpastas. A pasta será criada ao transcrever.';
+    hint.style.color = 'var(--slate-600)';
+    return;
+  }
+  const res = _canonicalNewFolder(raw);
+  if (res.ok) {
+    const exists = (_folders || []).some(f => f.path === res.path);
+    hint.textContent = exists
+      ? `A pasta "${res.path}" já existe — os itens serão salvos nela.`
+      : `Será criada a pasta "${res.path}".`;
+    hint.style.color = 'var(--slate-600)';
+  } else {
+    hint.textContent = res.error;
+    hint.style.color = 'var(--red-600, #dc2626)';
+  }
+}
+
+// Resolve the destination folder chosen in the upload modal. When the user opted
+// to create a new folder, validate + return the typed path (the backend creates
+// the tree on transcribe). Returns { ok, folder, error } — ok=false blocks submit.
+function resolveModalFolder() {
+  const sel = document.getElementById('folder-select');
+  const value = sel?.value || '';
+  if (value !== '__new__') return { ok: true, folder: value, error: '' };
+  const raw = document.getElementById('new-folder-input')?.value || '';
+  if (!raw.trim()) return { ok: false, folder: '', error: 'Digite o nome da nova pasta.' };
+  const res = _canonicalNewFolder(raw);
+  if (!res.ok) return { ok: false, folder: '', error: res.error || 'Nome de pasta inválido.' };
+  return { ok: true, folder: res.path, error: '' };
 }
 
 function closeModal() {
@@ -2033,6 +2141,11 @@ function switchMainTab(tab) {
     btn.setAttribute('aria-selected', pressed);
     btn.setAttribute('aria-pressed', pressed); // legacy — kept for any callers reading it
     btn.tabIndex = pressed ? 0 : -1;
+    // Título do header acompanha a seção ativa
+    if (pressed) {
+      const title = document.getElementById('page-title');
+      if (title) title.textContent = t === 'media' ? 'Biblioteca de Mídia' : 'Transcrições';
+    }
     // Use '' to clear the inline style so the element falls back to its CSS
     // rule. #card-transcriptions is .card-with-sidebar (display:grid on desktop,
     // block on mobile via media query); forcing 'block' would break the grid.
@@ -2308,7 +2421,9 @@ async function startTranscription() {
   const activeTab = document.querySelector('#overlay .seg-tab[aria-selected="true"]')
                      ?.id?.replace('tab-','') || 'file';
 
-  const folder = document.getElementById('folder-select')?.value || '';
+  const _folderRes = resolveModalFolder();
+  if (!_folderRes.ok) { showToast(_folderRes.error, 'error'); return; }
+  const folder = _folderRes.folder;
 
   if (activeTab === 'url') {
     const mode = _currentModalMode();
@@ -2361,6 +2476,10 @@ async function startTranscription() {
     await sendFile(file, model, language, taskType, filterFillers, folder);
   }
   removeFile();
+  // The backend creates the destination folder (and ancestors) synchronously
+  // during the upload POST, so it already exists — refresh the sidebar tree
+  // right away instead of waiting for the transcription to finish.
+  if (folder) loadFolders();
 }
 
 async function sendFile(file, model, language, taskType, filterFillers, folder = '') {
@@ -2453,6 +2572,7 @@ function pollProgressForRow(task_id, filename) {
         hideProgress();
         await loadHistory();
         await loadStats();
+        loadFolders(); // refresh sidebar counts (and any newly-created folder)
         if (typeof loadMedia === 'function') loadMedia();
         // Download-only tasks don't have a history entry — distinguish here so
         // the toast matches what actually happened.
@@ -2804,9 +2924,171 @@ document.body.addEventListener('dragover', e => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+//  CUSTOM SELECT — dropdown estilizado sobre o <select> nativo.
+//  O <select> continua sendo a fonte da verdade (value / evento change /
+//  opções populadas dinamicamente seguem funcionando); só trocamos o
+//  popup nativo do sistema operacional por uma lista que combina com o app.
+// ═══════════════════════════════════════════════════════════════
+function enhanceSelects(root = document) {
+  root.querySelectorAll('select.select:not([data-cs])').forEach(_initCustomSelect);
+}
+
+function _closeAllCustomSelects() {
+  document.querySelectorAll('.cs.cs-open').forEach(cs => cs._csClose && cs._csClose());
+}
+
+function _initCustomSelect(sel) {
+  sel.setAttribute('data-cs', '1');
+
+  const wrap = document.createElement('div');
+  wrap.className = 'cs';
+  sel.parentNode.insertBefore(wrap, sel);
+  wrap.appendChild(sel);
+  sel.classList.add('cs-native');
+  sel.tabIndex = -1;
+
+  const trigger = document.createElement('button');
+  trigger.type = 'button';
+  trigger.className = 'cs-trigger';
+  trigger.setAttribute('aria-haspopup', 'listbox');
+  trigger.setAttribute('aria-expanded', 'false');
+  const lbl = sel.getAttribute('aria-label');
+  if (lbl) trigger.setAttribute('aria-label', lbl);
+  trigger.innerHTML = '<span class="cs-value"></span>'
+    + '<svg class="cs-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>';
+
+  const menu = document.createElement('div');
+  menu.className = 'cs-menu';
+  menu.setAttribute('role', 'listbox');
+
+  wrap.appendChild(trigger);
+  wrap.appendChild(menu);
+
+  let activeIdx = -1;
+
+  function buildMenu() {
+    menu.innerHTML = '';
+    Array.from(sel.options).forEach((opt, i) => {
+      const item = document.createElement('div');
+      item.className = 'cs-option';
+      item.setAttribute('role', 'option');
+      item.innerHTML = '<span class="cs-opt-label"></span>'
+        + '<svg class="cs-check" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+      item.querySelector('.cs-opt-label').textContent = opt.textContent;
+      if (opt.disabled) item.setAttribute('aria-disabled', 'true');
+      // mousedown (not click) para não perder o foco do trigger antes de commitar
+      item.addEventListener('mousedown', e => {
+        e.preventDefault();
+        if (!opt.disabled) commit(i);
+      });
+      menu.appendChild(item);
+    });
+    syncValue();
+  }
+
+  function syncValue() {
+    const o = sel.options[sel.selectedIndex];
+    trigger.querySelector('.cs-value').textContent = o ? o.textContent : '';
+    Array.from(menu.children).forEach((it, i) => {
+      const on = i === sel.selectedIndex;
+      it.classList.toggle('selected', on);
+      it.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+  }
+
+  function setActive(i) {
+    const items = menu.children;
+    if (activeIdx >= 0 && items[activeIdx]) items[activeIdx].classList.remove('active');
+    activeIdx = i;
+    if (items[i]) { items[i].classList.add('active'); items[i].scrollIntoView({ block: 'nearest' }); }
+  }
+
+  function commit(i) {
+    if (i < 0 || i >= sel.options.length || sel.options[i].disabled) return;
+    if (sel.selectedIndex !== i) {
+      sel.selectedIndex = i;
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    syncValue();
+    close();
+    trigger.focus();
+  }
+
+  function position() {
+    const r = trigger.getBoundingClientRect();
+    menu.style.width = r.width + 'px';
+    menu.style.left = r.left + 'px';
+    const h = Math.min(menu.scrollHeight, 280);
+    const below = window.innerHeight - r.bottom;
+    // Abre para cima se não couber embaixo e houver mais espaço em cima
+    if (below < h + 12 && r.top > below) {
+      menu.style.top = Math.max(8, r.top - 6 - h) + 'px';
+    } else {
+      menu.style.top = (r.bottom + 6) + 'px';
+    }
+  }
+
+  function open() {
+    _closeAllCustomSelects();
+    wrap.classList.add('cs-open');
+    menu.classList.add('open');
+    trigger.setAttribute('aria-expanded', 'true');
+    position();
+    setActive(sel.selectedIndex);
+  }
+  function close() {
+    wrap.classList.remove('cs-open');
+    menu.classList.remove('open');
+    trigger.setAttribute('aria-expanded', 'false');
+    if (activeIdx >= 0 && menu.children[activeIdx]) menu.children[activeIdx].classList.remove('active');
+    activeIdx = -1;
+  }
+  wrap._csClose = close;
+
+  trigger.addEventListener('click', e => {
+    e.stopPropagation();
+    menu.classList.contains('open') ? close() : open();
+  });
+
+  trigger.addEventListener('keydown', e => {
+    const isOpen = menu.classList.contains('open');
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!isOpen) { open(); return; }
+      let i = activeIdx;
+      const step = e.key === 'ArrowDown' ? 1 : -1;
+      do { i += step; } while (i >= 0 && i < sel.options.length && sel.options[i].disabled);
+      if (i >= 0 && i < sel.options.length) setActive(i);
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      isOpen ? commit(activeIdx) : open();
+    } else if (e.key === 'Escape') {
+      if (isOpen) { e.preventDefault(); close(); }
+    } else if (e.key === 'Tab') {
+      close();
+    }
+  });
+
+  // Mudanças programáticas de valor / opções mantêm o custom em sincronia
+  sel.addEventListener('change', syncValue);
+  new MutationObserver(buildMenu).observe(sel, { childList: true });
+
+  buildMenu();
+}
+
+// Fecha menus ao clicar fora, rolar o container (que não seja o próprio menu) ou redimensionar
+document.addEventListener('click', () => _closeAllCustomSelects());
+window.addEventListener('resize', () => _closeAllCustomSelects());
+document.addEventListener('scroll', e => {
+  if (e.target && e.target.closest && e.target.closest('.cs-menu')) return;
+  _closeAllCustomSelects();
+}, true);
+
+// ═══════════════════════════════════════════════════════════════
 //  BOOT
 // ═══════════════════════════════════════════════════════════════
 init();
+enhanceSelects();
     function loadGaps(filename) {
         if (!filename) return;
         const minSec = parseFloat(document.getElementById('gaps-min-sec')?.value || 1.0);
