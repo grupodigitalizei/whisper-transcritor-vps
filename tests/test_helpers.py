@@ -121,3 +121,26 @@ def test_atomic_write_overwrites(tmp_path):
     app._atomic_write_json(p, {"v": 2})
     with open(p, encoding="utf-8") as f:
         assert json.load(f)["v"] == 2
+
+
+# ── _build_markdown_text (Markdown export) ─────────────────────────────────────
+def test_markdown_includes_title_and_body():
+    md = app._build_markdown_text(name="Minha Aula", text="Olá mundo.",
+                                   lang="pt", duration="1m 20s", model="turbo",
+                                   date="08 de Jul. de 2026, 02:44")
+    assert md.startswith("# Minha Aula")
+    assert "Olá mundo." in md
+    assert "**Duração:** 1m 20s" in md
+    assert "**Idioma:** pt" in md
+    assert "**Modelo:** turbo" in md
+    assert "**Transcrito em:** 08 de Jul. de 2026, 02:44" in md
+
+
+def test_markdown_omits_unknown_metadata():
+    md = app._build_markdown_text(name="Sem Metadados", text="Texto.")
+    assert "**Duração:**" not in md
+    assert "**Idioma:**" not in md
+    assert "**Modelo:**" not in md
+    assert "**Transcrito em:**" not in md
+    assert "# Sem Metadados" in md
+    assert "Texto." in md

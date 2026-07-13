@@ -383,13 +383,66 @@ def _result_dir(filename: str) -> str:
     os.makedirs(d, exist_ok=True)
     return d
 
+def _build_markdown_text(name: str, text: str, lang: str = "?",
+                         duration: str = "—", model: str = "?", date: str = "") -> str:
+    """Compose a Markdown version of a transcription: title + metadata line,
+    then the plain text as the body. Pure formatter — no I/O."""
+    meta = " · ".join(p for p in (
+        f"**Duração:** {duration}" if duration not in (None, "", "—") else None,
+        f"**Idioma:** {lang}"      if lang     not in (None, "", "?") else None,
+        f"**Modelo:** {model}"     if model    not in (None, "", "?") else None,
+        f"**Transcrito em:** {date}" if date   not in (None, "") else None,
+    ) if p)
+    parts = [f"# {name}"]
+    if meta:
+        parts += ["", meta]
+    parts += ["", "---", "", text.strip(), ""]
+    return "\n".join(parts)
+
+def _ensure_markdown(filename: str, history: list | None = None) -> str | None:
+    """Return the path to {base}.md inside the results dir, generating it lazily
+    from the already-saved .txt + history metadata if missing (transcriptions
+    saved before Markdown export existed). Returns None if there's no result
+    directory at all for this filename."""
+    base = _result_base(filename)
+    d    = os.path.join(RESULTS_DIR, base)
+    if not os.path.isdir(d):
+        return None
+    md_path = os.path.join(d, f"{base}.md")
+    if os.path.exists(md_path):
+        return md_path
+    txt_path = os.path.join(d, f"{base}.txt")
+    text = ""
+    if os.path.exists(txt_path):
+        with open(txt_path, encoding="utf-8") as f:
+            text = f.read()
+    history = history if history is not None else _load_history()
+    entry = next((h for h in history if h.get("file") == filename), {})
+    content = _build_markdown_text(
+        name=_original_name_for(filename), text=text,
+        lang=entry.get("lang", "?"), duration=entry.get("duration", "—"),
+        model=entry.get("mode", "?"), date=entry.get("date", ""),
+    )
+    with open(md_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    return md_path
+
 def _save_result_files(filename: str, result: dict):
     base = _result_base(filename)
     d    = _result_dir(filename)
+    # Queued history entry already carries the display name/model/date by the
+    # time transcription finishes — reused here so the .md header is complete.
+    entry = next((h for h in _load_history() if h.get("file") == filename), {})
+    md_content = _build_markdown_text(
+        name=_original_name_for(filename), text=result["text"],
+        lang=result.get("lang", "?"), duration=result.get("duration", "—"),
+        model=entry.get("mode", "?"), date=entry.get("date", ""),
+    )
     for fname, content in [
         (f"{base}.txt",            result["text"]),
         (f"{base}_timestamps.txt", result["timestamped"]),
         (f"{base}.srt",            result["srt"]),
+        (f"{base}.md",             md_content),
     ]:
         with open(os.path.join(d, fname), "w", encoding="utf-8") as f:
             f.write(content)
@@ -1004,21 +1057,24 @@ async def api_download(filename: str, fmt: str):
         "srt":        (f"{base}.srt",            "text/plain"),
         "json":       (f"{base}.json",           "application/json"),
         "timestamps": (f"{base}_timestamps.txt", "text/plain"),
+        "md":         (f"{base}.md",             "text/markdown"),
     }
     if fmt not in MAP:
         raise HTTPException(400, "Formato inválido")
+    if fmt == "md":
+        _ensure_markdown(filename)  # lazily generate for transcrições salvas antes do export .md existir
     fname, media = MAP[fmt]
     path = os.path.join(d, fname)
     if not os.path.exists(path):
         raise HTTPException(404, "Arquivo não encontrado")
     original = _original_name_for(filename)
-    ext_map = {"txt": ".txt", "srt": ".srt", "json": ".json", "timestamps": "_timestamps.txt"}
+    ext_map = {"txt": ".txt", "srt": ".srt", "json": ".json", "timestamps": "_timestamps.txt", "md": ".md"}
     download_name = f"{original}{ext_map[fmt]}"
     return FileResponse(path, media_type=media, filename=download_name)
 
 @app.get("/api/download-with-original/{filename}")
 async def api_download_with_original(filename: str):
-    """Zip the transcription files (txt, srt, json, timestamps) together with the
+    """Zip the transcription files (txt, srt, json, timestamps, md) together with the
     original audio/video upload — if it's still on disk. Lets the user grab the
     transcription AND the source media in a single download. If the original was
     already cleaned up, the ZIP still contains the transcription files."""
@@ -1030,6 +1086,8 @@ async def api_download_with_original(filename: str):
         raise HTTPException(400, "Filename inválido")
     if not os.path.isdir(d):
         raise HTTPException(404, "Resultado não encontrado")
+
+    _ensure_markdown(filename)  # inclui .md mesmo em transcrições salvas antes do export existir
 
     display    = _original_name_for(filename)        # user-facing stem, e.g. "Minha Aula"
     media_name = _original_media_name_for(filename)   # with extension, e.g. "Minha Aula.mp3"
@@ -1071,7 +1129,7 @@ async def api_download_selected_zip(files: str = Form(...), formats: str = Form(
     """Download only the selected transcriptions as a ZIP.
     `files` is a JSON array of filenames (history ids) to include.
     `formats` is a comma-separated list of formats to include:
-    any subset of {txt, srt, json, timestamps}."""
+    any subset of {txt, srt, json, timestamps, md}."""
     try:
         filenames = json.loads(files)
         if not isinstance(filenames, list):
@@ -1083,11 +1141,11 @@ async def api_download_selected_zip(files: str = Form(...), formats: str = Form(
         raise HTTPException(400, "Nenhum arquivo selecionado")
 
     # Parse format whitelist
-    valid_formats = {"txt", "srt", "json", "timestamps"}
+    valid_formats = {"txt", "srt", "json", "timestamps", "md"}
     chosen = {f.strip().lower() for f in formats.split(",") if f.strip()}
     chosen &= valid_formats
     if not chosen:
-        raise HTTPException(400, "Selecione ao menos um formato (txt, srt, json, timestamps)")
+        raise HTTPException(400, "Selecione ao menos um formato (txt, srt, json, timestamps, md)")
 
     # Map each format to the suffix that appears after the internal base filename
     suffix_for = {
@@ -1095,11 +1153,15 @@ async def api_download_selected_zip(files: str = Form(...), formats: str = Form(
         "srt":        ".srt",
         "json":       ".json",
         "timestamps": "_timestamps.txt",
+        "md":         ".md",
     }
     allowed_suffixes = {suffix_for[f] for f in chosen}
 
     # Validate each filename (prevents path traversal) and collect existing dirs
     results_real = os.path.realpath(RESULTS_DIR)
+    # Loaded once and reused for every _ensure_markdown() call below, instead of
+    # each call re-reading history.json for its own lookup.
+    history_cache = _load_history() if "md" in chosen else None
     entries = []
     for fn in filenames:
         if not isinstance(fn, str):
@@ -1111,6 +1173,8 @@ async def api_download_selected_zip(files: str = Form(...), formats: str = Form(
         if os.path.commonpath([os.path.realpath(d), results_real]) != results_real:
             continue
         if os.path.isdir(d):
+            if "md" in chosen:
+                _ensure_markdown(fn, history_cache)  # gera .md se a transcrição é anterior ao export
             entries.append((base, d, _original_name_for(fn)))
 
     if not entries:

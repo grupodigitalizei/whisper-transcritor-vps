@@ -1417,6 +1417,10 @@ function _buildRowInner(f) {
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
               Baixar JSON
             </div>
+            <div class="dd-item" role="menuitem" tabindex="-1" onclick="dlFile('${jsAttr(f.id)}','md')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>
+              Baixar MD (Markdown)
+            </div>
             ${f.has_original ? `
             <div class="dd-sep"></div>
             <div class="dd-item" role="menuitem" tabindex="-1" onclick="dlOriginalMedia('${jsAttr(f.file)}')">
@@ -1827,7 +1831,7 @@ async function deleteFile(id) {
   if (!f) return;
   const ok = await showConfirm({
     title: 'Excluir transcrição',
-    message: `"${f.name}" será removido do histórico e todos os arquivos (TXT, SRT, JSON, timestamps) serão apagados do disco.`,
+    message: `"${f.name}" será removido do histórico e todos os arquivos (TXT, SRT, JSON, timestamps, MD) serão apagados do disco.`,
     confirmText: 'Excluir',
     danger: true
   });
@@ -1891,6 +1895,7 @@ async function downloadAllZip() {
       { value: 'srt',        label: 'SRT',          description: 'Legendas para vídeo',         defaultChecked: true  },
       { value: 'timestamps', label: 'Timestamps',   description: 'Texto com marcas de tempo',   defaultChecked: false },
       { value: 'json',       label: 'JSON',         description: 'Estrutura completa (avançado)', defaultChecked: false },
+      { value: 'md',         label: 'MD',           description: 'Markdown com título e metadados', defaultChecked: false },
     ]
   });
   if (formats === null) return;            // cancelado
@@ -2676,6 +2681,7 @@ function _renderViewerActions(f, { errorMode = false } = {}) {
           <button type="button" class="btn btn-soft" onclick="dlViewerFile('srt')">SRT</button>
           <button type="button" class="btn btn-soft" onclick="dlViewerFile('timestamps')">Timestamps</button>
           <button type="button" class="btn btn-soft" onclick="dlViewerFile('json')">JSON</button>
+          <button type="button" class="btn btn-soft" onclick="dlViewerFile('md')">MD</button>
         </div>
       </div>`);
   }
