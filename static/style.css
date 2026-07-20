@@ -225,6 +225,7 @@
                   color:var(--slate-900); letter-spacing:-0.2px; }
     .card-title svg { color:var(--slate-500); }
     .card-actions { margin-left:auto; display:flex; align-items:center; gap:6px; }
+    .media-space-summary { margin-left:auto; font-size:12.5px; font-weight:700; color:var(--slate-500); }
 
     .transcribe-btn { background:var(--blue); color:var(--white); font-family:inherit;
                       font-weight:700; font-size:12.5px; letter-spacing:.5px; padding:8px 16px;
@@ -305,6 +306,28 @@
     .file-name { font-weight:600; color:var(--slate-900); font-size:13.5px; line-height:1.3; }
     .file-date { font-size:12.5px; color:var(--slate-500); }
     .file-dur  { font-size:13px; font-weight:600; color:var(--slate-600); font-variant-numeric:tabular-nums; }
+
+    /* File-type icon (vídeo/áudio) + prévia ao passar o mouse */
+    .file-name-row { display:flex; align-items:center; gap:6px; min-width:0; }
+    .file-type-icon { width:24px; height:24px; border-radius:var(--r-sm); border:none;
+                       background:var(--slate-100); color:var(--slate-500); cursor:pointer;
+                       display:flex; align-items:center; justify-content:center; flex-shrink:0; padding:0;
+                       transition:background var(--t) var(--ease), color var(--t) var(--ease); }
+    .file-type-icon:hover, .file-type-icon:focus-visible { background:var(--blue-50); color:var(--blue); }
+    .file-type-icon:focus-visible { outline:2px solid var(--blue); outline-offset:1px; }
+
+    .media-hover-preview { position:fixed; z-index:500; min-width:120px; max-width:260px;
+                            background:var(--slate-900); border-radius:var(--r-md); padding:6px;
+                            box-shadow:var(--sh-lg); pointer-events:none;
+                            opacity:0; transform:translateY(-4px);
+                            transition:opacity 120ms var(--ease), transform 120ms var(--ease); }
+    .media-hover-preview.show { opacity:1; transform:none; }
+    .media-hover-preview .mhp-thumb { display:block; width:100%; border-radius:6px; }
+    .media-hover-preview .mhp-loading { padding:20px 14px; font-size:12px; color:var(--slate-300); text-align:center; }
+    .media-hover-preview .mhp-audio { display:flex; flex-direction:column; align-items:center; gap:8px;
+                                       padding:20px 14px; color:var(--slate-300); font-size:12px; text-align:center; }
+    .media-hover-preview .mhp-audio svg { color:var(--slate-400); width:28px; height:28px; }
+    @media (prefers-reduced-motion:reduce) { .media-hover-preview { transition:none; } }
 
     /* File metadata chips below the filename — source (upload/URL) + original availability */
     .file-tags { display:flex; flex-wrap:wrap; gap:4px; margin-top:4px; }
@@ -465,11 +488,7 @@
                   transition:border-color var(--t) var(--ease), background var(--t) var(--ease); }
     .browse-btn:hover { border-color:var(--slate-400); background:var(--slate-50); }
 
-    /* FILE CHIP */
-    .file-chip { display:none; align-items:center; gap:12px; padding:12px 14px;
-                 background:var(--blue-50); border:1.5px solid var(--blue-200);
-                 border-radius:var(--r-md); animation:fadeIn 150ms var(--ease); }
-    .file-chip.show { display:flex; }
+    /* FILE CHIP (um item da lista de pendentes) */
     @keyframes fadeIn { from { opacity:0; transform:scale(0.98); } }
     .file-chip-icon { width:38px; height:38px; border-radius:var(--r-sm); background:var(--blue);
                       display:flex; align-items:center; justify-content:center;
@@ -480,8 +499,21 @@
     .file-chip-size { font-size:11.5px; color:var(--slate-500); margin-top:2px; }
     .file-chip-remove { background:none; border:none; color:var(--slate-400); cursor:pointer;
                         padding:6px; border-radius:4px; transition:color var(--t) var(--ease);
-                        display:flex; }
+                        display:flex; flex-shrink:0; }
     .file-chip-remove:hover { color:var(--red); }
+
+    /* FILE LIST — vários arquivos acumulados (drag-and-drop repetido ou seleção múltipla) */
+    .file-list-wrap { display:none; margin-top:12px; }
+    .file-list-wrap.show { display:block; animation:fadeIn 150ms var(--ease); }
+    .file-list-head { display:flex; align-items:center; justify-content:space-between;
+                       margin-bottom:8px; font-size:12px; font-weight:700; color:var(--slate-600); }
+    .file-list-clear { background:none; border:none; color:var(--blue); font-size:12px;
+                        font-weight:700; cursor:pointer; padding:2px 4px; }
+    .file-list-clear:hover { text-decoration:underline; }
+    .file-list { display:flex; flex-direction:column; gap:6px; max-height:220px; overflow-y:auto; }
+    .file-list-item { display:flex; align-items:center; gap:12px; padding:10px 12px;
+                       background:var(--blue-50); border:1.5px solid var(--blue-200);
+                       border-radius:var(--r-md); }
 
     /* FIELD */
     .field-label { display:block; font-size:12.5px; font-weight:700; color:var(--slate-600);

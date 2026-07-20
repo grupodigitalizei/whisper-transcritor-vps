@@ -155,3 +155,16 @@ def test_display_name_trims_and_accepts():
 def test_display_name_rejects_bad_input(bad):
     with pytest.raises(HTTPException):
         app._validate_display_name(bad)
+
+
+# ── _media_type_for (Biblioteca de Mídia — filtro por tipo) ────────────────────
+@pytest.mark.parametrize("filename,expected", [
+    ("abc123_aula.mp4", "video"),
+    ("abc123_aula.MOV", "video"),
+    ("abc123_aula.mp3", "audio"),
+    ("abc123_aula.WAV", "audio"),
+    ("abc123_aula.pdf", "other"),
+    ("abc123_aula", "other"),
+])
+def test_media_type_for(filename, expected):
+    assert app._media_type_for(filename) == expected

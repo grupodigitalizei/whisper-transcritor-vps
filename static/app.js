@@ -4,6 +4,9 @@
 let files    = [];     // [{id, file, name, date, dur, status, mode}]
 let selected = new Set();
 let pendingFiles = []; // File objects queued from input
+let _mediaFiles    = [];         // raw list from /api/media-history (last fetch)
+let _mediaSelected = new Set();
+const _mediaView = { type: 'all' }; // 'all' | 'audio' | 'video'
 let _viewerFile  = null;
 let _viewerData  = {};
 let _autoSyncInterval = null;
@@ -1409,7 +1412,10 @@ function _buildRowInner(f) {
           onclick="handleCheckboxClick('${jsAttr(f.id)}', this, event)" />
       </td>
       <td>
-        <div class="file-name">${esc(f.name)}</div>
+        <div class="file-name-row">
+          ${f.has_original ? _fileTypeIconHtml(f.file) : ''}
+          <div class="file-name">${esc(f.name)}</div>
+        </div>
         <div class="file-tags">
           ${f.source === 'url'
             ? `<span class="ftag ftag-url" title="Adicionado via URL (yt-dlp)"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>URL</span>`
@@ -2226,6 +2232,166 @@ function formatBytes(bytes, decimals = 1) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  MEDIA HOVER PREVIEW — ícone de tipo na linha; passar o mouse mostra o
+//  primeiro frame real do vídeo (capturado via <video>+<canvas>) ou um
+//  ícone de áudio para arquivos sem representação visual possível.
+// ═══════════════════════════════════════════════════════════════
+const _VIDEO_EXTS_JS = ['mp4','mov','mkv','avi','webm','wmv','mpeg','mpg','m4v'];
+const _AUDIO_EXTS_JS = ['mp3','m4a','aac','wav','ogg','opus','wma','flac'];
+
+function _fileTypeFor(filename) {
+  const ext = (filename || '').split('.').pop().toLowerCase();
+  if (_VIDEO_EXTS_JS.includes(ext)) return 'video';
+  if (_AUDIO_EXTS_JS.includes(ext)) return 'audio';
+  return 'other';
+}
+
+function _mediaTypeIconSvg(type) {
+  return type === 'video'
+    ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>'
+    : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>';
+}
+
+// Markup do botão-ícone inserido na linha. Só é gerado quando o arquivo
+// original ainda está no disco (sem original não há nada pra pré-visualizar).
+function _fileTypeIconHtml(filename) {
+  const type = _fileTypeFor(filename);
+  if (type === 'other') return '';
+  const label = type === 'video' ? 'Pré-visualizar vídeo (passe o mouse)' : 'Arquivo de áudio';
+  return `<button type="button" class="file-type-icon" data-file="${jsAttr(filename)}" data-type="${type}"
+            aria-label="${label}" title="${label}"
+            onmouseenter="showMediaPreview(this)" onmouseleave="hideMediaPreview()"
+            onfocus="showMediaPreview(this)" onblur="hideMediaPreview()">
+            ${_mediaTypeIconSvg(type)}
+          </button>`;
+}
+
+const _videoThumbCache = new Map(); // file -> dataURL | 'error'
+let _previewHoverTimer = null;
+let _previewHideTimer  = null;
+let _previewToken = 0; // incrementado a cada hide — invalida gerações em andamento
+
+function _ensurePreviewPanel() {
+  let el = document.getElementById('media-hover-preview');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'media-hover-preview';
+    el.className = 'media-hover-preview';
+    el.setAttribute('role', 'tooltip');
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+function _positionPreviewPanel(panel, btn) {
+  const r = btn.getBoundingClientRect();
+  const w = panel.offsetWidth  || 200;
+  const h = panel.offsetHeight || 120;
+  const M = 10;
+  let left = r.left;
+  if (left + w > window.innerWidth - M) left = window.innerWidth - M - w;
+  if (left < M) left = M;
+  let top = r.bottom + 8;
+  if (top + h > window.innerHeight - M) top = r.top - 8 - h;
+  panel.style.left = left + 'px';
+  panel.style.top  = top + 'px';
+}
+
+function showMediaPreview(btn) {
+  clearTimeout(_previewHideTimer);
+  clearTimeout(_previewHoverTimer);
+  // Pequeno atraso — passar o mouse rapidamente por várias linhas não deve
+  // disparar uma captura de vídeo pra cada uma.
+  _previewHoverTimer = setTimeout(() => _renderPreview(btn, btn.dataset.file, btn.dataset.type), 150);
+}
+
+function hideMediaPreview() {
+  clearTimeout(_previewHoverTimer);
+  _previewToken++; // qualquer captura de frame em andamento vira descartável
+  const el = document.getElementById('media-hover-preview');
+  if (!el) return;
+  clearTimeout(_previewHideTimer);
+  _previewHideTimer = setTimeout(() => el.classList.remove('show'), 80);
+}
+
+async function _renderPreview(btn, file, type) {
+  const panel = _ensurePreviewPanel();
+  const myToken = ++_previewToken;
+
+  if (type === 'audio') {
+    panel.innerHTML = `<div class="mhp-audio">${_mediaTypeIconSvg('audio')}<span>Arquivo de áudio</span></div>`;
+    panel.classList.add('show');
+    _positionPreviewPanel(panel, btn);
+    return;
+  }
+
+  const cached = _videoThumbCache.get(file);
+  if (cached) {
+    panel.innerHTML = cached === 'error'
+      ? `<div class="mhp-audio">${_mediaTypeIconSvg('video')}<span>Prévia indisponível</span></div>`
+      : `<img src="${cached}" alt="Prévia do primeiro frame do vídeo" class="mhp-thumb" />`;
+    panel.classList.add('show');
+    _positionPreviewPanel(panel, btn);
+    return;
+  }
+
+  panel.innerHTML = `<div class="mhp-loading">Gerando prévia…</div>`;
+  panel.classList.add('show');
+  _positionPreviewPanel(panel, btn);
+
+  try {
+    const dataUrl = await _captureVideoFrame(file);
+    _videoThumbCache.set(file, dataUrl);
+    if (myToken !== _previewToken) return; // mouse já saiu — não troca mais nada na tela
+    panel.innerHTML = `<img src="${dataUrl}" alt="Prévia do primeiro frame do vídeo" class="mhp-thumb" />`;
+    _positionPreviewPanel(panel, btn);
+  } catch {
+    _videoThumbCache.set(file, 'error');
+    if (myToken !== _previewToken) return;
+    panel.innerHTML = `<div class="mhp-audio">${_mediaTypeIconSvg('video')}<span>Prévia indisponível</span></div>`;
+    _positionPreviewPanel(panel, btn);
+  }
+}
+
+// Baixa (via range request do <video>, não o arquivo inteiro) só o suficiente
+// pra decodificar o primeiro frame e desenhá-lo num canvas.
+function _captureVideoFrame(file) {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'metadata';
+    video.src = `/api/download-media/${encodeURIComponent(file)}`;
+
+    let settled = false;
+    const cleanup = () => { video.removeAttribute('src'); video.load(); };
+    const fail = () => { if (settled) return; settled = true; cleanup(); reject(new Error('preview failed')); };
+    const done = (dataUrl) => { if (settled) return; settled = true; cleanup(); resolve(dataUrl); };
+
+    video.addEventListener('error', fail, { once: true });
+    video.addEventListener('loadedmetadata', () => {
+      // ~0.1s em vez de 0 exato — em alguns codecs o frame 0 renderiza preto
+      video.currentTime = Math.min(0.1, (video.duration || 1) / 2);
+    }, { once: true });
+    video.addEventListener('seeked', () => {
+      try {
+        const targetW = 240;
+        const scale   = targetW / (video.videoWidth || targetW);
+        const canvas  = document.createElement('canvas');
+        canvas.width  = targetW;
+        canvas.height = Math.round((video.videoHeight || 135) * scale);
+        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+        done(canvas.toDataURL('image/jpeg', 0.72));
+      } catch {
+        fail();
+      }
+    }, { once: true });
+
+    setTimeout(fail, 8000); // trava de segurança se o vídeo nunca carregar
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  DROPZONE
 // ═══════════════════════════════════════════════════════════════
 function handleDragOver(e) { e.preventDefault(); document.getElementById('dropzone').classList.add('drag-over'); }
@@ -2236,25 +2402,72 @@ function handleDrop(e) {
   if (e.dataTransfer.files.length) handleFileSelect(e.dataTransfer.files);
 }
 
-function handleFileSelect(fileList) {
-  if (!fileList || !fileList.length) return;
-  pendingFiles = Array.from(fileList);
-  const f = pendingFiles[0];
-  document.getElementById('chip-name').textContent =
-    pendingFiles.length > 1 ? `${f.name} + ${pendingFiles.length-1} outro(s)` : f.name;
-  document.getElementById('chip-size').textContent =
-    pendingFiles.reduce((s, x) => s + x.size, 0) < 1048576
-      ? (pendingFiles.reduce((s, x) => s + x.size, 0) / 1024).toFixed(1) + ' KB'
-      : (pendingFiles.reduce((s, x) => s + x.size, 0) / 1048576).toFixed(1) + ' MB';
-  document.getElementById('file-chip').classList.add('show');
-  document.getElementById('dropzone').style.display = 'none';
+// Chave estável para deduplicar (mesmo arquivo arrastado duas vezes não deve
+// entrar duplicado na lista). File objects não têm id — nome+tamanho+data de
+// modificação já é suficiente na prática.
+function _pendingFileKey(f) {
+  return `${f.name}::${f.size}::${f.lastModified}`;
 }
 
-function removeFile() {
+// Cada seleção/drop ADICIONA à lista de pendentes em vez de substituir — o
+// dropzone continua visível (não é mais escondido) para receber mais arquivos.
+function handleFileSelect(fileList) {
+  if (!fileList || !fileList.length) return;
+  const existingKeys = new Set(pendingFiles.map(_pendingFileKey));
+  let added = 0, skipped = 0;
+  for (const f of Array.from(fileList)) {
+    const key = _pendingFileKey(f);
+    if (existingKeys.has(key)) { skipped++; continue; }
+    existingKeys.add(key);
+    pendingFiles.push(f);
+    added++;
+  }
+  renderPendingFiles();
+  // Limpa o <input> nativo — sem isso, selecionar o MESMO arquivo de novo não
+  // dispara 'change' (o browser não refire quando a FileList parece idêntica).
+  document.getElementById('file-input').value = '';
+  if (skipped) {
+    showToast(added ? `${added} adicionado(s), ${skipped} já estava(m) na lista.` : 'Arquivo já estava na lista.', '');
+  }
+}
+
+function removePendingFile(i) {
+  pendingFiles.splice(i, 1);
+  renderPendingFiles();
+}
+
+function clearPendingFiles() {
   pendingFiles = [];
   document.getElementById('file-input').value = '';
-  document.getElementById('file-chip').classList.remove('show');
-  document.getElementById('dropzone').style.display = '';
+  renderPendingFiles();
+}
+
+function renderPendingFiles() {
+  const wrap = document.getElementById('file-list-wrap');
+  const list = document.getElementById('file-list');
+  const summary = document.getElementById('file-list-summary');
+  if (!pendingFiles.length) {
+    wrap.classList.remove('show');
+    list.innerHTML = '';
+    return;
+  }
+  wrap.classList.add('show');
+  const totalBytes = pendingFiles.reduce((s, x) => s + x.size, 0);
+  summary.textContent =
+    `${pendingFiles.length} arquivo${pendingFiles.length !== 1 ? 's' : ''} selecionado${pendingFiles.length !== 1 ? 's' : ''} · ${formatBytes(totalBytes)}`;
+  list.innerHTML = pendingFiles.map((f, i) => `
+    <div class="file-list-item">
+      <div class="file-chip-icon" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      </div>
+      <div class="file-chip-info">
+        <div class="file-chip-name">${esc(f.name)}</div>
+        <div class="file-chip-size">${formatBytes(f.size)}</div>
+      </div>
+      <button type="button" class="file-chip-remove" onclick="removePendingFile(${i})" aria-label="Remover ${esc(f.name)}">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>`).join('');
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -2528,7 +2741,7 @@ async function startTranscription() {
   for (const file of pendingFiles) {
     await sendFile(file, model, language, taskType, filterFillers, folder);
   }
-  removeFile();
+  clearPendingFiles();
   // The backend creates the destination folder (and ancestors) synchronously
   // during the upload POST, so it already exists — refresh the sidebar tree
   // right away instead of waiting for the transcription to finish.
@@ -3204,10 +3417,63 @@ enhanceSelects();
     async function loadMedia() {
       try {
         const res = await fetch('/api/media-history');
-        const media = await res.json();
-        renderMedia(media);
-        _ensureMediaProgressPolling(media);
+        _mediaFiles = await res.json();
+        applyMediaFilterAndRender();
+        _ensureMediaProgressPolling(_mediaFiles);
       } catch { /* ignore */ }
+    }
+
+    // Regra de visibilidade: a Biblioteca de Mídia só lista o que ainda está
+    // fisicamente salvo na máquina (on_disk) — exceto downloads em andamento
+    // (queued/processing), que ficam visíveis para permitir cancelar mesmo
+    // antes do arquivo existir por completo no disco.
+    function _isMediaOnMachine(m) {
+      return m.on_disk || m.status === 'queued' || m.status === 'processing';
+    }
+
+    function _getVisibleMedia() {
+      let arr = _mediaFiles.filter(_isMediaOnMachine);
+      if (_mediaView.type !== 'all') arr = arr.filter(m => m.type === _mediaView.type);
+      return arr;
+    }
+
+    function setMediaTypeFilter(type) {
+      _mediaView.type = type;
+      document.querySelectorAll('.chip[data-mtype]').forEach(el => {
+        el.setAttribute('aria-pressed', el.dataset.mtype === type);
+      });
+      applyMediaFilterAndRender();
+    }
+
+    function _renderMediaTypeCounts() {
+      const onMachine = _mediaFiles.filter(_isMediaOnMachine);
+      const counts = { all: onMachine.length, audio: 0, video: 0 };
+      for (const m of onMachine) if (m.type === 'audio' || m.type === 'video') counts[m.type]++;
+      for (const k of Object.keys(counts)) {
+        const el = document.getElementById('mchip-count-' + k);
+        if (el) el.textContent = counts[k];
+      }
+    }
+
+    // Soma o espaço ocupado pelo conjunto atualmente visível (respeita o filtro
+    // de tipo) — só conta arquivos que estão de fato on_disk (downloads ainda em
+    // andamento não têm tamanho final ainda).
+    function _renderMediaSpaceSummary(visible) {
+      const el = document.getElementById('media-space-summary');
+      if (!el) return;
+      const onDisk = visible.filter(m => m.on_disk);
+      const totalBytes = onDisk.reduce((s, m) => s + (m.size_bytes || 0), 0);
+      el.textContent = onDisk.length
+        ? `${onDisk.length} arquivo${onDisk.length !== 1 ? 's' : ''} · ${formatBytes(totalBytes)} ocupados`
+        : '—';
+    }
+
+    function applyMediaFilterAndRender() {
+      _renderMediaTypeCounts();
+      const visible = _getVisibleMedia();
+      _renderMediaSpaceSummary(visible);
+      renderMedia(visible);
+      syncMediaBulkBar();
     }
 
     // For any media row whose status is "processing" (mid-download), look up
@@ -3267,8 +3533,14 @@ enhanceSelects();
                   Excluir Mídia Hospedada
                 </div>`;
         tr.innerHTML = `
-          <td></td>
-          <td><div class="file-name">${esc(f.name)}</div></td>
+          <td class="col-check"><input type="checkbox" class="checkbox" aria-label="Selecionar ${esc(f.name)}"
+              ${_mediaSelected.has(f.id) ? 'checked' : ''} onchange="toggleMediaSelect('${jsAttr(f.id)}', this)" /></td>
+          <td>
+            <div class="file-name-row">
+              ${f.on_disk ? _fileTypeIconHtml(f.file) : ''}
+              <div class="file-name">${esc(f.name)}</div>
+            </div>
+          </td>
           <td class="col-date"><div class="file-date">${esc(f.date)}</div></td>
           <td class="col-dur"><div class="file-dur">${formatBytes(f.size_bytes)}</div></td>
           <td class="col-status">${renderStatus(f.status, null)}</td>
@@ -3283,6 +3555,75 @@ enhanceSelects();
           </td>`;
         tbody.appendChild(tr);
       });
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  MEDIA — SELEÇÃO EM LOTE
+    // ═══════════════════════════════════════════════════════════════
+    function toggleMediaSelect(id, cb) {
+      cb.checked ? _mediaSelected.add(id) : _mediaSelected.delete(id);
+      syncMediaBulkBar();
+    }
+
+    function toggleMediaAll(cb) {
+      const visible = _getVisibleMedia();
+      visible.forEach(m => cb.checked ? _mediaSelected.add(m.id) : _mediaSelected.delete(m.id));
+      renderMedia(visible);
+      syncMediaBulkBar();
+    }
+
+    function _selectedVisibleMediaIds() {
+      const visible = _getVisibleMedia();
+      return visible.filter(m => _mediaSelected.has(m.id)).map(m => m.id);
+    }
+
+    function syncMediaBulkBar() {
+      const bar = document.getElementById('media-bulk-bar');
+      if (!bar) return;
+      const visible = _getVisibleMedia();
+      const visibleIds = _selectedVisibleMediaIds();
+      const count = visibleIds.length;
+      document.getElementById('media-bulk-count').textContent =
+        `${count} selecionado${count !== 1 ? 's' : ''}`;
+      bar.classList.toggle('show', count > 0);
+      const headCb = document.getElementById('media-check-all');
+      if (headCb) {
+        headCb.checked = count === visible.length && visible.length > 0;
+        headCb.indeterminate = count > 0 && count < visible.length;
+      }
+    }
+
+    async function deleteSelectedMedia() {
+      const ids = _selectedVisibleMediaIds();
+      if (!ids.length) return;
+      const count = ids.length;
+      const ok = await showConfirm({
+        title: `Excluir ${count} arquivo${count === 1 ? '' : 's'}`,
+        message: 'Os arquivos físicos serão removidos do cofre local e não poderão mais ser re-baixados ou re-transcritos. As transcrições já feitas continuam salvas.',
+        confirmText: 'Excluir',
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        const fd = new FormData();
+        fd.append('files', ids.join(','));
+        const res = await fetch('/api/media/cleanup', { method: 'POST', body: fd });
+        if (!res.ok) {
+          let msg = 'Erro ao excluir.';
+          try { const e = await res.json(); if (e.detail) msg = e.detail; } catch {}
+          showToast(msg, 'error');
+          return;
+        }
+        const data = await res.json();
+        ids.forEach(id => _mediaSelected.delete(id));
+        await loadMedia();
+        showToast(
+          `${data.deleted} arquivo${data.deleted !== 1 ? 's' : ''} excluído(s)` +
+          (data.failed?.length ? `, ${data.failed.length} falhou(aram)` : '') + '.',
+          'success');
+      } catch {
+        showToast('Erro ao excluir.', 'error');
+      }
     }
 
     // Cancel a download-only or URL→transcribe task via the same /api/transcribe/{tid}

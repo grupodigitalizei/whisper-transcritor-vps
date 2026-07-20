@@ -797,9 +797,43 @@ async def api_stats():
     }
 
 # -- Media
+_VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".wmv", ".mpeg", ".mpg", ".m4v"}
+_AUDIO_EXTS = {".mp3", ".m4a", ".aac", ".wav", ".ogg", ".opus", ".wma", ".flac"}
+
+def _media_type_for(filename: str) -> str:
+    ext = os.path.splitext(filename)[1].lower()
+    if ext in _VIDEO_EXTS: return "video"
+    if ext in _AUDIO_EXTS: return "audio"
+    return "other"
+
 @app.get("/api/media-history")
 async def api_media_history():
-    return _load_media()
+    """Returns the media catalog enriched with live disk state:
+       - on_disk: whether the original upload file is still physically present
+         (the Biblioteca de Mídia tab only lists what's actually still on disk)
+       - size_bytes: recomputed from disk when on_disk — the stored value is
+         only a snapshot from when the file was first saved, and can go stale
+       - type: 'audio' | 'video' | 'other', derived from the extension, so the
+         UI can filter without re-deriving it per row"""
+    media = _load_media()
+    try:
+        on_disk_set = set(os.listdir(UPLOAD_DIR))
+    except OSError:
+        on_disk_set = set()
+    out = []
+    for m in media:
+        entry = dict(m)
+        filename = entry.get("file") or ""
+        on_disk = filename in on_disk_set
+        entry["on_disk"] = on_disk
+        if on_disk:
+            try:
+                entry["size_bytes"] = os.path.getsize(os.path.join(UPLOAD_DIR, filename))
+            except OSError:
+                pass
+        entry["type"] = _media_type_for(filename)
+        out.append(entry)
+    return out
 
 @app.get("/api/download-media/{filename}")
 async def api_download_media(filename: str):
