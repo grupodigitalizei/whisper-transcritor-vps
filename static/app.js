@@ -1110,6 +1110,50 @@ function promptMoveToFolder(id) {
   openFolderPicker(id);
 }
 
+async function promptRenameFile(id) {
+  closeAllDDs();
+  const f = files.find(x => x.id === id);
+  if (!f) return;
+  const newName = await showPrompt({
+    title: 'Renomear transcrição',
+    initialValue: f.name,
+    confirmText: 'Renomear',
+    iconKind: 'edit',
+    validator: (val) => {
+      const v = (val || '').trim();
+      if (!v) return 'O nome não pode ficar em branco.';
+      if (v.length > 150) return 'Máximo de 150 caracteres.';
+      if (/[\/\\\x00]/.test(v)) return 'O nome não pode conter /, \\ ou caracteres de controle.';
+      return null;
+    }
+  });
+  if (newName === null) return;
+  const clean = newName.trim();
+  if (!clean || clean === f.name) return;
+  try {
+    const fd = new FormData();
+    fd.append('new_name', clean);
+    const res = await fetch(`/api/rename/${encodeURIComponent(f.file)}`, { method: 'POST', body: fd });
+    if (!res.ok) {
+      let msg = 'Erro ao renomear.';
+      try { const e = await res.json(); if (e.detail) msg = e.detail; } catch {}
+      showToast(msg, 'error');
+      return;
+    }
+    f.name = clean;
+    renderFiles();
+    // Se o visualizador estiver aberto para este mesmo arquivo, atualiza o título ali também
+    if (_viewerFile && _viewerFile.id === id) {
+      _viewerFile.name = clean;
+      const titleEl = document.getElementById('viewer-title');
+      if (titleEl) titleEl.textContent = clean;
+    }
+    showToast(`Renomeado para "${clean}".`, 'success');
+  } catch {
+    showToast('Erro ao renomear.', 'error');
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  RENDER
 // ═══════════════════════════════════════════════════════════════
@@ -1442,6 +1486,10 @@ function _buildRowInner(f) {
               Copiar link original
             </div>
             <div class="dd-sep"></div>` : ''}
+            <div class="dd-item" role="menuitem" tabindex="-1" onclick="promptRenameFile('${jsAttr(f.id)}')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>
+              Renomear
+            </div>
             <div class="dd-item" role="menuitem" tabindex="-1" onclick="promptMoveToFolder('${jsAttr(f.id)}')">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
               Mover para pasta${f.folder ? ` (${esc(f.folder)})` : ''}
@@ -2666,6 +2714,7 @@ function _renderViewerActions(f, { errorMode = false } = {}) {
     link: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
     copy: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
     move: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
+    ren:  '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>',
     del:  '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>',
   };
   const sections = [];
@@ -2714,6 +2763,7 @@ function _renderViewerActions(f, { errorMode = false } = {}) {
   if (sections.length) sections.push('<div class="va-div"></div>');
   sections.push(`
     <div class="va-manage">
+      <button type="button" class="btn btn-soft" onclick="promptRenameFile('${jsAttr(f.id)}')">${ic.ren}Renomear</button>
       <button type="button" class="btn btn-soft" onclick="promptMoveToFolder('${jsAttr(f.id)}')">${ic.move}Mover para pasta</button>
       <button type="button" class="btn btn-soft danger" onclick="deleteViewerFile()">${ic.del}Excluir</button>
     </div>`);

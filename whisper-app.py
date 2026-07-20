@@ -1880,6 +1880,58 @@ async def api_move_to_folder(filename: str = Form(...), folder: str = Form("")):
         raise HTTPException(404, "Arquivo não encontrado em histórico nem mídia")
     return {"ok": True, "folder": folder}
 
+def _validate_display_name(name: str) -> str:
+    """Validate a user-supplied display name (rename). Unlike folder/file
+    names this is just a label, not a path segment — only rejects empty
+    input, path separators (would break downloads that build a filename
+    from it) and an unreasonable length."""
+    name = (name or "").strip()
+    if not name:
+        raise HTTPException(400, "Nome não pode ficar em branco")
+    if "/" in name or "\\" in name or "\x00" in name:
+        raise HTTPException(400, "Nome não pode conter / \\ ou caracteres de controle")
+    if len(name) > 150:
+        raise HTTPException(400, "Nome muito longo (máx. 150 caracteres)")
+    return name
+
+@app.post("/api/rename/{filename}")
+async def api_rename(filename: str, new_name: str = Form(...)):
+    """Renames the display name of a transcription (history entry) and, if
+    present, its matching media-library entry. Does not touch the internal
+    filename on disk — only the user-facing label shown in the UI and used
+    as the download filename stem."""
+    filename = _safe_filename(filename)
+    new_name = _validate_display_name(new_name)
+
+    updated = False
+    with _history_lock:
+        history = _load_history()
+        for entry in history:
+            if entry.get("file") == filename:
+                entry["name"] = new_name
+                updated = True
+                break
+        if updated:
+            _atomic_write_json(HISTORY_FILE, history)
+
+    with _media_lock:
+        media = _load_media()
+        for entry in media:
+            if entry.get("file") == filename:
+                # Media entries store the name WITH extension — keep whatever
+                # extension was already there (or derive from the stored
+                # filename) so downloads/original-name lookups stay correct.
+                ext = os.path.splitext(entry.get("name", ""))[1] or os.path.splitext(filename)[1]
+                entry["name"] = new_name + ext
+                updated = True
+                break
+        if updated:
+            _atomic_write_json(MEDIA_FILE, media)
+
+    if not updated:
+        raise HTTPException(404, "Arquivo não encontrado em histórico nem mídia")
+    return {"ok": True, "name": new_name}
+
 # ── Entry point ────────────────────────────────────────────────
 if __name__ == "__main__":
     print("✅  Whisper Transcritor → http://127.0.0.1:7860")

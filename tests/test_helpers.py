@@ -144,3 +144,14 @@ def test_markdown_omits_unknown_metadata():
     assert "**Transcrito em:**" not in md
     assert "# Sem Metadados" in md
     assert "Texto." in md
+
+
+# ── _validate_display_name (rename) ────────────────────────────────────────────
+def test_display_name_trims_and_accepts():
+    assert app._validate_display_name("  Minha Aula  ") == "Minha Aula"
+
+
+@pytest.mark.parametrize("bad", ["", "   ", "a/b", "a\\b", "x" * 151])
+def test_display_name_rejects_bad_input(bad):
+    with pytest.raises(HTTPException):
+        app._validate_display_name(bad)
