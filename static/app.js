@@ -1464,10 +1464,15 @@ function _buildRowInner(f) {
             <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="cancelTranscriptionById('${jsAttr(f.task_id || '')}')">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
               Cancelar transcrição
-            </div>` : f.status === 'error' ? `
+            </div>` : (f.status === 'error' || f.status === 'cancelled') ? `
+            ${f.status === 'error' ? `
             <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="viewError('${jsAttr(f.id)}')">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
               Ver log de erro
+            </div>` : ''}
+            <div class="dd-item" role="menuitem" tabindex="-1" onclick="retryFile('${jsAttr(f.id)}')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+              Tentar novamente
             </div>
             <div class="dd-sep"></div>` : `
             <div class="dd-item" role="menuitem" tabindex="-1" onclick="viewFile('${jsAttr(f.id)}')">
@@ -1928,6 +1933,64 @@ async function deleteFile(id) {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  TENTAR NOVAMENTE — refaz manualmente um item com erro/cancelado.
+//  O backend decide sozinho o que refazer (transcrição, download, ou os
+//  dois) olhando o que foi pedido originalmente para aquele arquivo.
+// ═══════════════════════════════════════════════════════════════
+async function retryFile(id) {
+  closeAllDDs();
+  const f = files.find(x => x.id === id);
+  if (!f) return;
+  try {
+    const res = await fetch(`/api/retry/${encodeURIComponent(f.file)}`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast(data.detail || 'Erro ao tentar novamente.', 'error'); return; }
+    showToast('Reenviado — acompanhe o progresso na lista.', 'success');
+    await loadHistory();
+  } catch {
+    showToast('Erro de rede ao tentar novamente.', 'error');
+  }
+}
+
+async function retrySelected() {
+  const ids = selectedVisibleIds();
+  if (!ids.length) return;
+  const retryable = ids
+    .map(id => files.find(x => x.id === id))
+    .filter(f => f && (f.status === 'error' || f.status === 'cancelled'));
+  if (!retryable.length) {
+    showToast('Nenhum selecionado está com erro ou cancelado.', 'error');
+    return;
+  }
+  const skipped = ids.length - retryable.length;
+  const ok = await showConfirm({
+    title: `Tentar novamente ${retryable.length} ${retryable.length === 1 ? 'item' : 'itens'}?`,
+    message: 'Refaz com a mesma configuração original — transcrição, download, ou os dois, ' +
+      'dependendo do que foi pedido no início.' +
+      (skipped ? ` ${skipped} selecionado${skipped === 1 ? '' : 's'} não está${skipped === 1 ? '' : 'ão'} ` +
+                 `com erro e será${skipped === 1 ? '' : 'ão'} ignorado${skipped === 1 ? '' : 's'}.` : ''),
+    confirmText: 'Tentar novamente',
+  });
+  if (!ok) return;
+  try {
+    const fd = new FormData();
+    fd.append('files', JSON.stringify(retryable.map(f => f.file)));
+    const res = await fetch('/api/retry-batch', { method: 'POST', body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast(data.detail || 'Erro ao tentar novamente.', 'error'); return; }
+    showToast(
+      `${data.submitted}/${data.total} reenviado(s)` +
+      (data.failed ? `, ${data.failed} falhou(aram).` : '.'),
+      'success');
+    selected.clear();
+    await loadHistory();
+    syncBulkBar();
+  } catch {
+    showToast('Erro de rede ao tentar novamente.', 'error');
+  }
+}
+
 async function downloadSelected() {
   const ids = selectedVisibleIds();
   if (!ids.length) return;
@@ -2200,7 +2263,8 @@ function switchTab(tab) {
 const _TABLIST_GROUPS = {
   main:  ['main-tab-transcriptions', 'main-tab-media', 'main-tab-advanced'],
   modal: ['tab-file', 'tab-url', 'tab-batch'],
-  'adv-type': ['adv-type-video', 'adv-type-audio'],
+  'adv-type':    ['adv-type-video', 'adv-type-audio'],
+  'adv-urlmode': ['adv-urlmode-single', 'adv-urlmode-batch'],
 };
 function onTablistKey(e, group) {
   const ids = _TABLIST_GROUPS[group];
@@ -2754,10 +2818,43 @@ function _toggleAdvSubOptions() {
   document.getElementById('adv-subs-options').style.display = on ? 'block' : 'none';
 }
 
+function setAdvUrlMode(mode) {
+  ['single', 'batch'].forEach(m => {
+    const btn = document.getElementById('adv-urlmode-' + m);
+    btn.setAttribute('aria-selected', m === mode);
+    btn.tabIndex = m === mode ? 0 : -1;
+  });
+  document.getElementById('adv-url-single-wrap').style.display = mode === 'single' ? '' : 'none';
+  document.getElementById('adv-url-batch-wrap').style.display  = mode === 'batch'  ? '' : 'none';
+  const sub = document.getElementById('adv-playlist-sub');
+  if (sub) {
+    sub.textContent = mode === 'batch'
+      ? 'Cada link colado que for playlist/canal também é expandido — baixa cada vídeo (até 100 por link), um item por vídeo na Biblioteca'
+      : 'A URL é de uma playlist/canal — baixa cada vídeo (até 100), um item por vídeo na Biblioteca';
+  }
+}
+
+function _updateAdvBatchCount() {
+  const urls = _extractUrlsFromText(document.getElementById('adv-urls-batch').value);
+  const summary = document.getElementById('adv-batch-summary');
+  const count   = document.getElementById('adv-batch-count');
+  if (!urls.length) { summary.style.display = 'none'; return; }
+  summary.style.display = 'block';
+  count.textContent = urls.length;
+}
+
 async function submitAdvancedDownload() {
-  const url = document.getElementById('adv-url-input').value.trim();
-  if (!url) { showToast('Cole uma URL primeiro.', 'error'); return; }
-  if (!/^https?:\/\//i.test(url)) { showToast('URL inválida — use http:// ou https://', 'error'); return; }
+  const isBatch = document.getElementById('adv-urlmode-batch').getAttribute('aria-selected') === 'true';
+
+  let singleUrl = '', batchUrls = [];
+  if (isBatch) {
+    batchUrls = _extractUrlsFromText(document.getElementById('adv-urls-batch').value);
+    if (!batchUrls.length) { showToast('Cole ao menos uma URL (uma por linha).', 'error'); return; }
+  } else {
+    singleUrl = document.getElementById('adv-url-input').value.trim();
+    if (!singleUrl) { showToast('Cole uma URL primeiro.', 'error'); return; }
+    if (!/^https?:\/\//i.test(singleUrl)) { showToast('URL inválida — use http:// ou https://', 'error'); return; }
+  }
 
   const mediaType   = document.getElementById('adv-type-video').getAttribute('aria-selected') === 'true' ? 'video' : 'audio';
   const quality     = document.getElementById('adv-quality-select').value;
@@ -2771,13 +2868,15 @@ async function submitAdvancedDownload() {
 
   const btn = document.getElementById('adv-download-btn');
 
-  // Playlist: resolve primeiro pra mostrar quantos vídeos foram encontrados e
-  // pedir confirmação antes de disparar um monte de downloads de uma vez.
-  if (isPlaylist) {
+  if (!isBatch && isPlaylist) {
+    // Um único link: resolve primeiro pra mostrar quantos vídeos foram
+    // encontrados e pedir confirmação antes de disparar tudo de uma vez.
+    // (No modo lote isso exigiria 1 resolve por link — o backend já aplica
+    // um teto de segurança total, então a confirmação abaixo cobre esse caso.)
     btn.disabled = true;
     let info;
     try {
-      const r = await fetch(`/api/resolve-playlist?url=${encodeURIComponent(url)}`);
+      const r = await fetch(`/api/resolve-playlist?url=${encodeURIComponent(singleUrl)}`);
       info = await r.json().catch(() => ({}));
       if (!r.ok) { showToast(info.detail || 'Erro ao ler a playlist.', 'error'); return; }
     } catch {
@@ -2799,6 +2898,15 @@ async function submitAdvancedDownload() {
       });
       if (!ok) return;
     }
+  } else if (isBatch) {
+    const ok = await showConfirm({
+      title: `Baixar ${batchUrls.length} link${batchUrls.length === 1 ? '' : 's'}?`,
+      message: `${batchUrls.length} URL${batchUrls.length === 1 ? '' : 's'} detectada${batchUrls.length === 1 ? '' : 's'}` +
+        (isPlaylist ? ' — cada uma que for playlist/canal expande em vários vídeos.' : '.') +
+        ' Cada resultado vira um item separado na Biblioteca de Mídia.',
+      confirmText: 'Baixar todos',
+    });
+    if (!ok) return;
   }
 
   btn.disabled = true;
@@ -2806,7 +2914,8 @@ async function submitAdvancedDownload() {
   btn.innerHTML = 'Enviando…';
   try {
     const fd = new FormData();
-    fd.append('url', url);
+    if (isBatch) fd.append('urls', batchUrls.join('\n'));
+    else fd.append('url', singleUrl);
     fd.append('media_type', mediaType);
     fd.append('quality', quality);
     fd.append('playlist', isPlaylist ? 'true' : 'false');
@@ -2821,10 +2930,15 @@ async function submitAdvancedDownload() {
     if (!res.ok) { showToast(data.detail || 'Erro ao iniciar download.', 'error'); return; }
     showToast(
       data.total > 1
-        ? `${data.submitted}/${data.total} downloads iniciados.`
+        ? `${data.submitted}/${data.total} downloads iniciados${data.truncated ? ' (limite atingido — o restante ficou de fora)' : ''}.`
         : 'Download iniciado.',
       'success');
-    document.getElementById('adv-url-input').value = '';
+    if (isBatch) {
+      document.getElementById('adv-urls-batch').value = '';
+      _updateAdvBatchCount();
+    } else {
+      document.getElementById('adv-url-input').value = '';
+    }
     // Downloads aparecem (com progresso ao vivo) na Biblioteca de Mídia —
     // o polling já existente (_ensureMediaProgressPolling) cuida do resto.
     switchMainTab('media');
@@ -3649,7 +3763,15 @@ enhanceSelects();
       return m.on_disk || m.status === 'queued' || m.status === 'processing';
     }
 
+    function _isMediaFailed(m) {
+      return m.status === 'error' || m.status === 'cancelled';
+    }
+
     function _getVisibleMedia() {
+      // "Falharam" é uma visão à parte: itens com erro/cancelado normalmente
+      // não estão on_disk, então ficariam escondidos pelo filtro padrão — sem
+      // esse chip não haveria como selecioná-los pra tentar de novo.
+      if (_mediaView.type === 'failed') return _mediaFiles.filter(_isMediaFailed);
       let arr = _mediaFiles.filter(_isMediaOnMachine);
       if (_mediaView.type !== 'all') arr = arr.filter(m => m.type === _mediaView.type);
       return arr;
@@ -3665,7 +3787,8 @@ enhanceSelects();
 
     function _renderMediaTypeCounts() {
       const onMachine = _mediaFiles.filter(_isMediaOnMachine);
-      const counts = { all: onMachine.length, audio: 0, video: 0 };
+      const counts = { all: onMachine.length, audio: 0, video: 0,
+                        failed: _mediaFiles.filter(_isMediaFailed).length };
       for (const m of onMachine) if (m.type === 'audio' || m.type === 'video') counts[m.type]++;
       for (const k of Object.keys(counts)) {
         const el = document.getElementById('mchip-count-' + k);
@@ -3734,25 +3857,34 @@ enhanceSelects();
         const tr = document.createElement('tr');
         tr.dataset.id = f.file;
         const isActive = (f.status === 'processing' || f.status === 'queued');
-        // Show cancel option for in-flight downloads; the regular file-management
-        // items only make sense for completed media.
+        const isFailed = (f.status === 'error' || f.status === 'cancelled');
+        // Show cancel option for in-flight downloads; failed/cancelled items get
+        // a retry option; the regular file-management items only make sense
+        // when there's actually a file on disk to download.
         const actionItems = isActive ? `
                 <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="cancelMediaDownload('${jsAttr(f.file)}')">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
                   Cancelar download
                 </div>` : `
+                ${isFailed ? `
+                <div class="dd-item" role="menuitem" tabindex="-1" onclick="retryMediaFile('${jsAttr(f.file)}')">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                  Tentar novamente
+                </div>
+                <div class="dd-sep"></div>` : ''}
+                ${f.on_disk ? `
                 <div class="dd-item" role="menuitem" tabindex="-1" onclick="dlMediaFile('${jsAttr(f.file)}')">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                   Baixar Original para o PC
                 </div>
-                <div class="dd-sep"></div>
+                <div class="dd-sep"></div>` : ''}
                 <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="deleteMediaFile('${jsAttr(f.file)}')">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
                   Excluir Mídia Hospedada
                 </div>`;
         tr.innerHTML = `
           <td class="col-check"><input type="checkbox" class="checkbox" aria-label="Selecionar ${esc(f.name)}"
-              ${_mediaSelected.has(f.id) ? 'checked' : ''} onchange="toggleMediaSelect('${jsAttr(f.id)}', this)" /></td>
+              ${_mediaSelected.has(f.id) ? 'checked' : ''} onclick="handleMediaCheckboxClick('${jsAttr(f.id)}', this, event)" /></td>
           <td>
             <div class="file-name-row">
               ${f.on_disk ? _fileTypeIconHtml(f.file) : ''}
@@ -3778,8 +3910,34 @@ enhanceSelects();
     // ═══════════════════════════════════════════════════════════════
     //  MEDIA — SELEÇÃO EM LOTE
     // ═══════════════════════════════════════════════════════════════
-    function toggleMediaSelect(id, cb) {
-      cb.checked ? _mediaSelected.add(id) : _mediaSelected.delete(id);
+    // Mesmo padrão do shift+click da tabela de Transcrições (handleCheckboxClick):
+    // clicar com Shift estende a seleção do último item clicado até este,
+    // aplicando o estado (marcar/desmarcar) do clique atual a todo o intervalo.
+    let _lastCheckedMediaId = null;
+
+    function handleMediaCheckboxClick(id, cb, ev) {
+      ev.stopPropagation();
+      const checked = cb.checked; // o clique nativo já alternou o estado
+      if (ev.shiftKey && _lastCheckedMediaId && _lastCheckedMediaId !== id) {
+        const visible = _getVisibleMedia();
+        const a = visible.findIndex(m => m.id === _lastCheckedMediaId);
+        const b = visible.findIndex(m => m.id === id);
+        if (a !== -1 && b !== -1) {
+          const [lo, hi] = a < b ? [a, b] : [b, a];
+          for (let i = lo; i <= hi; i++) {
+            const mid = visible[i].id;
+            checked ? _mediaSelected.add(mid) : _mediaSelected.delete(mid);
+          }
+          // Shift+click em alguns browsers também seleciona texto da página — limpa.
+          try { window.getSelection().removeAllRanges(); } catch {}
+          renderMedia(visible);
+          syncMediaBulkBar();
+          _lastCheckedMediaId = id;
+          return;
+        }
+      }
+      checked ? _mediaSelected.add(id) : _mediaSelected.delete(id);
+      _lastCheckedMediaId = id;
       syncMediaBulkBar();
     }
 
@@ -3808,6 +3966,42 @@ enhanceSelects();
       if (headCb) {
         headCb.checked = count === visible.length && visible.length > 0;
         headCb.indeterminate = count > 0 && count < visible.length;
+      }
+    }
+
+    async function retrySelectedMedia() {
+      const ids = _selectedVisibleMediaIds();
+      if (!ids.length) return;
+      const retryable = ids
+        .map(id => _mediaFiles.find(m => m.id === id))
+        .filter(m => m && (m.status === 'error' || m.status === 'cancelled'));
+      if (!retryable.length) {
+        showToast('Nenhum selecionado está com erro ou cancelado.', 'error');
+        return;
+      }
+      const skipped = ids.length - retryable.length;
+      const ok = await showConfirm({
+        title: `Tentar novamente ${retryable.length} ${retryable.length === 1 ? 'item' : 'itens'}?`,
+        message: 'Refaz o download (ou a transcrição, se era esse o pedido original) com a mesma URL.' +
+          (skipped ? ` ${skipped} selecionado${skipped === 1 ? '' : 's'} não está${skipped === 1 ? '' : 'ão'} ` +
+                     `com erro e será${skipped === 1 ? '' : 'ão'} ignorado${skipped === 1 ? '' : 's'}.` : ''),
+        confirmText: 'Tentar novamente',
+      });
+      if (!ok) return;
+      try {
+        const fd = new FormData();
+        fd.append('files', JSON.stringify(retryable.map(m => m.file)));
+        const res = await fetch('/api/retry-batch', { method: 'POST', body: fd });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { showToast(data.detail || 'Erro ao tentar novamente.', 'error'); return; }
+        showToast(
+          `${data.submitted}/${data.total} reenviado(s)` +
+          (data.failed ? `, ${data.failed} falhou(aram).` : '.'),
+          'success');
+        retryable.forEach(m => _mediaSelected.delete(m.id));
+        await loadMedia();
+      } catch {
+        showToast('Erro de rede ao tentar novamente.', 'error');
       }
     }
 
@@ -3881,6 +4075,19 @@ enhanceSelects();
 
     function dlMediaFile(filename) {
       window.location = `/api/download-media/${encodeURIComponent(filename)}`;
+    }
+
+    async function retryMediaFile(filename) {
+      closeAllDDs();
+      try {
+        const res = await fetch(`/api/retry/${encodeURIComponent(filename)}`, { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { showToast(data.detail || 'Erro ao tentar novamente.', 'error'); return; }
+        showToast('Reenviado — acompanhe o progresso na lista.', 'success');
+        await loadMedia();
+      } catch {
+        showToast('Erro de rede ao tentar novamente.', 'error');
+      }
     }
 
     async function deleteMediaFile(filename) {

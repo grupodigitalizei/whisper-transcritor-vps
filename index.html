@@ -149,6 +149,10 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
       <span id="bulk-count">0 selecionados</span>
       <div class="bulk-actions">
+        <button type="button" class="bulk-btn" onclick="retrySelected()">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+          Tentar novamente
+        </button>
         <button type="button" class="bulk-btn" onclick="downloadSelected()">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Baixar TXT
@@ -273,6 +277,10 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
       <span id="media-bulk-count">0 selecionados</span>
       <div class="bulk-actions">
+        <button type="button" class="bulk-btn" onclick="retrySelectedMedia()">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+          Tentar novamente
+        </button>
         <button type="button" class="bulk-btn danger" onclick="deleteSelectedMedia()">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
           Excluir
@@ -291,6 +299,9 @@
         </button>
         <button type="button" class="chip" data-mtype="video" aria-pressed="false" onclick="setMediaTypeFilter('video')">
           Vídeo <span class="chip-count" id="mchip-count-video">0</span>
+        </button>
+        <button type="button" class="chip" data-mtype="failed" aria-pressed="false" onclick="setMediaTypeFilter('failed')">
+          Falharam <span class="chip-count" id="mchip-count-failed">0</span>
         </button>
       </div>
     </div>
@@ -340,11 +351,34 @@
         com playlist inteira, legendas, metadados, thumbnail e escolha de faixa de áudio.
       </p>
 
-      <label class="field-label" for="adv-url-input">URL do vídeo, áudio ou playlist</label>
-      <input id="adv-url-input" type="url" class="select"
-        placeholder="https://youtube.com/watch?v=... ou link de playlist"
-        aria-label="URL para download avançado"
-        style="height:40px;padding:0 12px;margin-bottom:16px" />
+      <div class="seg-tabs" role="tablist" aria-label="Modo de entrada de URL" style="max-width:280px;margin-bottom:14px">
+        <button type="button" id="adv-urlmode-single" class="seg-tab" role="tab" aria-selected="true" tabindex="0" onclick="setAdvUrlMode('single')" onkeydown="onTablistKey(event, 'adv-urlmode')">
+          Um link
+        </button>
+        <button type="button" id="adv-urlmode-batch" class="seg-tab" role="tab" aria-selected="false" tabindex="-1" onclick="setAdvUrlMode('batch')" onkeydown="onTablistKey(event, 'adv-urlmode')">
+          Vários links
+        </button>
+      </div>
+
+      <div id="adv-url-single-wrap">
+        <label class="field-label" for="adv-url-input">URL do vídeo, áudio ou playlist</label>
+        <input id="adv-url-input" type="url" class="select"
+          placeholder="https://youtube.com/watch?v=... ou link de playlist"
+          aria-label="URL para download avançado"
+          style="height:40px;padding:0 12px;margin-bottom:16px" />
+      </div>
+
+      <div id="adv-url-batch-wrap" style="display:none">
+        <label class="field-label" for="adv-urls-batch">Vários links (um por linha, ou cole uma lista)</label>
+        <textarea id="adv-urls-batch" rows="5" class="select"
+          style="height:auto;padding:10px 12px;resize:vertical;font-family:ui-monospace,monospace;font-size:12.5px;line-height:1.5;margin-bottom:8px"
+          placeholder="https://youtube.com/watch?v=...&#10;https://vimeo.com/...&#10;https://youtube.com/playlist?list=...&#10;..."
+          aria-label="Vários links para download avançado"
+          oninput="_updateAdvBatchCount()"></textarea>
+        <div id="adv-batch-summary" style="margin-bottom:16px;padding:10px 14px;background:var(--blue-50);border-radius:var(--r-md);font-size:13px;color:var(--slate-700);display:none">
+          <strong id="adv-batch-count">0</strong> URLs detectadas
+        </div>
+      </div>
 
       <div class="seg-tabs" role="tablist" aria-label="Tipo de mídia" style="max-width:280px;margin-bottom:16px">
         <button type="button" id="adv-type-video" class="seg-tab" role="tab" aria-selected="true" tabindex="0" onclick="setAdvType('video')" onkeydown="onTablistKey(event, 'adv-type')">
@@ -379,7 +413,7 @@
       <div class="toggle-row">
         <div class="toggle-info">
           <div class="toggle-label">Baixar playlist inteira</div>
-          <div class="toggle-sub">A URL é de uma playlist/canal — baixa cada vídeo (até 100), um item por vídeo na Biblioteca</div>
+          <div class="toggle-sub" id="adv-playlist-sub">A URL é de uma playlist/canal — baixa cada vídeo (até 100), um item por vídeo na Biblioteca</div>
         </div>
         <label class="switch" aria-label="Baixar playlist inteira">
           <input type="checkbox" id="adv-playlist-toggle" />

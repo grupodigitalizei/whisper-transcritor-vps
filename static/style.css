@@ -282,7 +282,14 @@
     /* TABLE */
     /* Scroll horizontal quando a tabela não cabe (telas estreitas) em vez de
        vazar e ser cortada pelo overflow:hidden do card. */
-    #table-wrap, #table-wrap-media { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+    /* overflow-y:hidden (não "visible") é essencial aqui — por spec do CSS,
+       "overflow-x:auto" + "overflow-y:visible" é uma combinação impossível:
+       o browser força o eixo 'visible' a virar 'auto' também, criando uma
+       barra de rolagem vertical PRÓPRIA da tabela além da da página inteira
+       (duas barras lado a lado). Como a altura deste container já se ajusta
+       ao conteúdo (sem max-height), 'hidden' aqui não corta nada — só evita
+       essa conversão forçada. Só queremos rolagem horizontal aqui. */
+    #table-wrap, #table-wrap-media { overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch; }
     .files-table { width:100%; border-collapse:collapse; min-width:560px; }
     .files-table thead tr { border-bottom:1px solid var(--slate-100); }
     .files-table th { padding:10px 14px; text-align:left; font-size:11.5px; font-weight:700;

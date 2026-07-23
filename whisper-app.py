@@ -130,13 +130,16 @@ def _build_ydl_opts(url: str, progress_hook, base: dict | None = None) -> dict:
         opts.update(base)
     return opts
 
-def _cleanup_task_files(task_id: str) -> None:
-    """Best-effort removal of any (partial/.part) files this task wrote to
+def _cleanup_task_files(prefix: str) -> None:
+    """Best-effort removal of any (partial/.part) files matching `prefix` in
     UPLOAD_DIR. Called on download error/cancel so aborted writes don't pile up
-    (audit finding #5)."""
+    (audit finding #5). `prefix` should be the target filename's own stem
+    (e.g. os.path.splitext(filename)[0]) — NOT necessarily task_id, since a
+    retry reuses the original filename under a brand-new task_id, and yt-dlp's
+    outtmpl is built from the filename, not the task_id."""
     try:
         for f in os.listdir(UPLOAD_DIR):
-            if task_id[:8] in f:
+            if prefix in f:
                 try: os.remove(os.path.join(UPLOAD_DIR, f))
                 except OSError: pass
     except OSError:
@@ -479,7 +482,8 @@ def _load_history() -> list:
 def _save_to_history(filename: str, result: dict, model_name: str,
                      status: str = "done", error: str | None = None,
                      task_id: str | None = None, original_name: str | None = None,
-                     folder: str | None = None, source: str | None = None):
+                     folder: str | None = None, source: str | None = None,
+                     task_type: str | None = None, filter_fillers: bool | None = None):
     # Atomic read-modify-write under a single lock to prevent lost updates
     with _history_lock:
         history = _load_history()
@@ -489,6 +493,12 @@ def _save_to_history(filename: str, result: dict, model_name: str,
         folder_to_use = folder if folder is not None else existing.get("folder", "")
         source_to_use = source if source is not None else existing.get("source")
         name_to_use = original_name or existing.get("name") or _result_base(filename)
+        # task_type/filter_fillers: só conhecidos no momento do kickoff (status
+        # "queued"); chamadas posteriores (ex. status "done") não os repassam,
+        # então preservamos o que já foi salvo — usado por /api/retry para
+        # refazer com a MESMA escolha original (transcrever vs traduzir, filtro).
+        task_type_to_use = task_type if task_type is not None else existing.get("task_type", "transcribe")
+        filter_fillers_to_use = filter_fillers if filter_fillers is not None else existing.get("filter_fillers", False)
         entry = {
             "id":           filename,
             "file":         filename,
@@ -507,6 +517,8 @@ def _save_to_history(filename: str, result: dict, model_name: str,
             "queued_at":    existing.get("queued_at") or time.time(),
             "folder":       folder_to_use,
             "source":       source_to_use,
+            "task_type":      task_type_to_use,
+            "filter_fillers": filter_fillers_to_use,
             # Timing fields (filled during transcription by _update_history_status)
             "started_at":   existing.get("started_at"),
             "completed_at": existing.get("completed_at"),
@@ -1070,7 +1082,8 @@ async def api_transcribe(
               name=original_name, filename=filename)
 
     # Register immediately in history so it survives refresh
-    _save_to_history(filename, {}, model, status="queued", task_id=task_id, original_name=_result_base(original_name), folder=folder, source="upload")
+    _save_to_history(filename, {}, model, status="queued", task_id=task_id, original_name=_result_base(original_name),
+                     folder=folder, source="upload", task_type=task, filter_fillers=(filter_fillers == "true"))
     _save_media(filename, original_name, is_transcribed=True, status="queued")
 
     t = threading.Thread(
@@ -1430,11 +1443,15 @@ async def api_gaps(filename: str, min_gap: float = 1.0):
 # Shared kickoff so /api/transcribe-url (single) and /api/transcribe-batch (many)
 # don't duplicate yt-dlp setup, hook plumbing, and thread spawning.
 def _kickoff_url_transcription(url: str, model: str, language: str, task: str,
-                                filter_fillers: bool, folder: str) -> dict:
+                                filter_fillers: bool, folder: str,
+                                existing_filename: str | None = None) -> dict:
     task_id = str(uuid.uuid4())
     safe_name = re.sub(r'[^\w.-]', '_', url.split('/')[-1] or 'video')[:50] or 'video'
     original_name = f"{safe_name}.mp3"
-    filename = f"{task_id[:8]}_{original_name}"
+    # Retry: reaproveita o MESMO filename — atualiza o item já existente em
+    # history.json/media.json em vez de criar um novo (só um envio novo gera
+    # um filename fresco a partir do task_id).
+    filename = existing_filename or f"{task_id[:8]}_{original_name}"
     upload_path = os.path.join(UPLOAD_DIR, filename)
 
     _set_task(task_id, status="processing", progress=0, phase="download", phase_progress=0,
@@ -1460,7 +1477,8 @@ def _kickoff_url_transcription(url: str, model: str, language: str, task: str,
         'outtmpl': upload_path.replace('.mp3', '.%(ext)s'),
         'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3'}],
     })
-    _save_to_history(filename, {}, model, status="queued", task_id=task_id, original_name=_result_base(original_name), folder=folder, source="url")
+    _save_to_history(filename, {}, model, status="queued", task_id=task_id, original_name=_result_base(original_name),
+                     folder=folder, source="url", task_type=task, filter_fillers=filter_fillers)
     _save_media(filename, original_name, url=url, is_transcribed=True, status="queued")
 
     def _run_download_and_transcribe():
@@ -1475,18 +1493,18 @@ def _kickoff_url_transcription(url: str, model: str, language: str, task: str,
             if title:
                 _save_to_history(filename, {}, model, status="queued",
                                  task_id=task_id, original_name=title,
-                                 folder=folder, source="url")
+                                 folder=folder, source="url", task_type=task, filter_fillers=filter_fillers)
                 _save_media(filename, f"{title}.mp3", url=url,
                             is_transcribed=True, status="queued", force_name=True)
         except _UserCancelled:
-            _cleanup_task_files(task_id)   # drop partial/.part downloads (finding #5)
+            _cleanup_task_files(os.path.splitext(filename)[0])   # drop partial/.part downloads (finding #5)
             _update_history_status(filename, "cancelled")
             _save_media(filename, original_name, url=url, is_transcribed=True, status="cancelled")
             _set_task(task_id, status="cancelled", progress=0, phase="cancelled",
                       name="Download cancelado", filename=filename)
             return
         except Exception as e:
-            _cleanup_task_files(task_id)   # drop partial/.part downloads (finding #5)
+            _cleanup_task_files(os.path.splitext(filename)[0])   # drop partial/.part downloads (finding #5)
             _update_history_status(filename, "error", error=f"Erro ao baixar URL: {e}")
             _save_media(filename, original_name, url=url, is_transcribed=True, status="error")
             _set_task(task_id, status="error", progress=0, phase="error",
@@ -1502,8 +1520,11 @@ def _kickoff_url_transcription(url: str, model: str, language: str, task: str,
 
         final_path = upload_path if os.path.exists(upload_path) else upload_path.replace('.mp3', '') + '.mp3'
         if not os.path.exists(final_path):
+            # Busca pelo stem do FILENAME (não do task_id) — outtmpl foi construído
+            # a partir do filename, que num retry é reaproveitado sob um task_id novo.
+            search_prefix = os.path.splitext(filename)[0]
             for f in os.listdir(UPLOAD_DIR):
-                if task_id[:8] in f:
+                if search_prefix in f:
                     final_path = os.path.join(UPLOAD_DIR, f)
                     break
 
@@ -1597,13 +1618,116 @@ async def api_transcribe_batch(
         "task_ids":   [t for t in task_ids if t][:50],  # cap response size
     }
 
+# ── Retry — refazer manualmente um item com erro/cancelado ──────
+# O usuário seleciona itens (na tela de Transcrições OU na Biblioteca de
+# Mídia) e pede pra tentar de novo. O que é refeito depende do que foi
+# pedido originalmente:
+#   - havia uma entrada em history.json → era uma transcrição (upload ou URL);
+#     refaz com o MESMO modelo/idioma/modo/filtro salvos no momento do pedido.
+#     Se a fonte era uma URL, isso também baixa de novo (cobre o caso de o
+#     download ter sido o que falhou — "os dois" ficam cobertos pelo mesmo retry).
+#   - só havia entrada em media.json (sem history) → era um download avulso;
+#     refaz o download com a mesma URL (média/qualidade não são guardadas,
+#     então infere o tipo pela extensão do nome salvo e usa qualidade "best").
+_AUDIO_EXT_SET = {".mp3", ".m4a", ".aac", ".wav", ".ogg", ".opus", ".wma", ".flac"}
+
+def _retry_item(filename: str) -> dict:
+    filename = _safe_filename(filename)
+    hist_entry  = next((h for h in _load_history() if h.get("file") == filename), None)
+    media_entry = next((m for m in _load_media()   if m.get("file") == filename), None)
+
+    if hist_entry:
+        source = hist_entry.get("source") or ("url" if (media_entry and media_entry.get("url")) else "upload")
+        model  = hist_entry.get("mode") or "turbo"
+        lang   = hist_entry.get("lang") if hist_entry.get("lang") not in (None, "?") else "pt"
+        task_type = hist_entry.get("task_type") or "transcribe"
+        filter_fillers = bool(hist_entry.get("filter_fillers"))
+        folder = hist_entry.get("folder") or ""
+
+        if source == "url":
+            url = (media_entry or {}).get("url")
+            if not url:
+                raise HTTPException(400, "Não foi possível encontrar a URL original deste item.")
+            url = _validate_media_url(url)
+            res = _kickoff_url_transcription(url, model, lang, task_type, filter_fillers, folder,
+                                             existing_filename=filename)
+            return {"kind": "transcribe", "task_id": res["task_id"]}
+
+        # source == "upload": só é possível refazer se o arquivo original
+        # ainda estiver no disco (não temos como recuperar os bytes perdidos)
+        upload_path = os.path.join(UPLOAD_DIR, filename)
+        if not os.path.exists(upload_path):
+            raise HTTPException(400, "O arquivo original não está mais disponível — envie de novo para tentar.")
+        task_id = str(uuid.uuid4())
+        _set_task(task_id, status="queued", progress=0, name=hist_entry.get("name") or filename, filename=filename)
+        _save_to_history(filename, {}, model, status="queued", task_id=task_id,
+                         folder=folder, task_type=task_type, filter_fillers=filter_fillers)
+        t = threading.Thread(target=_run_transcription,
+                             args=(task_id, upload_path, filename, model, lang, task_type, filter_fillers),
+                             daemon=True)
+        t.start()
+        return {"kind": "transcribe", "task_id": task_id}
+
+    if media_entry:
+        url = media_entry.get("url")
+        if not url:
+            raise HTTPException(400, "Não há URL associada a este item — não é possível tentar de novo.")
+        url = _validate_media_url(url)
+        ext = os.path.splitext(media_entry.get("name") or filename)[1].lower()
+        media_type = "audio" if ext in _AUDIO_EXT_SET else "video"
+        res = _kickoff_download_only(url, media_type, "best", existing_filename=filename)
+        return {"kind": "download", "task_id": res["task_id"]}
+
+    raise HTTPException(404, "Item não encontrado em histórico nem em mídia.")
+
+@app.post("/api/retry/{filename}")
+async def api_retry(filename: str):
+    if not YT_DLP_OK:
+        raise HTTPException(400, "yt-dlp não instalado.")
+    return _retry_item(filename)
+
+@app.post("/api/retry-batch")
+async def api_retry_batch(files: str = Form(...)):
+    """`files` é um array JSON de filenames (mesmo id usado nas tabelas)."""
+    if not YT_DLP_OK:
+        raise HTTPException(400, "yt-dlp não instalado.")
+    try:
+        filenames = json.loads(files)
+        if not isinstance(filenames, list):
+            raise ValueError("files deve ser uma lista")
+    except (json.JSONDecodeError, ValueError) as e:
+        raise HTTPException(400, f"Parâmetro 'files' inválido: {e}")
+    if not filenames:
+        raise HTTPException(400, "Nenhum item selecionado")
+
+    results = []
+    for fn in filenames:
+        if not isinstance(fn, str):
+            continue
+        try:
+            r = _retry_item(fn)
+            results.append({"file": fn, "ok": True, **r})
+        except HTTPException as e:
+            results.append({"file": fn, "ok": False, "error": e.detail})
+        except Exception as e:
+            results.append({"file": fn, "ok": False, "error": str(e)})
+    return {
+        "submitted": sum(1 for r in results if r["ok"]),
+        "failed":    sum(1 for r in results if not r["ok"]),
+        "total":     len(results),
+        "results":   results[:100],
+    }
+
 def _run_download_only(task_id: str, url: str, media_type: str, quality: str,
                        subtitles: bool = False, sub_langs: str = "pt,en",
                        auto_subs: bool = False, thumbnail: bool = False,
-                       metadata: bool = False, audio_lang: str | None = None):
+                       metadata: bool = False, audio_lang: str | None = None,
+                       existing_filename: str | None = None):
     is_video = media_type == "video"
     ext = "mp4" if is_video else "mp3"
-    filename = f"{task_id[:8]}_download.{ext}"
+    # Retry: reaproveita o MESMO filename — atualiza o item já existente em
+    # media.json em vez de criar um novo.
+    filename = existing_filename or f"{task_id[:8]}_download.{ext}"
     try:
         _save_media(filename, f"Obtendo {'vídeo' if is_video else 'áudio'}...", url=url, is_transcribed=False, status="processing")
         _set_task(task_id, status="processing", progress=0,
@@ -1669,22 +1793,25 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str,
             
         actual_path = upload_path if os.path.exists(upload_path) else upload_path.replace(f'.{ext}', '') + f'.{ext}'
         if not os.path.exists(actual_path):
+            # Busca pelo stem do FILENAME (não do task_id) — outtmpl foi construído
+            # a partir do filename, que num retry é reaproveitado sob um task_id novo.
+            search_prefix = os.path.splitext(filename)[0]
             for f in os.listdir(UPLOAD_DIR):
-                if task_id[:8] in f:
+                if search_prefix in f:
                     actual_path = os.path.join(UPLOAD_DIR, f)
                     filename = f
                     break
-                    
+
         _save_media(filename, f"{title}.{ext}", url=url, is_transcribed=False, status="done")
         _set_task(task_id, status="done", progress=100, phase="done", phase_progress=100,
                   name=f"{title}.{ext}", filename=filename)
     except _UserCancelled:
-        _cleanup_task_files(task_id)   # remove partial/.part downloads (finding #5)
+        _cleanup_task_files(os.path.splitext(filename)[0])   # remove partial/.part downloads (finding #5)
         _save_media(filename, "Download cancelado", url=url, is_transcribed=False, status="cancelled")
         _set_task(task_id, status="cancelled", progress=0, phase="cancelled",
                   name="Download cancelado", filename=filename)
     except Exception as e:
-        _cleanup_task_files(task_id)   # remove partial/.part downloads (finding #5)
+        _cleanup_task_files(os.path.splitext(filename)[0])   # remove partial/.part downloads (finding #5)
         _save_media(filename, "Erro no Download", url=url, is_transcribed=False, status="error")
         _set_task(task_id, status="error", progress=0, phase="error",
                   name="Erro no Download", error=str(e), filename=filename)
@@ -1756,9 +1883,17 @@ async def api_resolve_playlist(url: str):
         "playlist_title": playlist_title,
     }
 
+
+# Teto de segurança para o TOTAL de downloads de uma chamada — importa quando
+# o modo lote combina várias URLs com "playlist inteira" ligado (cada uma
+# podendo expandir até 100 itens); sem isso, colar 10 links de playlist
+# poderia disparar 1000 downloads de uma vez.
+_ADVANCED_MAX_TOTAL_ITEMS = 150
+
 @app.post("/api/download-advanced")
 async def api_download_advanced(
-    url:        str = Form(...),
+    url:        str = Form(""),
+    urls:       str = Form(""),   # modo lote: uma URL por linha/vírgula
     media_type: str = Form("video"),
     quality:    str = Form("best"),
     playlist:   str = Form("false"),
@@ -1771,16 +1906,44 @@ async def api_download_advanced(
 ):
     if not YT_DLP_OK:
         raise HTTPException(400, "yt-dlp não instalado.")
-    url = _validate_media_url(url)
 
-    urls = [url]
-    if playlist == "true":
+    # Junta a URL única (modo normal) e/ou a lista em lote — dedup preservando
+    # ordem, pra colagens acidentalmente duplicadas não disparar 2x.
+    raw = ([url] if url and url.strip() else []) + re.split(r'[\n,;]+', urls or "")
+    seen: set = set()
+    seeds: list[str] = []
+    for u in raw:
+        u = (u or "").strip()
+        if not u or u in seen:
+            continue
+        seen.add(u)
+        seeds.append(u)
+    if not seeds:
+        raise HTTPException(400, "Informe ao menos uma URL")
+
+    validated_seeds = []
+    for u in seeds:
         try:
-            urls, _ = _resolve_playlist_urls(url)
-        except Exception as e:
-            raise HTTPException(400, f"Não foi possível ler a playlist: {e}")
-        if not urls:
-            raise HTTPException(400, "Nenhum vídeo encontrado nessa playlist.")
+            validated_seeds.append(_validate_media_url(u))
+        except HTTPException:
+            continue  # URL inválida — pula sem derrubar o restante do lote
+    if not validated_seeds:
+        raise HTTPException(400, "Nenhuma URL válida informada")
+
+    # "Playlist inteira" expande CADA seed (link único ou cada linha do lote)
+    final_urls: list[str] = []
+    if playlist == "true":
+        for seed in validated_seeds:
+            try:
+                expanded, _ = _resolve_playlist_urls(seed)
+            except Exception:
+                expanded = [seed]  # falhou ao expandir — tenta como item único mesmo assim
+            final_urls.extend(expanded)
+    else:
+        final_urls = validated_seeds
+
+    truncated = len(final_urls) > _ADVANCED_MAX_TOTAL_ITEMS
+    final_urls = final_urls[:_ADVANCED_MAX_TOTAL_ITEMS]
 
     advanced = dict(
         subtitles=subtitles == "true", sub_langs=sub_langs,
@@ -1788,19 +1951,20 @@ async def api_download_advanced(
         metadata=metadata == "true", audio_lang=(audio_lang or "").strip() or None,
     )
     task_ids: list[str | None] = []
-    for u in urls:
+    for u in final_urls:
         try:
             u = _validate_media_url(u)   # SSRF + scheme guard per URL (finding #10)
             res = _kickoff_download_only(u, media_type, quality, **advanced)
             task_ids.append(res["task_id"])
         except Exception:
-            # Não derruba o lote inteiro por causa de um item da playlist; pula.
+            # Não derruba o lote inteiro por causa de um item; pula.
             task_ids.append(None)
     return {
-        "submitted": sum(1 for t in task_ids if t),
-        "skipped":   sum(1 for t in task_ids if not t),
-        "total":     len(urls),
-        "task_ids":  [t for t in task_ids if t][:50],
+        "submitted":  sum(1 for t in task_ids if t),
+        "skipped":    sum(1 for t in task_ids if not t),
+        "total":      len(final_urls),
+        "truncated":  truncated,
+        "task_ids":   [t for t in task_ids if t][:50],
     }
 
 # ── Folders (nested, path-based) ───────────────────────────────
