@@ -21,6 +21,8 @@ async function init() {
   startAutoSync();
   // Non-blocking — banner appears later if there are old media files to clean
   checkOldMediaCleanup();
+  // Non-blocking — banner appears later if yt-dlp is outdated (may fail silently offline)
+  checkYtdlpOutdated();
 }
 
 async function resumeActivePolling() {
@@ -298,6 +300,28 @@ function _showDialog({ type, title, iconKind, iconColor, bodyBuilder, footBuilde
         if (firstBtn) firstBtn.focus();
       }
     }, 60);
+  });
+}
+
+// Diálogo informativo com um único botão — para avisos que não pedem
+// confirmação/cancelamento, só um "ok, entendi" (ex.: "reinicie o app").
+function showAlert({ title = 'Aviso', message = '', confirmText = 'OK', iconKind = 'info' } = {}) {
+  return _showDialog({
+    type: 'alert',
+    title,
+    iconKind,
+    bodyBuilder: ({ msg }) => {
+      msg.textContent = message;
+      msg.style.display = 'block';
+    },
+    footBuilder: (foot) => {
+      const ok = document.createElement('button');
+      ok.className = 'btn btn-primary-lg';
+      ok.style.width = '100%';
+      ok.textContent = confirmText;
+      ok.onclick = () => _dialogClose(true);
+      foot.appendChild(ok);
+    }
   });
 }
 
@@ -3155,6 +3179,65 @@ async function runOldMediaCleanup() {
     showToast('Erro de rede ao apagar arquivos.', 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Apagar agora'; }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  YT-DLP DESATUALIZADO — o YouTube muda o extrator com frequência; uma versão
+//  velha do yt-dlp costuma quebrar TODOS os downloads de uma vez só. Avisa
+//  proativamente e oferece atualização em um clique, em vez do usuário só
+//  descobrir isso quando downloads começam a falhar silenciosamente.
+// ═══════════════════════════════════════════════════════════════
+const _YTDLP_DISMISS_KEY = 'wt:ytdlp-dismissed-until';
+
+async function checkYtdlpOutdated() {
+  // Pula se o usuário dispensou o aviso recentemente (24h de cooldown)
+  try {
+    const until = parseFloat(localStorage.getItem(_YTDLP_DISMISS_KEY) || '0');
+    if (until && Date.now() < until) return;
+  } catch { /* localStorage pode estar bloqueado em alguns contextos — segue mesmo assim */ }
+
+  try {
+    const res = await fetch('/api/ytdlp/status');
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.outdated) return; // inclui o caso "latest desconhecido" (offline) — nunca alarma à toa
+
+    document.getElementById('ytdlp-installed-ver').textContent = data.installed || '?';
+    document.getElementById('ytdlp-latest-ver').textContent = data.latest || '?';
+    document.getElementById('ytdlp-outdated-banner').style.display = 'flex';
+  } catch { /* falha de rede — só não mostra o banner desta vez */ }
+}
+
+function dismissYtdlpBanner() {
+  // Dispensa por 24h para não incomodar a cada atualização de página.
+  try {
+    localStorage.setItem(_YTDLP_DISMISS_KEY, String(Date.now() + 24 * 3600 * 1000));
+  } catch {}
+  const banner = document.getElementById('ytdlp-outdated-banner');
+  if (banner) banner.style.display = 'none';
+}
+
+async function updateYtdlp() {
+  const btn = document.getElementById('ytdlp-update-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Atualizando…'; }
+  try {
+    const res = await fetch('/api/ytdlp/update', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast(data.detail || 'Erro ao atualizar.', 'error');
+      return;
+    }
+    document.getElementById('ytdlp-outdated-banner').style.display = 'none';
+    await showAlert({
+      title: 'Downloader atualizado',
+      message: 'A nova versão só entra em uso depois de reiniciar o app — feche e abra o Whisper Transcritor novamente antes de baixar do YouTube.',
+      confirmText: 'Entendi',
+    });
+  } catch {
+    showToast('Erro de rede ao atualizar.', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Atualizar agora'; }
   }
 }
 

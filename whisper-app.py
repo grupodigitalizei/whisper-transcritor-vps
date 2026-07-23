@@ -785,6 +785,86 @@ async def api_set_settings(
         raise HTTPException(400, "Nenhuma configuração informada")
     return _save_settings(new)
 
+# ── yt-dlp version check & self-update ──────────────────────────
+# YouTube changes its player/signature logic often, and yt-dlp needs frequent
+# updates to keep up — a stale yt-dlp is the #1 cause of "every YouTube
+# download suddenly fails at once" (e.g. an internal logger/PO-token API
+# mismatch inside a specific yt-dlp release). These endpoints let the UI
+# surface that proactively and offer a one-click fix instead of the user
+# discovering it only after downloads start failing silently.
+_YTDLP_UPDATE_CHECK_CACHE: dict = {"checked_at": 0.0, "latest": None}
+_YTDLP_UPDATE_CHECK_TTL   = 6 * 3600  # 6h — avoid hammering PyPI on every page load
+
+def _ytdlp_installed_version() -> str | None:
+    if not YT_DLP_OK:
+        return None
+    try:
+        return yt_dlp.version.__version__
+    except Exception:
+        return None
+
+def _version_tuple(v: str) -> tuple:
+    return tuple(int(p) for p in re.findall(r"\d+", v))
+
+def _ytdlp_latest_version() -> str | None:
+    """Best-effort PyPI lookup, cached for a few hours. Returns None (never
+    raises) when offline or PyPI is unreachable — callers must treat None as
+    'unknown', not 'up to date', so a network hiccup never triggers a false
+    outdated warning."""
+    now = time.time()
+    cached = _YTDLP_UPDATE_CHECK_CACHE["latest"]
+    if cached and (now - _YTDLP_UPDATE_CHECK_CACHE["checked_at"]) < _YTDLP_UPDATE_CHECK_TTL:
+        return cached
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            "https://pypi.org/pypi/yt-dlp/json",
+            headers={"User-Agent": "whisper-transcritor-update-check"},
+        )
+        with urllib.request.urlopen(req, timeout=4) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        latest = data.get("info", {}).get("version")
+        if latest:
+            _YTDLP_UPDATE_CHECK_CACHE["latest"]     = latest
+            _YTDLP_UPDATE_CHECK_CACHE["checked_at"] = now
+        return latest
+    except Exception:
+        return None
+
+@app.get("/api/ytdlp/status")
+async def api_ytdlp_status():
+    """Reports installed vs latest yt-dlp version so the UI can warn the user
+    proactively — an outdated yt-dlp is the most common cause of YouTube
+    downloads suddenly failing across the board."""
+    installed = _ytdlp_installed_version()
+    latest    = _ytdlp_latest_version()
+    outdated  = False
+    if installed and latest:
+        try:
+            outdated = _version_tuple(installed) < _version_tuple(latest)
+        except Exception:
+            outdated = False
+    return {"installed": installed, "latest": latest, "outdated": outdated}
+
+@app.post("/api/ytdlp/update")
+async def api_ytdlp_update():
+    """Upgrades yt-dlp (+ yt-dlp-ejs) in place via pip, in the same venv this
+    server runs from. Takes effect only after the server restarts — the
+    module already imported in this process stays on the old version until
+    then — so the response makes that explicit for the UI to relay."""
+    import subprocess, sys
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-U", "yt-dlp", "yt-dlp-ejs"],
+            capture_output=True, text=True, timeout=90,
+        )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, "Tempo esgotado ao atualizar — verifique sua conexão e tente de novo.")
+    if result.returncode != 0:
+        raise HTTPException(500, f"Falha ao atualizar: {(result.stderr or result.stdout)[-500:]}")
+    _YTDLP_UPDATE_CHECK_CACHE["latest"] = None  # força recheck na próxima consulta a /status
+    return {"ok": True, "restart_required": True, "output": result.stdout[-800:]}
+
 @app.get("/api/stats")
 async def api_stats():
     history = _load_history()

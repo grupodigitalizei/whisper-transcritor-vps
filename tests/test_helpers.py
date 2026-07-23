@@ -168,3 +168,16 @@ def test_display_name_rejects_bad_input(bad):
 ])
 def test_media_type_for(filename, expected):
     assert app._media_type_for(filename) == expected
+
+
+# ── _version_tuple (comparação de versão do yt-dlp) ────────────────────────────
+def test_version_tuple_handles_zero_padding():
+    # yt_dlp.version.__version__ vem zero-padded ("2026.07.04"); PyPI reporta
+    # sem padding ("2026.7.4") — ambos devem comparar como iguais.
+    assert app._version_tuple("2026.07.04") == app._version_tuple("2026.7.4")
+
+
+def test_version_tuple_orders_correctly():
+    assert app._version_tuple("2026.6.9") < app._version_tuple("2026.7.4")
+    assert app._version_tuple("2026.7.4") < app._version_tuple("2027.1.1")
+    assert not (app._version_tuple("2026.7.4") < app._version_tuple("2026.7.4"))

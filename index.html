@@ -119,6 +119,21 @@
     </div>
   </div>
 
+  <!-- yt-dlp desatualizado — causa mais comum de "todo download do YouTube falhou de uma vez".
+       Fica oculto por padrão; mostrado por checkYtdlpOutdated() quando há versão mais nova. -->
+  <div class="cleanup-banner" id="ytdlp-outdated-banner" role="status" aria-live="polite" style="display:none">
+    <svg class="cleanup-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    <div class="cleanup-text">
+      <strong>Downloader do YouTube desatualizado</strong> (<span id="ytdlp-installed-ver">—</span> instalado,
+      <span id="ytdlp-latest-ver">—</span> disponível) — o YouTube muda com frequência e uma versão antiga
+      costuma fazer <strong>todos os downloads falharem de uma vez</strong>.
+    </div>
+    <div class="cleanup-actions">
+      <button type="button" class="btn btn-ghost" onclick="dismissYtdlpBanner()">Lembrar depois</button>
+      <button type="button" class="btn btn-primary" onclick="updateYtdlp()" id="ytdlp-update-btn">Atualizar agora</button>
+    </div>
+  </div>
+
     <!-- Files Card -->
     <div class="card" id="card-transcriptions" role="tabpanel" aria-labelledby="main-tab-transcriptions">
 
