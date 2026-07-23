@@ -29,6 +29,10 @@
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         Biblioteca de Mídia
       </button>
+      <button type="button" id="main-tab-advanced" class="app-nav-item" role="tab" aria-selected="false" aria-controls="card-advanced" tabindex="-1" onclick="switchMainTab('advanced')" onkeydown="onTablistKey(event, 'main')">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/><circle cx="18.5" cy="17.5" r="3.2"/><path d="M18.5 16.3v2.4M17.3 17.5h2.4"/></svg>
+        Download Avançado
+      </button>
       <button type="button" class="app-nav-item" onclick="openSettings()">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         Configurações
@@ -320,6 +324,128 @@
       </div>
     </div>
   </div><!-- /#card-media -->
+
+    <!-- Advanced Download Card -->
+    <div class="card" id="card-advanced" style="display:none;" role="tabpanel" aria-labelledby="main-tab-advanced">
+    <div class="card-header">
+      <div class="card-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+        Download Avançado
+      </div>
+    </div>
+
+    <div class="adv-dl-body">
+      <p class="adv-dl-intro">
+        Baixe vídeo ou áudio de qualquer URL suportada pelo yt-dlp (YouTube, Vimeo, TikTok, etc.) —
+        com playlist inteira, legendas, metadados, thumbnail e escolha de faixa de áudio.
+      </p>
+
+      <label class="field-label" for="adv-url-input">URL do vídeo, áudio ou playlist</label>
+      <input id="adv-url-input" type="url" class="select"
+        placeholder="https://youtube.com/watch?v=... ou link de playlist"
+        aria-label="URL para download avançado"
+        style="height:40px;padding:0 12px;margin-bottom:16px" />
+
+      <div class="seg-tabs" role="tablist" aria-label="Tipo de mídia" style="max-width:280px;margin-bottom:16px">
+        <button type="button" id="adv-type-video" class="seg-tab" role="tab" aria-selected="true" tabindex="0" onclick="setAdvType('video')" onkeydown="onTablistKey(event, 'adv-type')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right:5px"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+          Vídeo
+        </button>
+        <button type="button" id="adv-type-audio" class="seg-tab" role="tab" aria-selected="false" tabindex="-1" onclick="setAdvType('audio')" onkeydown="onTablistKey(event, 'adv-type')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right:5px"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+          Áudio
+        </button>
+      </div>
+
+      <div style="display:flex; gap:12px; margin-bottom:18px">
+        <div style="flex:1">
+          <label class="field-label" for="adv-quality-select">Qualidade</label>
+          <select id="adv-quality-select" class="select" aria-label="Qualidade">
+            <option value="best">Melhor (Máxima)</option>
+            <option value="1080p">1080p</option>
+            <option value="720p">720p</option>
+            <option value="480p">480p</option>
+          </select>
+        </div>
+        <div style="flex:1">
+          <label class="field-label" for="adv-audio-lang">Faixa de áudio (opcional)</label>
+          <input id="adv-audio-lang" type="text" class="select"
+            placeholder="ex.: pt, en, es — deixe vazio para o padrão"
+            aria-label="Idioma da faixa de áudio (dublagem)"
+            style="height:40px;padding:0 12px" />
+        </div>
+      </div>
+
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <div class="toggle-label">Baixar playlist inteira</div>
+          <div class="toggle-sub">A URL é de uma playlist/canal — baixa cada vídeo (até 100), um item por vídeo na Biblioteca</div>
+        </div>
+        <label class="switch" aria-label="Baixar playlist inteira">
+          <input type="checkbox" id="adv-playlist-toggle" />
+          <span class="switch-track"></span>
+          <span class="switch-thumb"></span>
+        </label>
+      </div>
+
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <div class="toggle-label">Baixar legendas</div>
+          <div class="toggle-sub">Embutidas no arquivo (.srt) — quando o vídeo tiver legendas disponíveis</div>
+        </div>
+        <label class="switch" aria-label="Baixar legendas">
+          <input type="checkbox" id="adv-subs-toggle" onchange="_toggleAdvSubOptions()" />
+          <span class="switch-track"></span>
+          <span class="switch-thumb"></span>
+        </label>
+      </div>
+      <div id="adv-subs-options" style="display:none">
+        <div style="display:flex; gap:12px; align-items:flex-end; margin:-4px 0 6px">
+          <div style="flex:1">
+            <label class="field-label" for="adv-sub-langs">Idiomas das legendas (separados por vírgula)</label>
+            <input id="adv-sub-langs" type="text" class="select" value="pt,en"
+              aria-label="Idiomas das legendas" style="height:36px;padding:0 10px" />
+          </div>
+        </div>
+        <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--slate-600);margin-bottom:16px;cursor:pointer">
+          <input type="checkbox" id="adv-auto-subs" class="checkbox" style="width:16px;height:16px" />
+          Incluir legendas automáticas (geradas por IA, quando não houver manuais)
+        </label>
+      </div>
+
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <div class="toggle-label">Incluir metadados</div>
+          <div class="toggle-sub">Descrição, capítulos e tags embutidos no arquivo</div>
+        </div>
+        <label class="switch" aria-label="Incluir metadados">
+          <input type="checkbox" id="adv-metadata-toggle" />
+          <span class="switch-track"></span>
+          <span class="switch-thumb"></span>
+        </label>
+      </div>
+
+      <div class="toggle-row" style="margin-bottom:22px">
+        <div class="toggle-info">
+          <div class="toggle-label">Baixar capa/thumbnail</div>
+          <div class="toggle-sub">Embutida como capa (thumbnail/cover art) do arquivo</div>
+        </div>
+        <label class="switch" aria-label="Baixar thumbnail">
+          <input type="checkbox" id="adv-thumb-toggle" />
+          <span class="switch-track"></span>
+          <span class="switch-thumb"></span>
+        </label>
+      </div>
+
+      <button type="button" class="btn btn-primary-lg" id="adv-download-btn" onclick="submitAdvancedDownload()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+        BAIXAR
+      </button>
+      <p style="font-size:11.5px;color:var(--slate-500);margin-top:12px">
+        Requer <strong>yt-dlp e ffmpeg</strong>. Os downloads aparecem na <strong>Biblioteca de Mídia</strong> com progresso em tempo real.
+      </p>
+    </div>
+  </div><!-- /#card-advanced -->
 
     </div><!-- /.app-content -->
   </div><!-- /.app-main -->

@@ -1597,7 +1597,10 @@ async def api_transcribe_batch(
         "task_ids":   [t for t in task_ids if t][:50],  # cap response size
     }
 
-def _run_download_only(task_id: str, url: str, media_type: str, quality: str):
+def _run_download_only(task_id: str, url: str, media_type: str, quality: str,
+                       subtitles: bool = False, sub_langs: str = "pt,en",
+                       auto_subs: bool = False, thumbnail: bool = False,
+                       metadata: bool = False, audio_lang: str | None = None):
     is_video = media_type == "video"
     ext = "mp4" if is_video else "mp3"
     filename = f"{task_id[:8]}_download.{ext}"
@@ -1624,19 +1627,40 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str):
 
         ydl_opts = _build_ydl_opts(url, _hook)
 
+        # Faixa de áudio (dublagem): filtra o componente de áudio por idioma —
+        # cai de volta pro melhor disponível se o idioma pedido não existir.
+        audio_sel = f'bestaudio[language^={audio_lang}]/bestaudio' if audio_lang else 'bestaudio'
+
         if is_video:
-            if quality == '1080p': format_str = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best'
-            elif quality == '720p': format_str = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
-            elif quality == '480p': format_str = 'bestvideo[height<=480]+bestaudio/best[height<=480]/best'
-            else: format_str = 'bestvideo+bestaudio/best'
-            ydl_opts['format'] = format_str
+            height_caps = {'1080p': 1080, '720p': 720, '480p': 480}
+            video_sel = f'bestvideo[height<={height_caps[quality]}]' if quality in height_caps else 'bestvideo'
+            ydl_opts['format'] = f'{video_sel}+{audio_sel}/best'
             ydl_opts['merge_output_format'] = 'mp4'
             ydl_opts['outtmpl'] = upload_path.replace('.mp4', '.%(ext)s')
         else:
-            format_str = 'worstaudio/worst' if quality == 'worst' else 'bestaudio/best'
-            ydl_opts['format'] = format_str
+            worst_sel = f'worstaudio[language^={audio_lang}]/worstaudio' if audio_lang else 'worstaudio'
+            ydl_opts['format'] = worst_sel if quality == 'worst' else audio_sel
             ydl_opts['outtmpl'] = upload_path.replace('.mp3', '.%(ext)s')
             ydl_opts['postprocessors'] = [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3'}]
+
+        # Extras opcionais (Download Avançado): legendas, thumbnail e metadados
+        # embutidos no próprio arquivo — mantém o modelo de "1 arquivo por item"
+        # em vez de espalhar .srt/.jpg soltos que o app não rastreia.
+        # Legendas só fazem sentido em vídeo — um container de áudio não tem
+        # como embutir uma trilha de legenda, e escrevê-la à parte deixaria um
+        # .srt órfão no disco que nenhuma entrada do catálogo aponta para.
+        if subtitles and is_video:
+            ydl_opts['writesubtitles'] = True
+            ydl_opts['writeautomaticsub'] = auto_subs
+            ydl_opts['subtitleslangs'] = [l.strip() for l in (sub_langs or '').split(',') if l.strip()] or ['pt']
+            ydl_opts.setdefault('postprocessors', []).append({'key': 'FFmpegSubtitlesConvertor', 'format': 'srt'})
+            ydl_opts['postprocessors'].append({'key': 'FFmpegEmbedSubtitle'})
+        if thumbnail:
+            ydl_opts['writethumbnail'] = True
+            ydl_opts.setdefault('postprocessors', []).append({'key': 'EmbedThumbnail'})
+        if metadata:
+            ydl_opts.setdefault('postprocessors', []).append(
+                {'key': 'FFmpegMetadata', 'add_metadata': True, 'add_chapters': True})
 
         with _download_sem:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -1665,12 +1689,15 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str):
         _set_task(task_id, status="error", progress=0, phase="error",
                   name="Erro no Download", error=str(e), filename=filename)
 
-# Thin shared kickoff so single + batch download-only paths spawn the same
-# threaded worker. Returns dict with task_id so callers can poll progress.
-def _kickoff_download_only(url: str, media_type: str, quality: str) -> dict:
+# Thin shared kickoff so single + batch + advanced download-only paths spawn
+# the same threaded worker. Returns dict with task_id so callers can poll
+# progress. The extra kwargs (subtitles/thumbnail/metadata/audio_lang) are
+# the "Download Avançado" options — every existing caller keeps working
+# unchanged since they all default to off.
+def _kickoff_download_only(url: str, media_type: str, quality: str, **advanced) -> dict:
     task_id = str(uuid.uuid4())
     t = threading.Thread(target=_run_download_only,
-                         args=(task_id, url, media_type, quality), daemon=True)
+                         args=(task_id, url, media_type, quality), kwargs=advanced, daemon=True)
     t.start()
     return {"task_id": task_id}
 
@@ -1686,6 +1713,95 @@ async def api_yt_download_only(
     url = _validate_media_url(url)   # SSRF + scheme guard (finding #10)
     res = _kickoff_download_only(url, media_type, quality)
     return {"message": "Download_start", "task_id": res["task_id"]}
+
+# ── Download Avançado — playlist, legendas, metadados, thumbnail, faixa de
+# áudio. Reaproveita _kickoff_download_only/_run_download_only (mesma fila,
+# mesmo polling de progresso, mesmo destino na Biblioteca de Mídia) — só
+# adiciona a expansão de playlist e o repasse das opções extras.
+_ADVANCED_MAX_PLAYLIST_ITEMS = 100
+
+def _resolve_playlist_urls(url: str) -> tuple[list[str], str | None]:
+    """extract_flat (sem baixar nada) para listar os vídeos de uma playlist/canal.
+    Retorna (urls, playlist_title). Se a URL não for uma playlist, retorna [url]."""
+    opts = _build_ydl_opts(url, lambda d: None, base={'extract_flat': True, 'skip_download': True})
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+    entries = (info or {}).get('entries')
+    if not entries:
+        return [url], None
+    urls = []
+    for e in entries:
+        if not e:
+            continue
+        u = e.get('webpage_url') or e.get('url') or (f"https://www.youtube.com/watch?v={e['id']}" if e.get('id') else None)
+        if u:
+            urls.append(u)
+    return urls[:_ADVANCED_MAX_PLAYLIST_ITEMS], (info or {}).get('title')
+
+@app.get("/api/resolve-playlist")
+async def api_resolve_playlist(url: str):
+    """Deixa a UI mostrar 'N vídeos encontrados' e pedir confirmação antes de
+    disparar vários downloads de uma vez."""
+    if not YT_DLP_OK:
+        raise HTTPException(400, "yt-dlp não instalado.")
+    url = _validate_media_url(url)
+    try:
+        urls, playlist_title = _resolve_playlist_urls(url)
+    except Exception as e:
+        raise HTTPException(400, f"Não foi possível ler a URL: {e}")
+    return {
+        "is_playlist":    len(urls) > 1 or bool(playlist_title),
+        "count":          len(urls),
+        "truncated":      len(urls) >= _ADVANCED_MAX_PLAYLIST_ITEMS,
+        "playlist_title": playlist_title,
+    }
+
+@app.post("/api/download-advanced")
+async def api_download_advanced(
+    url:        str = Form(...),
+    media_type: str = Form("video"),
+    quality:    str = Form("best"),
+    playlist:   str = Form("false"),
+    subtitles:  str = Form("false"),
+    sub_langs:  str = Form("pt,en"),
+    auto_subs:  str = Form("false"),
+    thumbnail:  str = Form("false"),
+    metadata:   str = Form("false"),
+    audio_lang: str = Form(""),
+):
+    if not YT_DLP_OK:
+        raise HTTPException(400, "yt-dlp não instalado.")
+    url = _validate_media_url(url)
+
+    urls = [url]
+    if playlist == "true":
+        try:
+            urls, _ = _resolve_playlist_urls(url)
+        except Exception as e:
+            raise HTTPException(400, f"Não foi possível ler a playlist: {e}")
+        if not urls:
+            raise HTTPException(400, "Nenhum vídeo encontrado nessa playlist.")
+
+    advanced = dict(
+        subtitles=subtitles == "true", sub_langs=sub_langs,
+        auto_subs=auto_subs == "true", thumbnail=thumbnail == "true",
+        metadata=metadata == "true", audio_lang=(audio_lang or "").strip() or None,
+    )
+    task_ids: list[str | None] = []
+    for u in urls:
+        try:
+            u = _validate_media_url(u)   # SSRF + scheme guard per URL (finding #10)
+            res = _kickoff_download_only(u, media_type, quality, **advanced)
+            task_ids.append(res["task_id"])
+        except Exception:
+            # Não derruba o lote inteiro por causa de um item da playlist; pula.
+            task_ids.append(None)
+    return {
+        "submitted": sum(1 for t in task_ids if t),
+        "skipped":   sum(1 for t in task_ids if not t),
+        "total":     len(urls),
+        "task_ids":  [t for t in task_ids if t][:50],
+    }
 
 # ── Folders (nested, path-based) ───────────────────────────────
 # Folder paths use '/' as separator, e.g. "Projetos/Cliente X/Q1".

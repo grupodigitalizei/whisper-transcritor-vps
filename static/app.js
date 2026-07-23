@@ -2198,8 +2198,9 @@ function switchTab(tab) {
 // Roving-tabindex keyboard handler for tablists (ArrowLeft/Right/Home/End).
 // Group = 'main' for the page tabs, 'modal' for the upload modal tabs.
 const _TABLIST_GROUPS = {
-  main:  ['main-tab-transcriptions', 'main-tab-media'],
+  main:  ['main-tab-transcriptions', 'main-tab-media', 'main-tab-advanced'],
   modal: ['tab-file', 'tab-url', 'tab-batch'],
+  'adv-type': ['adv-type-video', 'adv-type-audio'],
 };
 function onTablistKey(e, group) {
   const ids = _TABLIST_GROUPS[group];
@@ -2217,8 +2218,14 @@ function onTablistKey(e, group) {
   target.click(); // activate on arrow (matches automatic-activation pattern)
 }
 
+const _MAIN_TAB_TITLES = {
+  transcriptions: 'Transcrições',
+  media:          'Biblioteca de Mídia',
+  advanced:       'Download Avançado',
+};
+
 function switchMainTab(tab) {
-  ['transcriptions', 'media'].forEach(t => {
+  ['transcriptions', 'media', 'advanced'].forEach(t => {
     const pressed = t === tab;
     const btn = document.getElementById('main-tab-' + t);
     btn.setAttribute('aria-selected', pressed);
@@ -2227,7 +2234,7 @@ function switchMainTab(tab) {
     // Título do header acompanha a seção ativa
     if (pressed) {
       const title = document.getElementById('page-title');
-      if (title) title.textContent = t === 'media' ? 'Biblioteca de Mídia' : 'Transcrições';
+      if (title) title.textContent = _MAIN_TAB_TITLES[t];
     }
     // Use '' to clear the inline style so the element falls back to its CSS
     // rule. #card-transcriptions is .card-with-sidebar (display:grid on desktop,
@@ -2699,6 +2706,134 @@ function toggleAdvanced() {
   const open  = panel.classList.toggle('open');
   btn.classList.toggle('open', open);
   btn.setAttribute('aria-expanded', open);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  DOWNLOAD AVANÇADO — aba dedicada (sidebar): áudio/vídeo, playlist inteira,
+//  legendas, metadados e thumbnail embutidos, faixa de áudio por idioma.
+// ═══════════════════════════════════════════════════════════════
+function setAdvType(type) {
+  ['video', 'audio'].forEach(t => {
+    const btn = document.getElementById('adv-type-' + t);
+    btn.setAttribute('aria-selected', t === type);
+    btn.tabIndex = t === type ? 0 : -1;
+  });
+  // Qualidade não se aplica do mesmo jeito a áudio — troca as opções do select
+  const q = document.getElementById('adv-quality-select');
+  if (q) {
+    q.innerHTML = type === 'video'
+      ? `<option value="best">Melhor (Máxima)</option>
+         <option value="1080p">1080p</option>
+         <option value="720p">720p</option>
+         <option value="480p">480p</option>`
+      : `<option value="best">Melhor Original</option>
+         <option value="worst">Menor Espaço</option>`;
+  }
+  // Legendas só existem embutidas em vídeo — em áudio não há onde colocá-las,
+  // então desliga e trava o toggle pra não gerar um .srt órfão no disco.
+  const subsToggle = document.getElementById('adv-subs-toggle');
+  const subsRow    = subsToggle?.closest('.toggle-row');
+  if (subsToggle) {
+    subsToggle.disabled = type === 'audio';
+    if (type === 'audio' && subsToggle.checked) {
+      subsToggle.checked = false;
+      _toggleAdvSubOptions();
+    }
+    subsRow?.classList.toggle('toggle-row-disabled', type === 'audio');
+    const sub = subsRow?.querySelector('.toggle-sub');
+    if (sub) {
+      sub.textContent = type === 'audio'
+        ? 'Só disponível para vídeo — áudio não tem onde embutir a legenda'
+        : 'Embutidas no arquivo (.srt) — quando o vídeo tiver legendas disponíveis';
+    }
+  }
+}
+
+function _toggleAdvSubOptions() {
+  const on = document.getElementById('adv-subs-toggle').checked;
+  document.getElementById('adv-subs-options').style.display = on ? 'block' : 'none';
+}
+
+async function submitAdvancedDownload() {
+  const url = document.getElementById('adv-url-input').value.trim();
+  if (!url) { showToast('Cole uma URL primeiro.', 'error'); return; }
+  if (!/^https?:\/\//i.test(url)) { showToast('URL inválida — use http:// ou https://', 'error'); return; }
+
+  const mediaType   = document.getElementById('adv-type-video').getAttribute('aria-selected') === 'true' ? 'video' : 'audio';
+  const quality     = document.getElementById('adv-quality-select').value;
+  const audioLang   = document.getElementById('adv-audio-lang').value.trim();
+  const isPlaylist  = document.getElementById('adv-playlist-toggle').checked;
+  const subtitles   = document.getElementById('adv-subs-toggle').checked;
+  const subLangs    = document.getElementById('adv-sub-langs').value.trim() || 'pt,en';
+  const autoSubs    = document.getElementById('adv-auto-subs').checked;
+  const metadata    = document.getElementById('adv-metadata-toggle').checked;
+  const thumbnail   = document.getElementById('adv-thumb-toggle').checked;
+
+  const btn = document.getElementById('adv-download-btn');
+
+  // Playlist: resolve primeiro pra mostrar quantos vídeos foram encontrados e
+  // pedir confirmação antes de disparar um monte de downloads de uma vez.
+  if (isPlaylist) {
+    btn.disabled = true;
+    let info;
+    try {
+      const r = await fetch(`/api/resolve-playlist?url=${encodeURIComponent(url)}`);
+      info = await r.json().catch(() => ({}));
+      if (!r.ok) { showToast(info.detail || 'Erro ao ler a playlist.', 'error'); return; }
+    } catch {
+      showToast('Erro de rede ao ler a playlist.', 'error');
+      return;
+    } finally {
+      btn.disabled = false;
+    }
+    if (!info.is_playlist || info.count <= 1) {
+      showToast('Essa URL não parece ser uma playlist — baixando como um único item.', '');
+    } else {
+      const ok = await showConfirm({
+        title: `Baixar ${info.count} vídeo${info.count === 1 ? '' : 's'}?`,
+        message: `${info.playlist_title ? `Playlist "${info.playlist_title}" — ` : ''}` +
+          `${info.count} vídeo${info.count === 1 ? '' : 's'} encontrado${info.count === 1 ? '' : 's'}` +
+          (info.truncated ? ' (limite de 100 por vez — o restante fica de fora).' : '.') +
+          ' Cada um vira um item separado na Biblioteca de Mídia.',
+        confirmText: 'Baixar todos',
+      });
+      if (!ok) return;
+    }
+  }
+
+  btn.disabled = true;
+  const origLabel = btn.innerHTML;
+  btn.innerHTML = 'Enviando…';
+  try {
+    const fd = new FormData();
+    fd.append('url', url);
+    fd.append('media_type', mediaType);
+    fd.append('quality', quality);
+    fd.append('playlist', isPlaylist ? 'true' : 'false');
+    fd.append('subtitles', subtitles ? 'true' : 'false');
+    fd.append('sub_langs', subLangs);
+    fd.append('auto_subs', autoSubs ? 'true' : 'false');
+    fd.append('metadata', metadata ? 'true' : 'false');
+    fd.append('thumbnail', thumbnail ? 'true' : 'false');
+    fd.append('audio_lang', audioLang);
+    const res = await fetch('/api/download-advanced', { method: 'POST', body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast(data.detail || 'Erro ao iniciar download.', 'error'); return; }
+    showToast(
+      data.total > 1
+        ? `${data.submitted}/${data.total} downloads iniciados.`
+        : 'Download iniciado.',
+      'success');
+    document.getElementById('adv-url-input').value = '';
+    // Downloads aparecem (com progresso ao vivo) na Biblioteca de Mídia —
+    // o polling já existente (_ensureMediaProgressPolling) cuida do resto.
+    switchMainTab('media');
+  } catch {
+    showToast('Erro de rede ao iniciar download.', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = origLabel;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
