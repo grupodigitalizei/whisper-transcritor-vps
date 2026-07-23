@@ -1656,6 +1656,23 @@ def _retry_item(filename: str) -> dict:
         task_type = hist_entry.get("task_type") or "transcribe"
         filter_fillers = bool(hist_entry.get("filter_fillers"))
         folder = hist_entry.get("folder") or ""
+        upload_path = os.path.join(UPLOAD_DIR, filename)
+
+        # O arquivo original (upload OU já baixado de uma URL antes) ainda
+        # está no disco — não baixa de novo, só transcreve direto. Cobre o
+        # caso comum de o download ter dado certo e só a transcrição ter
+        # falhado depois (ex.: erro do Whisper) — refazer o download seria
+        # desnecessário e mais lento.
+        if os.path.exists(upload_path):
+            task_id = str(uuid.uuid4())
+            _set_task(task_id, status="queued", progress=0, name=hist_entry.get("name") or filename, filename=filename)
+            _save_to_history(filename, {}, model, status="queued", task_id=task_id,
+                             folder=folder, task_type=task_type, filter_fillers=filter_fillers)
+            t = threading.Thread(target=_run_transcription,
+                                 args=(task_id, upload_path, filename, model, lang, task_type, filter_fillers),
+                                 daemon=True)
+            t.start()
+            return {"kind": "transcribe", "task_id": task_id}
 
         if source == "url":
             url = (media_entry or {}).get("url")
@@ -1666,20 +1683,9 @@ def _retry_item(filename: str) -> dict:
                                              existing_filename=filename)
             return {"kind": "transcribe", "task_id": res["task_id"]}
 
-        # source == "upload": só é possível refazer se o arquivo original
-        # ainda estiver no disco (não temos como recuperar os bytes perdidos)
-        upload_path = os.path.join(UPLOAD_DIR, filename)
-        if not os.path.exists(upload_path):
-            raise HTTPException(400, "O arquivo original não está mais disponível — envie de novo para tentar.")
-        task_id = str(uuid.uuid4())
-        _set_task(task_id, status="queued", progress=0, name=hist_entry.get("name") or filename, filename=filename)
-        _save_to_history(filename, {}, model, status="queued", task_id=task_id,
-                         folder=folder, task_type=task_type, filter_fillers=filter_fillers)
-        t = threading.Thread(target=_run_transcription,
-                             args=(task_id, upload_path, filename, model, lang, task_type, filter_fillers),
-                             daemon=True)
-        t.start()
-        return {"kind": "transcribe", "task_id": task_id}
+        # source == "upload" e o arquivo já não existe mais — não tem como
+        # recuperar os bytes perdidos, só reenviando manualmente.
+        raise HTTPException(400, "O arquivo original não está mais disponível — envie de novo para tentar.")
 
     if media_entry:
         url = media_entry.get("url")
