@@ -20,7 +20,7 @@ Transcritor de áudio e vídeo **100% local** usando [OpenAI Whisper](https://gi
 ## 🖥️ Requisitos
 
 - macOS (testado) ou Linux
-- Python 3.9+
+- Python 3.10+ (o `yt-dlp-ejs`, usado para baixar do YouTube, exige 3.10+)
 - ffmpeg
 
 ---
@@ -46,23 +46,43 @@ brew install ffmpeg
 sudo apt update && sudo apt install ffmpeg
 ```
 
-### 3. Instalar as dependências Python
+### 3. Criar o ambiente virtual e instalar as dependências
 
 ```bash
-pip3 install openai-whisper fastapi uvicorn python-multipart
+python3 -m venv venv
+./venv/bin/python -m pip install -r requirements.txt
 ```
 
 > **Nota:** Na primeira execução, o Whisper vai baixar o modelo escolhido automaticamente. O modelo `turbo` (~800 MB) é o recomendado.
+>
+> **Importante:** use sempre `./venv/bin/python`, nunca o `python3` do sistema. O
+> `yt-dlp` (usado para baixar do YouTube) precisa de atualizações frequentes —
+> rodando fora do venv, o botão "Atualizar agora" da tela inicial tenta
+> atualizar o Python errado (o do sistema) e falha silenciosamente.
 
 ---
 
 ## ▶️ Executar
 
 ```bash
-python3 whisper-app.py
+./venv/bin/python whisper-app.py
 ```
 
 Abra o navegador em: **http://127.0.0.1:7860**
+
+### Manter o yt-dlp atualizado
+
+O YouTube muda seu player com frequência, e uma versão antiga do `yt-dlp`
+costuma quebrar **todos** os downloads de uma vez. Para atualizar manualmente:
+
+```bash
+./venv/bin/python -m pip install -U yt-dlp yt-dlp-ejs
+```
+
+A tela inicial do app também avisa automaticamente quando há uma versão mais
+nova disponível, com um botão de atualização — mas ele só funciona
+corretamente se o app estiver rodando via `./venv/bin/python` (veja a nota
+acima).
 
 ---
 

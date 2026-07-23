@@ -873,6 +873,19 @@ async def api_ytdlp_update():
     except subprocess.TimeoutExpired:
         raise HTTPException(504, "Tempo esgotado ao atualizar — verifique sua conexão e tente de novo.")
     if result.returncode != 0:
+        # yt-dlp-ejs exige Python 3.10+. Se o servidor foi iniciado com um
+        # Python mais antigo (ex.: o python3 do sistema em vez do venv do
+        # projeto), pip nunca vai achar uma distribuição compatível — dar o
+        # motivo real em vez de despejar o stderr cru do pip, que não ajuda
+        # quem não vai ler linha de comando.
+        if sys.version_info < (3, 10):
+            raise HTTPException(
+                500,
+                f"Este servidor está rodando com Python {sys.version_info.major}.{sys.version_info.minor} "
+                f"({sys.executable}), mas o yt-dlp-ejs exige Python 3.10 ou mais novo. "
+                "Feche o app e abra de novo usando o Python do venv do projeto "
+                "(./venv/bin/python whisper-app.py) em vez do Python do sistema.",
+            )
         raise HTTPException(500, f"Falha ao atualizar: {(result.stderr or result.stdout)[-500:]}")
     _YTDLP_UPDATE_CHECK_CACHE["latest"] = None  # força recheck na próxima consulta a /status
     return {"ok": True, "restart_required": True, "output": result.stdout[-800:]}
