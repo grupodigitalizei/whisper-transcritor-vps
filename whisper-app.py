@@ -1368,38 +1368,53 @@ async def api_download_selected_zip(files: str = Form(...), formats: str = Form(
 
 # -- Delete
 @app.delete("/api/delete/{filename}")
-async def api_delete(filename: str):
+async def api_delete(filename: str, scope: str = "both"):
     """User-initiated delete from the transcriptions screen.
-    Cascades: history entry + transcription result files + the original upload
-    file + the media.json catalog entry. (The user explicitly asked for this
-    cascade so a single 'Excluir' frees everything related to that item.)"""
+
+    `scope` controls what actually gets removed:
+      - "both" (default, backward-compatible): history entry + transcription
+        result files + the original upload + the media.json catalog entry —
+        frees everything related to this item.
+      - "transcription": only the history entry + result files. The original
+        media stays on disk and keeps showing in the Biblioteca de Mídia.
+      - "media": only the physical original upload (+ its media.json entry) —
+        same as /api/delete-media/{filename}. The transcription/history stays
+        intact; the row just starts showing "Original apagado".
+    """
     filename = _safe_filename(filename)
-    with _history_lock:
-        history = [h for h in _load_history() if h.get("file") != filename]
-        _atomic_write_json(HISTORY_FILE, history)
-    base = _result_base(filename)
-    if not base:
-        raise HTTPException(400, "Filename inválido")
-    d = os.path.join(RESULTS_DIR, base)
-    # Defense-in-depth: ensure final path is inside RESULTS_DIR
-    if os.path.commonpath([os.path.realpath(d), os.path.realpath(RESULTS_DIR)]) != os.path.realpath(RESULTS_DIR):
-        raise HTTPException(400, "Filename inválido")
-    if os.path.isdir(d):
-        shutil.rmtree(d)
+    if scope not in ("both", "transcription", "media"):
+        scope = "both"
 
-    # Cascade: delete the original audio/video upload tied to this transcription
-    upload_path = os.path.join(UPLOAD_DIR, filename)
-    if os.path.commonpath([os.path.realpath(upload_path), os.path.realpath(UPLOAD_DIR)]) == os.path.realpath(UPLOAD_DIR):
-        if os.path.exists(upload_path):
-            try: os.remove(upload_path)
-            except OSError: pass  # best-effort; we still drop the history+media entries
+    if scope in ("both", "transcription"):
+        with _history_lock:
+            history = [h for h in _load_history() if h.get("file") != filename]
+            _atomic_write_json(HISTORY_FILE, history)
+        base = _result_base(filename)
+        if not base:
+            raise HTTPException(400, "Filename inválido")
+        d = os.path.join(RESULTS_DIR, base)
+        # Defense-in-depth: ensure final path is inside RESULTS_DIR
+        if os.path.commonpath([os.path.realpath(d), os.path.realpath(RESULTS_DIR)]) != os.path.realpath(RESULTS_DIR):
+            raise HTTPException(400, "Filename inválido")
+        if os.path.isdir(d):
+            shutil.rmtree(d)
 
-    # Cascade: drop the media catalog entry too
-    with _media_lock:
-        media = [m for m in _load_media() if m.get("file") != filename]
-        _atomic_write_json(MEDIA_FILE, media)
+    if scope in ("both", "media"):
+        upload_path = os.path.join(UPLOAD_DIR, filename)
+        if os.path.commonpath([os.path.realpath(upload_path), os.path.realpath(UPLOAD_DIR)]) == os.path.realpath(UPLOAD_DIR):
+            if os.path.exists(upload_path):
+                try: os.remove(upload_path)
+                except OSError: pass  # best-effort; we still drop the entries below
 
-    return {"ok": True}
+    if scope in ("both", "media"):
+        # "media": remove the catalog entry too (matches /api/delete-media) —
+        # nothing left on disk for it to describe. "transcription" leaves
+        # media.json untouched on purpose, so the file keeps showing there.
+        with _media_lock:
+            media = [m for m in _load_media() if m.get("file") != filename]
+            _atomic_write_json(MEDIA_FILE, media)
+
+    return {"ok": True, "scope": scope}
 
 
 @app.get("/api/gaps/{filename}")

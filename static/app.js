@@ -1006,6 +1006,17 @@ function setStatusFilter(status) {
   renderFiles();
 }
 
+// Filtra por disponibilidade do arquivo original (áudio/vídeo em uploads/) —
+// independente do status: dá pra ver, por exemplo, só os erros cujo original
+// já foi apagado (não dá mais pra reprocessar sem reenviar).
+function setOriginalFilter(kind) {
+  _view.originalFilter = kind;
+  document.querySelectorAll('.chip[data-original]').forEach(el => {
+    el.setAttribute('aria-pressed', el.dataset.original === kind);
+  });
+  renderFiles();
+}
+
 function setFolderFilter(folder) {
   _view.folderFilter = folder || 'all';
   renderFiles();
@@ -1036,13 +1047,31 @@ function _renderSortIndicators() {
   });
 }
 
+// Contagens dos chips de Status e de Arquivo Original. Cada grupo reflete a
+// busca + pasta atual + o filtro do OUTRO grupo (mas nunca o próprio) — é o
+// padrão de filtros combináveis: escolher "Erro" não deve zerar a contagem
+// de "Disponível", e vice-versa. Antes disso, as contagens usavam a
+// biblioteca inteira e ficavam erradas assim que você entrava numa pasta.
 function _renderStatusFilterCounts() {
-  const counts = { all: files.length, queued:0, processing:0, done:0, error:0 };
-  for (const f of files) counts[f.status] = (counts[f.status] || 0) + 1;
+  const folderScoped = _filterByFolder(_filterBySearch(files));
+
+  const forStatus = _view.originalFilter === 'all' ? folderScoped
+    : folderScoped.filter(f => _view.originalFilter === 'available' ? f.has_original : !f.has_original);
+  const counts = { all: forStatus.length, queued: 0, processing: 0, done: 0, error: 0 };
+  for (const f of forStatus) counts[f.status] = (counts[f.status] || 0) + 1;
   for (const k of Object.keys(counts)) {
     const el = document.getElementById('chip-count-' + k);
     if (el) el.textContent = counts[k];
   }
+
+  const forOriginal = _view.statusFilter === 'all' ? folderScoped
+    : folderScoped.filter(f => f.status === _view.statusFilter);
+  let available = 0, missing = 0;
+  for (const f of forOriginal) { if (f.has_original) available++; else missing++; }
+  const elAvail = document.getElementById('chip-count-original-available');
+  const elMiss  = document.getElementById('chip-count-original-missing');
+  if (elAvail) elAvail.textContent = available;
+  if (elMiss)  elMiss.textContent  = missing;
 }
 
 // Sync the mobile "current folder" label + o breadcrumb do header
@@ -1216,10 +1245,11 @@ const STATUS_MAP = {
 // ═══════════════════════════════════════════════════════════════
 //  VIEW STATE (filtros + ordenação)
 // ═══════════════════════════════════════════════════════════════
-// Pipeline: files -> search -> statusFilter -> folderFilter -> sort -> render
+// Pipeline: files -> search -> statusFilter -> originalFilter -> folderFilter -> sort -> render
 const _view = {
   search:       '',
   statusFilter: 'all',      // 'all' | 'queued' | 'processing' | 'done' | 'error'
+  originalFilter: 'all',    // 'all' | 'available' | 'missing' — arquivo original ainda no disco?
   folderFilter: 'all',      // 'all' | '__root__' | '<folder name>'
   sortKey:      'date',     // 'name' | 'date' | 'mode' | 'status'
   sortDir:      'desc',     // 'asc' | 'desc'
@@ -1243,27 +1273,36 @@ function _sortValue(f, key) {
   }
 }
 
+// Filtro de busca por nome — extraído pra ser reaproveitado nas contagens dos chips.
+function _filterBySearch(arr) {
+  const q = _view.search.trim().toLowerCase();
+  return q ? arr.filter(f => (f.name || '').toLowerCase().includes(q)) : arr;
+}
+
+// Filtro de pasta (item na pasta OU em qualquer subpasta dela) — extraído pra
+// ser reaproveitado nas contagens dos chips (senão elas ficam erradas dentro
+// de uma pasta, mostrando o total da biblioteca inteira).
+function _filterByFolder(arr) {
+  if (_view.folderFilter === 'all') return arr;
+  if (_view.folderFilter === '__root__') return arr.filter(f => !(f.folder || ''));
+  const wanted = _view.folderFilter;
+  const prefix = wanted + '/';
+  return arr.filter(f => {
+    const fp = f.folder || '';
+    return fp === wanted || fp.startsWith(prefix);
+  });
+}
+
 function applyPipeline(allFiles) {
   // Stamp each file with its original array index so we have a stable
   // tiebreaker for date sorting of legacy entries without queued_at.
   const stamped = allFiles.map((f, i) => ({ ...f, _order: i }));
-  const q = _view.search.trim().toLowerCase();
-  let arr = stamped;
-  if (q) arr = arr.filter(f => (f.name || '').toLowerCase().includes(q));
+  let arr = _filterBySearch(stamped);
   if (_view.statusFilter !== 'all') arr = arr.filter(f => f.status === _view.statusFilter);
-  if (_view.folderFilter !== 'all') {
-    if (_view.folderFilter === '__root__') {
-      arr = arr.filter(f => !(f.folder || ''));
-    } else {
-      // Include items in this folder AND in any descendant folder
-      const wanted = _view.folderFilter;
-      const prefix = wanted + '/';
-      arr = arr.filter(f => {
-        const fp = f.folder || '';
-        return fp === wanted || fp.startsWith(prefix);
-      });
-    }
+  if (_view.originalFilter !== 'all') {
+    arr = arr.filter(f => _view.originalFilter === 'available' ? f.has_original : !f.has_original);
   }
+  arr = _filterByFolder(arr);
   const key = _view.sortKey;
   const dir = _view.sortDir === 'asc' ? 1 : -1;
   arr.sort((a, b) => {
@@ -1908,26 +1947,58 @@ function dlFile(id, fmt) {
   window.location = `/api/download/${encodeURIComponent(f.file)}/${fmt}`;
 }
 
+// Ícones específicos pra cada escopo de exclusão (só transcrição / só mídia / ambos)
+const _DELETE_SCOPE_ICONS = {
+  transcription: `<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>`,
+  media:         `<polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>`,
+  both:          _DIALOG_ICONS.danger,
+};
+
+// Pergunta o que excluir: só a transcrição (mantém o original na Biblioteca),
+// só o arquivo original (mantém a transcrição, libera espaço), ou os dois.
+// Retorna null se o usuário cancelar.
+async function _promptDeleteScope(message) {
+  return showChoice({
+    title: 'Excluir o quê?',
+    message,
+    cancelText: 'Cancelar',
+    choices: [
+      { value: 'transcription', label: 'Só a transcrição', icon: _DELETE_SCOPE_ICONS.transcription,
+        description: 'Remove TXT/SRT/JSON/MD do histórico — o arquivo original continua na Biblioteca de Mídia' },
+      { value: 'media', label: 'Só o arquivo original', icon: _DELETE_SCOPE_ICONS.media,
+        description: 'Libera espaço em disco — a transcrição continua disponível pra consultar e baixar' },
+      { value: 'both', label: 'Os dois', icon: _DELETE_SCOPE_ICONS.both, danger: true,
+        description: 'Remove tudo — transcrição e arquivo original' },
+    ],
+  });
+}
+
 async function deleteFile(id) {
   closeAllDDs();
   const f = files.find(x => x.id === id);
   if (!f) return;
-  const ok = await showConfirm({
-    title: 'Excluir transcrição',
-    message: `"${f.name}" será removido do histórico e todos os arquivos (TXT, SRT, JSON, timestamps, MD) serão apagados do disco.`,
-    confirmText: 'Excluir',
-    danger: true
-  });
-  if (!ok) return;
+  const scope = await _promptDeleteScope(`"${f.name}" — escolha o que remover:`);
+  if (!scope) return;
   try {
-    const res = await fetch(`/api/delete/${encodeURIComponent(f.file)}`, { method: 'DELETE' });
+    const res = await fetch(`/api/delete/${encodeURIComponent(f.file)}?scope=${scope}`, { method: 'DELETE' });
     if (!res.ok) throw new Error('delete failed');
-    files.splice(files.findIndex(x => x.id === id), 1);
-    selected.delete(id);
-    renderFiles();
-    syncBulkBar();
+    if (scope === 'media') {
+      // A transcrição continua — só atualiza o badge de original localmente.
+      f.has_original = false;
+      renderFiles();
+    } else {
+      // 'transcription' ou 'both': o item some da lista de Transcrições.
+      files.splice(files.findIndex(x => x.id === id), 1);
+      selected.delete(id);
+      renderFiles();
+      syncBulkBar();
+    }
     await loadStats();
-    showToast('Arquivo excluído.', 'success');
+    showToast(
+      scope === 'media' ? 'Arquivo original excluído — transcrição mantida.' :
+      scope === 'transcription' ? 'Transcrição excluída — arquivo original mantido.' :
+      'Excluído (transcrição e arquivo original).',
+      'success');
   } catch {
     showToast('Erro ao excluir.', 'error');
   }
@@ -2073,32 +2144,33 @@ async function deleteSelected() {
   const ids = selectedVisibleIds();
   if (!ids.length) return;
   const count = ids.length;
-  const ok = await showConfirm({
-    title: `Excluir ${count} transcriç${count === 1 ? 'ão' : 'ões'}`,
-    message: `Os arquivos selecionados serão removidos permanentemente do histórico e do disco.`,
-    confirmText: 'Excluir',
-    danger: true
-  });
-  if (!ok) return;
+  const scope = await _promptDeleteScope(
+    `${count} item${count === 1 ? '' : 's'} selecionado${count === 1 ? '' : 's'} — escolha o que remover:`);
+  if (!scope) return;
   let failed = 0;
   for (const id of ids) {
     const f = files.find(x => x.id === id);
     if (f) {
       try {
-        const res = await fetch(`/api/delete/${encodeURIComponent(f.file)}`, { method: 'DELETE' });
+        const res = await fetch(`/api/delete/${encodeURIComponent(f.file)}?scope=${scope}`, { method: 'DELETE' });
         if (!res.ok) { failed++; continue; }
-        files.splice(files.findIndex(x => x.id === id), 1);
-        selected.delete(id);
+        if (scope === 'media') {
+          f.has_original = false;
+        } else {
+          files.splice(files.findIndex(x => x.id === id), 1);
+          selected.delete(id);
+        }
       } catch { failed++; }
     }
   }
   renderFiles();
   syncBulkBar();
   await loadStats();
+  const verb = scope === 'media' ? 'liberado(s)' : 'excluído(s)';
   if (failed === 0) {
-    showToast(`${count} arquivo(s) excluído(s).`, 'success');
+    showToast(`${count} arquivo(s) ${verb}.`, 'success');
   } else {
-    showToast(`${count - failed} excluído(s), ${failed} falha(s).`, 'error');
+    showToast(`${count - failed} ${verb}, ${failed} falha(s).`, 'error');
   }
 }
 

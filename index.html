@@ -199,6 +199,17 @@
           Erro <span class="chip-count" id="chip-count-error">0</span>
         </button>
       </div>
+      <div class="chip-group" role="group" aria-label="Filtrar por arquivo original">
+        <button type="button" class="chip" data-original="all" aria-pressed="true" onclick="setOriginalFilter('all')">
+          Original: Todos
+        </button>
+        <button type="button" class="chip" data-original="available" aria-pressed="false" onclick="setOriginalFilter('available')">
+          Disponível <span class="chip-count" id="chip-count-original-available">0</span>
+        </button>
+        <button type="button" class="chip" data-original="missing" aria-pressed="false" onclick="setOriginalFilter('missing')">
+          Apagado <span class="chip-count" id="chip-count-original-missing">0</span>
+        </button>
+      </div>
       <div class="folder-select-wrap">
         <button type="button" class="sidebar-toggle" onclick="openSidebar()" aria-label="Abrir barra de pastas">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
