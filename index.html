@@ -218,10 +218,16 @@
       </div>
     </div>
 
-    <!-- Queue summary: tempo estimado restante acumulado -->
+    <!-- Queue summary: barra de progresso do item atual + tempo estimado restante -->
     <div class="queue-summary" id="queue-summary" role="status" aria-live="polite">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-      <span id="queue-summary-text">—</span>
+      <div class="queue-summary-row">
+        <span class="queue-summary-label">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <span id="queue-summary-text">—</span>
+        </span>
+        <span class="queue-summary-eta" id="queue-summary-eta"></span>
+      </div>
+      <div class="queue-summary-bar"><div class="queue-summary-bar-fill" id="queue-summary-fill" style="width:0%"></div></div>
     </div>
 
     <!-- Search bar -->

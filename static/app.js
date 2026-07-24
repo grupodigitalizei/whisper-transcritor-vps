@@ -1127,28 +1127,39 @@ function _renderQueueSummary() {
     else statSub.textContent = 'aguardando ou processando';
   }
 
+  const eta  = document.getElementById('queue-summary-eta');
+  const fill = document.getElementById('queue-summary-fill');
   if (!box || !text) return;
   if (count === 0) { box.classList.remove('show'); return; }
   box.classList.add('show');
 
-  // UI breakdown: ETA explícita do que está rolando + contagem na fila + total
+  // Label: contagem de cada grupo — sem repetir "total" duas vezes como antes.
   const parts = [];
-  if (inProgress.length) {
-    parts.push(inProgressSecs > 0
-      ? `${inProgress.length} em transcrição (~<strong>${fmtSecs(inProgressSecs)}</strong> p/ terminar)`
-      : `${inProgress.length} em transcrição`);
-  }
+  if (inProgress.length) parts.push(`${inProgress.length} em transcrição`);
   if (queued.length) {
     let s = `${queued.length} na fila`;
-    if (queuedSecs > 0) s += ` · ~<strong>${fmtSecs(queueWallClock)}</strong>`;
     if (queuedUnknown > 0) s += ` (${queuedUnknown} sem estimativa)`;
     parts.push(s);
   }
-  let msg = parts.join(' · ');
-  if (totalSecs > 0 && inProgress.length && queued.length) {
-    msg += ` · <strong>total ~${fmtSecs(totalSecs)}</strong>`;
+  text.textContent = parts.join(' · ');
+
+  // ETA: um único número, à direita — soma de tudo que falta.
+  if (eta) eta.textContent = totalSecs > 0 ? `~${fmtSecs(totalSecs)} restantes` : '';
+
+  // Barra: progresso real do(s) item(ns) em transcrição agora (0 se nada
+  // começou ainda, só tem coisa na fila esperando a vaga de concorrência).
+  if (fill) {
+    let pct = 0;
+    if (inProgress.length) {
+      const sum = inProgress.reduce((s, f) => {
+        const p = (typeof f._phaseProgress === 'number') ? f._phaseProgress
+                : (typeof f._progress === 'number')      ? f._progress : 0;
+        return s + p;
+      }, 0);
+      pct = sum / inProgress.length;
+    }
+    fill.style.width = `${Math.max(0, Math.min(100, pct))}%`;
   }
-  text.innerHTML = msg;
 }
 
 // Cache local das settings — usado pra calcular wall-clock com concorrência.
