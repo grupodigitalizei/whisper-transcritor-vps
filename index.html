@@ -210,6 +210,20 @@
           Apagado <span class="chip-count" id="chip-count-original-missing">0</span>
         </button>
       </div>
+      <div class="filter-select-wrap">
+        <select id="status-filter-select" class="filter-select" aria-label="Filtrar por status" onchange="setStatusFilter(this.value)">
+          <option value="all" id="opt-status-all" selected>Todos (0)</option>
+          <option value="queued" id="opt-status-queued">Aguardando (0)</option>
+          <option value="processing" id="opt-status-processing">Processando (0)</option>
+          <option value="done" id="opt-status-done">Concluído (0)</option>
+          <option value="error" id="opt-status-error">Erro (0)</option>
+        </select>
+        <select id="original-filter-select" class="filter-select" aria-label="Filtrar por arquivo original" onchange="setOriginalFilter(this.value)">
+          <option value="all" selected>Original: Todos</option>
+          <option value="available" id="opt-original-available">Disponível (0)</option>
+          <option value="missing" id="opt-original-missing">Apagado (0)</option>
+        </select>
+      </div>
       <div class="folder-select-wrap">
         <button type="button" class="sidebar-toggle" onclick="openSidebar()" aria-label="Abrir barra de pastas">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
@@ -320,6 +334,14 @@
         <button type="button" class="chip" data-mtype="failed" aria-pressed="false" onclick="setMediaTypeFilter('failed')">
           Falharam <span class="chip-count" id="mchip-count-failed">0</span>
         </button>
+      </div>
+      <div class="filter-select-wrap">
+        <select id="mtype-filter-select" class="filter-select" aria-label="Filtrar por tipo" onchange="setMediaTypeFilter(this.value)">
+          <option value="all" id="opt-mtype-all" selected>Todos (0)</option>
+          <option value="audio" id="opt-mtype-audio">Áudio (0)</option>
+          <option value="video" id="opt-mtype-video">Vídeo (0)</option>
+          <option value="failed" id="opt-mtype-failed">Falharam (0)</option>
+        </select>
       </div>
     </div>
 

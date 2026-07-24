@@ -665,6 +665,8 @@
       .bulk-actions { gap:4px; width:100%; margin-left:0; justify-content:flex-start; }
       .bulk-btn { padding:5px 9px; font-size:11.5px; }
       .folder-select-wrap { margin-left:0; }
+      .filter-bar .chip-group { display:none; }
+      .filter-bar .filter-select-wrap { display:flex; }
     }
     @media (max-width:480px) {
       .files-table th.col-dur, .files-table td.col-dur { display:none; }
@@ -699,6 +701,19 @@
                   background:var(--slate-100); color:var(--slate-600);
                   font-size:10.5px; font-weight:800; }
     .chip[aria-pressed="true"] .chip-count { background:rgba(255,255,255,.25); color:var(--white); }
+
+    /* Mobile filter dropdowns — replace the chip rows below 720px, where
+       wrapping status/original/type chips ate several lines of vertical
+       space for little payoff. Hidden on desktop; chips stay the primary UI
+       there since they show every option (and its count) at a glance. */
+    .filter-select-wrap { display:none; width:100%; gap:8px; }
+    .filter-select { flex:1 1 0; min-width:0; height:38px; padding:0 26px 0 12px;
+                      border:1.5px solid var(--slate-200); border-radius:var(--r-sm);
+                      font-family:inherit; font-size:13px; font-weight:700;
+                      color:var(--slate-800); background:var(--white) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394A3B8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E") no-repeat right 10px center;
+                      appearance:none; outline:none; cursor:pointer;
+                      text-overflow:ellipsis; transition:border-color var(--t) var(--ease); }
+    .filter-select:focus { border-color:var(--blue); }
 
     .folder-select-wrap { margin-left:auto; display:inline-flex; align-items:center; gap:8px; }
     .folder-select-wrap label { font-size:11.5px; font-weight:700; color:var(--slate-500);

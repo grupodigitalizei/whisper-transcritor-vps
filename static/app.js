@@ -23,6 +23,13 @@ async function init() {
   checkOldMediaCleanup();
   // Non-blocking — banner appears later if yt-dlp is outdated (may fail silently offline)
   checkYtdlpOutdated();
+  // Re-check periodically and whenever the tab regains focus — a tab left
+  // open for hours would otherwise show a stale "outdated" banner forever
+  // (or keep hiding a real one) since the very first page load.
+  setInterval(checkYtdlpOutdated, 30 * 60 * 1000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) checkYtdlpOutdated();
+  });
 }
 
 async function resumeActivePolling() {
@@ -1003,6 +1010,8 @@ function setStatusFilter(status) {
   document.querySelectorAll('.chip[data-status]').forEach(el => {
     el.setAttribute('aria-pressed', el.dataset.status === status);
   });
+  const sel = document.getElementById('status-filter-select');
+  if (sel) sel.value = status;
   renderFiles();
 }
 
@@ -1014,6 +1023,8 @@ function setOriginalFilter(kind) {
   document.querySelectorAll('.chip[data-original]').forEach(el => {
     el.setAttribute('aria-pressed', el.dataset.original === kind);
   });
+  const sel = document.getElementById('original-filter-select');
+  if (sel) sel.value = kind;
   renderFiles();
 }
 
@@ -1059,9 +1070,12 @@ function _renderStatusFilterCounts() {
     : folderScoped.filter(f => _view.originalFilter === 'available' ? f.has_original : !f.has_original);
   const counts = { all: forStatus.length, queued: 0, processing: 0, done: 0, error: 0 };
   for (const f of forStatus) counts[f.status] = (counts[f.status] || 0) + 1;
+  const statusLabels = { all: 'Todos', queued: 'Aguardando', processing: 'Processando', done: 'Concluído', error: 'Erro' };
   for (const k of Object.keys(counts)) {
     const el = document.getElementById('chip-count-' + k);
     if (el) el.textContent = counts[k];
+    const opt = document.getElementById('opt-status-' + k);
+    if (opt) opt.textContent = `${statusLabels[k]} (${counts[k]})`;
   }
 
   const forOriginal = _view.statusFilter === 'all' ? folderScoped
@@ -1072,6 +1086,10 @@ function _renderStatusFilterCounts() {
   const elMiss  = document.getElementById('chip-count-original-missing');
   if (elAvail) elAvail.textContent = available;
   if (elMiss)  elMiss.textContent  = missing;
+  const optAvail = document.getElementById('opt-original-available');
+  const optMiss  = document.getElementById('opt-original-missing');
+  if (optAvail) optAvail.textContent = `Disponível (${available})`;
+  if (optMiss)  optMiss.textContent  = `Apagado (${missing})`;
 }
 
 // Sync the mobile "current folder" label + o breadcrumb do header
@@ -3533,7 +3551,13 @@ async function checkYtdlpOutdated() {
     const res = await fetch('/api/ytdlp/status');
     if (!res.ok) return;
     const data = await res.json();
-    if (!data.outdated) return; // inclui o caso "latest desconhecido" (offline) — nunca alarma à toa
+    if (!data.outdated) {
+      // Limpa um banner que ficou preso de uma checagem anterior — sem isso,
+      // uma aba aberta há horas nunca saberia que o servidor foi reiniciado
+      // e atualizado nesse meio tempo (só rechecávamos 1x, no carregamento).
+      document.getElementById('ytdlp-outdated-banner').style.display = 'none';
+      return; // inclui o caso "latest desconhecido" (offline) — nunca alarma à toa
+    }
 
     document.getElementById('ytdlp-installed-ver').textContent = data.installed || '?';
     document.getElementById('ytdlp-latest-ver').textContent = data.latest || '?';
@@ -3865,6 +3889,8 @@ enhanceSelects();
       document.querySelectorAll('.chip[data-mtype]').forEach(el => {
         el.setAttribute('aria-pressed', el.dataset.mtype === type);
       });
+      const sel = document.getElementById('mtype-filter-select');
+      if (sel) sel.value = type;
       applyMediaFilterAndRender();
     }
 
@@ -3873,9 +3899,12 @@ enhanceSelects();
       const counts = { all: onMachine.length, audio: 0, video: 0,
                         failed: _mediaFiles.filter(_isMediaFailed).length };
       for (const m of onMachine) if (m.type === 'audio' || m.type === 'video') counts[m.type]++;
+      const mtypeLabels = { all: 'Todos', audio: 'Áudio', video: 'Vídeo', failed: 'Falharam' };
       for (const k of Object.keys(counts)) {
         const el = document.getElementById('mchip-count-' + k);
         if (el) el.textContent = counts[k];
+        const opt = document.getElementById('opt-mtype-' + k);
+        if (opt) opt.textContent = `${mtypeLabels[k]} (${counts[k]})`;
       }
     }
 
