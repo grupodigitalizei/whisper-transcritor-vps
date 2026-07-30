@@ -2362,7 +2362,7 @@ function switchTab(tab) {
 // Roving-tabindex keyboard handler for tablists (ArrowLeft/Right/Home/End).
 // Group = 'main' for the page tabs, 'modal' for the upload modal tabs.
 const _TABLIST_GROUPS = {
-  main:  ['main-tab-transcriptions', 'main-tab-media', 'main-tab-advanced'],
+  main:  ['main-tab-transcriptions', 'main-tab-media', 'main-tab-social', 'main-tab-advanced'],
   modal: ['tab-file', 'tab-url', 'tab-batch'],
   'adv-type':    ['adv-type-video', 'adv-type-audio'],
   'adv-urlmode': ['adv-urlmode-single', 'adv-urlmode-batch'],
@@ -2386,11 +2386,12 @@ function onTablistKey(e, group) {
 const _MAIN_TAB_TITLES = {
   transcriptions: 'Transcrições',
   media:          'Biblioteca de Mídia',
+  social:         'Redes Sociais',
   advanced:       'Download Avançado',
 };
 
 function switchMainTab(tab) {
-  ['transcriptions', 'media', 'advanced'].forEach(t => {
+  ['transcriptions', 'media', 'social', 'advanced'].forEach(t => {
     const pressed = t === tab;
     const btn = document.getElementById('main-tab-' + t);
     btn.setAttribute('aria-selected', pressed);
@@ -2416,6 +2417,7 @@ function switchMainTab(tab) {
       _mediaRefreshIntervals.clear();
     }
   }
+  if (tab === 'social' && typeof initSocialTab === 'function') initSocialTab();
 }
 
 function formatBytes(bytes, decimals = 1) {
@@ -4285,3 +4287,569 @@ enhanceSelects();
             setTimeout(() => _stopMediaRefresh(intervalId), 120000);
         } catch(e) { showToast('Erro: ' + e.message, 'error'); }
     }
+
+// ═══════════════════════════════════════════════════════════════
+// Redes Sociais — coleta (ego-lite), mosaico 9:16, download + transcrição
+// ═══════════════════════════════════════════════════════════════
+let _socialRows = [];          // linhas do dataset carregado
+let _socialProfile = {};       // perfil da coleta (avatar, seguidores…)
+let _socialSel = new Set();    // códigos selecionados (clique / Cmd / Shift)
+let _socialLastIdx = null;     // último índice clicado (para range com Shift)
+let _socialMode = 'profile';
+let _socialDatasetId = null;
+let _socialInited = false;
+
+function socialErCls(er) {
+  if (er == null) return 'lo';
+  if (er >= 5) return 'hi';
+  if (er >= 2) return 'mid';
+  return 'lo';
+}
+function socialAvg(rows, f) {
+  const v = rows.map(f).filter(x => x != null);
+  return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+}
+
+function renderSocialHeader() {
+  const p = _socialProfile || {};
+  const u = p.username || _socialDatasetId || '?';
+  const initial = esc(String(u)[0].toUpperCase());
+  const pic = p.profile_pic
+    ? `<img src="/api/social/thumb?url=${encodeURIComponent(p.profile_pic)}" onerror="this.remove()" alt="">` : '';
+  const stats = [
+    p.followers ? `${socialFmtNum(p.followers)} seguidores` : '',
+    p.posts_total ? `${socialFmtNum(p.posts_total)} posts no perfil` : '',
+    `${_socialRows.length} posts coletados`,
+  ].filter(Boolean).join('&nbsp;·&nbsp;');
+  document.getElementById('social-profile-head').innerHTML = `
+    <span class="social-avatar">${initial}${pic}</span>
+    <div class="social-prof-meta">
+      <div class="social-prof-name">@${esc(u)}${p.full_name ? ` <span>· ${esc(p.full_name)}</span>` : ''}</div>
+      <div class="social-prof-stats">${stats}</div>
+    </div>
+    <div class="social-prof-actions">
+      <button type="button" class="btn" id="social-export-btn" onclick="socialExport()">${sic('dl')} Exportar Excel</button>
+    </div>`;
+}
+
+function renderSocialKPIs(rows) {
+  const box = document.getElementById('social-kpis');
+  if (!box) return;
+  const viewsAvg = socialAvg(rows, r => r.views);
+  const erAvg = socialAvg(rows, r => r.er);
+  const metric = (icon, label, val) =>
+    `<div class="social-metric"><div class="social-metric-l">${sic(icon)} ${label}</div><div class="social-metric-v">${val}</div></div>`;
+  box.innerHTML =
+    metric('eye', 'Views médias', viewsAvg != null ? socialFmtNum(Math.round(viewsAvg)) : '—') +
+    metric('heart', 'Likes médios', socialFmtNum(Math.round(socialAvg(rows, r => r.likes) || 0))) +
+    metric('comment', 'Comentários médios', socialFmtNum(Math.round(socialAvg(rows, r => r.comments) || 0))) +
+    metric('zap', 'ER médio', (erAvg != null ? erAvg.toFixed(2) : '—') + '<small> %</small>');
+}
+
+function socialThumbUrl(u) { return '/api/social/thumb?url=' + encodeURIComponent(u); }
+function socialMediaUrl(u) { return '/api/social/media?url=' + encodeURIComponent(u); }
+
+// Ícones SVG inline (mesma linguagem visual do app — nada de emoji).
+const _SIC = {
+  play: '<polygon points="6 4 19 12 6 20 6 4"/>',
+  eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
+  heart: '<path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>',
+  comment: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  share: '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
+  dl: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="3" y2="15"/>',
+  ext: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+  film: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18M17 3v18M3 7.5h4M3 12h18M3 16.5h4M17 7.5h4M17 16.5h4"/>',
+  image: '<rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
+  layers: '<path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>',
+  zap: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
+  hash: '<line x1="4" x2="20" y1="9" y2="9"/><line x1="4" x2="20" y1="15" y2="15"/><line x1="10" x2="8" y1="3" y2="21"/><line x1="16" x2="14" y1="3" y2="21"/>',
+  filetext: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/>',
+  chart: '<line x1="12" x2="12" y1="20" y2="10"/><line x1="18" x2="18" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="16"/>',
+  check: '<polyline points="20 6 9 17 4 12"/>',
+};
+function sic(name) { return `<svg class="sic" viewBox="0 0 24 24" aria-hidden="true">${_SIC[name] || ''}</svg>`; }
+const _SOCIAL_TYPE_ICON = { 'Reel/Vídeo': 'film', 'Foto': 'image', 'Carrossel': 'layers' };
+
+function socialFmtNum(n) {
+  if (n === null || n === undefined) return '—';
+  if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 0 : 1).replace('.0', '') + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(n >= 1e4 ? 0 : 1).replace('.0', '') + 'K';
+  return String(n);
+}
+function socialFmtDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' });
+}
+function socialFmtDur(s) {
+  if (!s) return '';
+  const m = Math.floor(s / 60), sec = Math.round(s % 60);
+  return m ? `${m}:${String(sec).padStart(2, '0')}` : `0:${String(sec).padStart(2, '0')}`;
+}
+
+async function initSocialTab() {
+  if (_socialInited) return;
+  _socialInited = true;
+  // Estado inicial: mostra o empty-state explicativo enquanto não há coleta aberta.
+  if (document.getElementById('social-analytics').style.display === 'none') {
+    document.getElementById('social-empty').style.display = 'flex';
+  }
+  try {
+    const st = await (await fetch('/api/social/status')).json();
+    const el = document.getElementById('social-engine-status');
+    if (st.ego_browser) {
+      el.textContent = 'ego lite conectado';
+      el.className = 'social-engine-status ok';
+    } else {
+      el.textContent = 'ego lite não encontrado — abra e faça login no Instagram';
+      el.className = 'social-engine-status warn';
+    }
+  } catch (e) { /* ignore */ }
+  await refreshSocialDatasets();
+}
+
+async function refreshSocialDatasets() {
+  try {
+    const list = await (await fetch('/api/social/datasets')).json();
+    const picker = document.getElementById('social-dataset-picker');
+    if (!list.length) { picker.style.display = 'none'; return; }
+    picker.style.display = '';
+    picker.innerHTML = '<option value="">Coletas anteriores…</option>' +
+      list.map(d => `<option value="${esc(d.id)}">@${esc(d.username)} · ${d.count} posts · ${socialFmtDate(d.collected_at)}</option>`).join('');
+  } catch (e) { /* ignore */ }
+}
+
+function setSocialMode(mode) {
+  _socialMode = mode;
+  document.getElementById('social-mode-profile').setAttribute('aria-selected', mode === 'profile');
+  document.getElementById('social-mode-urls').setAttribute('aria-selected', mode === 'urls');
+  document.getElementById('social-mode-profile').tabIndex = mode === 'profile' ? 0 : -1;
+  document.getElementById('social-mode-urls').tabIndex = mode === 'urls' ? 0 : -1;
+  document.getElementById('social-input-profile').style.display = mode === 'profile' ? '' : 'none';
+  document.getElementById('social-input-urls').style.display = mode === 'urls' ? '' : 'none';
+}
+
+async function startSocialCollect() {
+  const btn = document.getElementById('social-collect-btn');
+  const hint = document.getElementById('social-collect-hint');
+  let url, fd = new FormData();
+  if (_socialMode === 'profile') {
+    const username = document.getElementById('social-username').value.trim();
+    if (!username) { showToast('Informe o perfil.', 'error'); return; }
+    fd.append('username', username);
+    fd.append('max_posts', document.getElementById('social-max').value || '60');
+    fd.append('since_days', document.getElementById('social-period').value || '');
+    url = '/api/social/collect';
+  } else {
+    const urls = document.getElementById('social-urls').value.trim();
+    if (!urls) { showToast('Cole ao menos uma URL.', 'error'); return; }
+    fd.append('urls', urls);
+    url = '/api/social/collect-urls';
+  }
+  btn.disabled = true;
+  hint.textContent = '';
+  document.getElementById('social-empty').style.display = 'none';   // some o empty-state enquanto coleta
+  document.getElementById('social-progress').style.display = '';
+  document.getElementById('social-progress').textContent = 'Conectando ao ego lite…';
+  try {
+    const r = await fetch(url, { method: 'POST', body: fd });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || 'falha ao coletar');
+    pollSocialJob(j.job_id);
+  } catch (e) {
+    btn.disabled = false;
+    hint.textContent = '';
+    document.getElementById('social-progress').style.display = 'none';
+    showToast('Erro ao coletar: ' + e.message, 'error');
+  }
+}
+
+function pollSocialJob(jobId, onDone) {
+  // Timer LOCAL por chamada: ações sociais concorrentes (coletar, baixar um
+  // card, baixar+transcrever) não podem cancelar o polling uma da outra.
+  const prog = document.getElementById('social-progress');
+  const isCollect = !onDone;   // coleta usa o fluxo padrão (mostra progresso, recarrega)
+  const timer = setInterval(async () => {
+    try {
+      const j = await (await fetch('/api/social/job/' + jobId)).json();
+      const p = j.progress;
+      if (p && isCollect) {
+        prog.textContent = ('collected' in p)
+          ? `Coletando posts… ${p.collected}${p.target ? ' de ' + p.target : ''}`
+          : `Processando… ${p.done} de ${p.target}`;
+      }
+      if (j.status === 'done') {
+        clearInterval(timer);
+        if (onDone) { onDone(j.result); }
+        else {
+          document.getElementById('social-collect-btn').disabled = false;
+          document.getElementById('social-collect-hint').textContent = '';
+          prog.style.display = 'none';
+          await refreshSocialDatasets();
+          if (j.result && j.result.ds_id) loadSocialDataset(j.result.ds_id);
+        }
+      } else if (j.status === 'error') {
+        clearInterval(timer);
+        showToast((isCollect ? 'Coleta falhou: ' : 'Ação falhou: ') + (j.error || ''), 'error');
+        prog.style.display = 'none';   // erro vai pro toast; barra some (evita spinner + texto de erro)
+        if (isCollect) {
+          document.getElementById('social-collect-btn').disabled = false;
+          document.getElementById('social-collect-hint').textContent = '';
+        } else {
+          onDone(null);   // deixa o chamador reabilitar botões mesmo em erro do job
+        }
+      }
+    } catch (e) { /* keep polling */ }
+  }, 1200);
+}
+
+async function loadSocialDataset(dsId) {
+  if (!dsId) return;
+  _socialDatasetId = dsId;
+  _socialSel.clear();
+  const prog = document.getElementById('social-progress');
+  prog.style.display = '';
+  prog.textContent = 'Carregando coleta…';
+  try {
+    const ds = await (await fetch('/api/social/dataset/' + encodeURIComponent(dsId))).json();
+    _socialRows = ds.rows || [];
+    _socialProfile = ds.profile || {};
+    renderSocialHeader();
+    document.getElementById('social-analytics').style.display = '';
+    document.getElementById('social-empty').style.display = 'none';
+    prog.style.display = 'none';
+    renderSocialGrid();
+  } catch (e) {
+    prog.textContent = 'Erro ao carregar: ' + e.message;
+  }
+}
+
+function socialFilteredRows() {
+  const fmt = document.getElementById('social-format').value;
+  const q = document.getElementById('social-search').value.trim().toLowerCase();
+  const sort = document.getElementById('social-sort').value;
+  let rows = _socialRows.slice();
+  if (fmt === 'video') rows = rows.filter(r => r.is_video);
+  else if (fmt !== 'all') rows = rows.filter(r => r.type === fmt);
+  if (q) rows = rows.filter(r => (r.caption || '').toLowerCase().includes(q));
+  const key = { date: 'ts', er: 'er', views: 'views', likes: 'likes', comments: 'comments', reshares: 'reshares' }[sort];
+  rows.sort((a, b) => (b[key] || 0) - (a[key] || 0));
+  return rows;
+}
+
+function renderSocialGrid() {
+  const grid = document.getElementById('social-grid');
+  const empty = document.getElementById('social-empty');
+  if (!_socialRows.length) {
+    grid.innerHTML = '';
+    empty.style.display = '';
+    return;
+  }
+  empty.style.display = 'none';
+  const rows = socialFilteredRows();
+  grid.innerHTML = rows.length ? rows.map(r => {
+    const isSel = _socialSel.has(r.code);
+    const thumb = r.thumb_url ? socialThumbUrl(r.thumb_url) : '';
+    const vid = (r.media_urls || []).find(m => m.type === 'video');
+    const typeLabel = r.type === 'Reel/Vídeo' ? 'Reel' : r.type;
+    const typeBadge = `<span class="social-badge">${sic(_SOCIAL_TYPE_ICON[r.type] || 'image')} ${esc(typeLabel)}</span>`;
+    const durBadge = r.duration_s ? `<span class="social-dur">${sic('play')} ${socialFmtDur(r.duration_s)}</span>` : '';
+    const erBadge = (r.er !== null && r.er !== undefined)
+      ? `<span class="social-er social-er-${socialErCls(r.er)}">ER ${r.er}%</span>` : '';
+    const cd = esc(r.code);
+    return `
+    <div class="social-card${isSel ? ' selected' : ''}" data-code="${cd}" role="button" aria-pressed="${isSel}"
+         tabindex="0" onclick="socialCardClick('${cd}', event)"
+         onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();socialCardClick('${cd}',event)}">
+      <span class="social-check" aria-hidden="true">${sic('check')}</span>
+      <div class="social-thumb" ${vid ? `data-video="${esc(socialMediaUrl(vid.url))}"` : ''} onmouseenter="socialHover(this,true)" onmouseleave="socialHover(this,false)">
+        ${thumb ? `<img loading="lazy" src="${thumb}" alt="">` : '<div class="social-noimg">sem capa</div>'}
+        <div class="social-badges">${typeBadge}</div>
+        ${erBadge}
+        ${durBadge}
+        <div class="social-thumb-actions">
+          <button type="button" class="social-iconbtn" title="Baixar mídia" aria-label="Baixar mídia" onclick="event.stopPropagation();socialQuickDownload('${cd}', this)">${sic('dl')}</button>
+          <button type="button" class="social-iconbtn" title="Baixar métricas (CSV)" aria-label="Baixar métricas" onclick="event.stopPropagation();socialDownloadMetrics('${cd}')">${sic('chart')}</button>
+          <a class="social-iconbtn" href="${esc(r.url)}" target="_blank" rel="noopener" title="Abrir no Instagram" aria-label="Abrir no Instagram" onclick="event.stopPropagation()">${sic('ext')}</a>
+        </div>
+      </div>
+      <div class="social-meta">
+        <div class="social-stats">
+          ${r.views != null ? `<span title="Views">${sic('eye')} ${socialFmtNum(r.views)}</span>` : ''}
+          <span title="Likes">${sic('heart')} ${socialFmtNum(r.likes)}</span>
+          <span title="Comentários">${sic('comment')} ${socialFmtNum(r.comments)}</span>
+          ${r.reshares ? `<span title="Reposts">${sic('share')} ${socialFmtNum(r.reshares)}</span>` : ''}
+          <span class="social-date">${socialFmtDate(r.date)}</span>
+        </div>
+        <div class="social-caption" title="${esc(r.caption || '')}">${esc((r.caption || '').slice(0, 90)) || '<em>sem legenda</em>'}</div>
+      </div>
+    </div>`;
+  }).join('') : '<div class="social-insight-empty" style="padding:32px 0;text-align:center">Nenhum post nos filtros atuais.</div>';
+  renderSocialKPIs(rows);
+  const rr = document.getElementById('social-resrow');
+  if (rr) rr.innerHTML = `<b>${rows.length}</b> de ${_socialRows.length} posts nos filtros ativos` +
+    ` · clique para selecionar · <b>Shift</b>/<b>⌘</b>+clique p/ vários · passe o mouse p/ prever`;
+  updateSocialActionbar();
+  if (_socialInsightsOpen) renderSocialInsights();
+}
+
+// ── Seleção: clique alterna; Shift+clique = intervalo; Cmd/Ctrl+clique = alterna ──
+function socialCardClick(code, event) {
+  const rows = socialFilteredRows();
+  const idx = rows.findIndex(r => r.code === code);
+  if (event && event.shiftKey && _socialLastIdx !== null && _socialLastIdx < rows.length) {
+    const a = Math.min(_socialLastIdx, idx), b = Math.max(_socialLastIdx, idx);
+    for (let i = a; i <= b; i++) _socialSel.add(rows[i].code);
+  } else {
+    if (_socialSel.has(code)) _socialSel.delete(code);
+    else _socialSel.add(code);
+  }
+  _socialLastIdx = idx;
+  renderSocialGrid();
+}
+
+function socialToggleAll(cb) {
+  const rows = socialFilteredRows();
+  if (cb.checked) rows.forEach(r => _socialSel.add(r.code));
+  else rows.forEach(r => _socialSel.delete(r.code));
+  renderSocialGrid();
+}
+
+function socialClearSel() {
+  _socialSel.clear();
+  _socialLastIdx = null;
+  renderSocialGrid();
+}
+
+function updateSocialActionbar() {
+  const n = _socialSel.size;
+  document.getElementById('social-actionbar').style.display = n ? '' : 'none';
+  const byCode = new Map(_socialRows.map(r => [r.code, r]));
+  let vids = 0;
+  _socialSel.forEach(c => { const r = byCode.get(c); if (r && r.is_video) vids++; });
+  document.getElementById('social-sel-count').textContent = n + (n === 1 ? ' selecionado' : ' selecionados');
+  const bt = document.getElementById('social-btn-transcribe');
+  bt.disabled = vids === 0;
+  bt.textContent = vids ? `Transcrever (${vids})` : 'Transcrever';
+  const all = document.getElementById('social-select-all');
+  if (all) { const rows = socialFilteredRows(); all.checked = rows.length > 0 && rows.every(r => _socialSel.has(r.code)); }
+}
+
+function socialHover(thumbEl, on) {
+  const src = thumbEl.getAttribute('data-video');
+  if (!src) return;
+  if (on) {
+    if (thumbEl.querySelector('video')) return;
+    const v = document.createElement('video');
+    v.src = src; v.muted = true; v.loop = true; v.playsInline = true; v.className = 'social-preview';
+    thumbEl.appendChild(v);
+    v.play().catch(() => {});
+  } else {
+    const v = thumbEl.querySelector('video');
+    if (v) { v.pause(); v.remove(); }
+  }
+}
+
+// ── Download de MÉTRICAS (CSV, client-side) — individual ou em lote ──
+function _socialCsv(rows) {
+  const cols = [['code', 'codigo'], ['url', 'url'], ['type', 'tipo'], ['date', 'data'],
+    ['views', 'views'], ['likes', 'likes'], ['comments', 'comentarios'], ['reshares', 'reposts'],
+    ['er', 'er_pct'], ['duration_s', 'duracao_s'], ['hashtags', 'hashtags'], ['caption', 'legenda']];
+  const cell = v => {
+    let s = v == null ? '' : Array.isArray(v) ? v.join(' ') : String(v);
+    s = s.replace(/"/g, '""').replace(/\r?\n/g, ' ');
+    return /[";\n]/.test(s) ? `"${s}"` : s;
+  };
+  const head = cols.map(c => c[1]).join(';');
+  const body = rows.map(r => cols.map(c => cell(r[c[0]])).join(';'));
+  return '﻿' + [head, ...body].join('\r\n');
+}
+function socialDownloadMetrics(code) {
+  const codes = code ? [code] : [..._socialSel];
+  const byCode = new Map(_socialRows.map(r => [r.code, r]));
+  const rows = codes.map(c => byCode.get(c)).filter(Boolean);
+  if (!rows.length) { showToast('Selecione ao menos um item.', 'error'); return; }
+  const uname = _socialProfile.username || 'perfil';
+  const fname = code ? `metricas_${code}.csv` : `metricas_${uname}_${rows.length}posts.csv`;
+  const blob = new Blob([_socialCsv(rows)], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = fname;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  showToast(`Métricas de ${rows.length} post(s) baixadas (CSV).`, 'success');
+}
+
+// ── Download rápido de UM post (ícone ⬇ no card), com spinner no botão ──
+async function socialQuickDownload(code, btnEl) {
+  if (btnEl) btnEl.classList.add('loading');
+  const fd = new FormData();
+  fd.append('ds_id', _socialDatasetId);
+  fd.append('download_codes', JSON.stringify([code]));
+  fd.append('transcribe_codes', '[]');
+  const im = document.getElementById('social-include-meta');
+  fd.append('include_meta', im && im.checked ? 'true' : 'false');
+  showToast('Baixando mídia…');
+  try {
+    const r = await fetch('/api/social/fetch', { method: 'POST', body: fd });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || 'falha');
+    pollSocialJob(j.job_id, (res) => {
+      if (btnEl) btnEl.classList.remove('loading');
+      if (!res) return;
+      showToast(res.downloaded ? 'Mídia baixada na Biblioteca.' : 'Nada baixado.',
+                res.failed ? 'error' : 'success');
+    });
+  } catch (e) {
+    if (btnEl) btnEl.classList.remove('loading');
+    showToast('Erro: ' + e.message, 'error');
+  }
+}
+
+// ── Ações em lote: mode 'media' (baixar) ou 'transcribe' (baixar + transcrever) ──
+async function submitSocialFetch(mode) {
+  const codes = [..._socialSel];
+  if (!codes.length) { showToast('Selecione ao menos um item.', 'error'); return; }
+  const byCode = new Map(_socialRows.map(r => [r.code, r]));
+  let dl = [], tr = [];
+  if (mode === 'transcribe') {
+    tr = codes.filter(c => (byCode.get(c) || {}).is_video);
+    dl = codes.filter(c => !(byCode.get(c) || {}).is_video);   // fotos só baixam
+    if (!tr.length) { showToast('Nenhum vídeo selecionado para transcrever.', 'error'); return; }
+  } else {
+    dl = codes;
+  }
+  const fd = new FormData();
+  fd.append('ds_id', _socialDatasetId);
+  fd.append('download_codes', JSON.stringify(dl));
+  fd.append('transcribe_codes', JSON.stringify(tr));
+  fd.append('model', document.getElementById('social-model').value);
+  fd.append('language', document.getElementById('social-language').value);
+  const im = document.getElementById('social-include-meta');
+  fd.append('include_meta', im && im.checked ? 'true' : 'false');
+  const btns = ['social-btn-metrics', 'social-btn-download', 'social-btn-transcribe'].map(id => document.getElementById(id));
+  const clicked = document.getElementById(mode === 'transcribe' ? 'social-btn-transcribe' : 'social-btn-download');
+  btns.forEach(b => b.disabled = true);
+  clicked.classList.add('loading');
+  const prog = document.getElementById('social-progress');
+  prog.style.display = '';
+  prog.textContent = mode === 'transcribe' ? 'Baixando e enviando p/ transcrição…' : 'Baixando mídia…';
+  const done = () => { btns.forEach(b => b.disabled = false); clicked.classList.remove('loading'); prog.style.display = 'none'; };
+  try {
+    const r = await fetch('/api/social/fetch', { method: 'POST', body: fd });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || 'falha');
+    pollSocialJob(j.job_id, (res) => {
+      done();
+      if (!res) return;   // job falhou — toast já mostrado
+      socialClearSel();
+      let msg = `${res.downloaded} arquivo(s) baixado(s)`;
+      if (res.transcribing) msg += `, ${res.transcribing} em transcrição`;
+      if (res.failed) msg += `, ${res.failed} falha(s)`;
+      showToast(msg + '.', res.failed ? 'error' : 'success');
+      if (res.transcribing) setTimeout(() => switchMainTab('transcriptions'), 900);
+      else setTimeout(() => switchMainTab('media'), 900);
+    });
+  } catch (e) {
+    done();
+    showToast('Erro: ' + e.message, 'error');
+  }
+}
+
+// ── Insights / Tendências (calculados client-side, refletem os filtros) ──
+let _socialInsightsOpen = false;
+
+function toggleSocialInsights() {
+  _socialInsightsOpen = !_socialInsightsOpen;
+  document.getElementById('social-insights-toggle').setAttribute('aria-pressed', _socialInsightsOpen);
+  document.getElementById('social-insights').style.display = _socialInsightsOpen ? '' : 'none';
+  if (_socialInsightsOpen) renderSocialInsights();
+}
+
+function socialComputeTrends(rows) {
+  const WD = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'];
+  const agg = (keyfn) => {
+    const b = {};
+    rows.forEach(r => {
+      const k = keyfn(r); if (k === null || k === undefined) return;
+      const e = b[k] || (b[k] = { n: 0, er: [], views: [] });
+      e.n++; if (r.er != null) e.er.push(r.er); if (r.views) e.views.push(r.views);
+    });
+    return Object.entries(b).map(([k, e]) => ({
+      key: k, posts: e.n,
+      er: e.er.length ? +(e.er.reduce((a, c) => a + c, 0) / e.er.length).toFixed(2) : null,
+      views: e.views.length ? Math.round(e.views.reduce((a, c) => a + c, 0) / e.views.length) : null,
+    }));
+  };
+  const dOf = r => r.date ? new Date(r.date) : null;
+  let weekday = agg(r => dOf(r) ? WD[(dOf(r).getDay() + 6) % 7] : null);
+  weekday.sort((a, b) => WD.indexOf(a.key) - WD.indexOf(b.key));
+  let hour = agg(r => dOf(r) ? dOf(r).getHours() : null).sort((a, b) => a.key - b.key);
+  const durBucket = r => {
+    const d = r.duration_s; if (!d) return null;
+    if (d <= 15) return '0–15s'; if (d <= 30) return '15–30s';
+    if (d <= 60) return '30–60s'; if (d <= 90) return '60–90s'; return '90s+';
+  };
+  const order = ['0–15s', '15–30s', '30–60s', '60–90s', '90s+'];
+  let duration = agg(durBucket).sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
+  let type = agg(r => r.type);
+  const hb = {};
+  rows.forEach(r => new Set(r.hashtags || []).forEach(h => {
+    h = h.toLowerCase();
+    const e = hb[h] || (hb[h] = { n: 0, er: [] });
+    e.n++; if (r.er != null) e.er.push(r.er);
+  }));
+  let hashtag = Object.entries(hb).filter(([, e]) => e.n >= 2).map(([h, e]) => ({
+    key: '#' + h, posts: e.n,
+    er: e.er.length ? +(e.er.reduce((a, c) => a + c, 0) / e.er.length).toFixed(2) : 0,
+  })).sort((a, b) => b.er - a.er).slice(0, 12);
+  return { weekday, hour, type, duration, hashtag };
+}
+
+function socialBars(items, valKey, fmt) {
+  if (!items.length) return '<div class="social-insight-empty">sem dados no filtro atual</div>';
+  const max = Math.max(...items.map(i => i[valKey] || 0)) || 1;
+  return items.map(i => {
+    const v = i[valKey] || 0;
+    const w = Math.max(2, Math.round(v / max * 100));
+    return `<div class="social-bar-row"><span class="social-bar-label" title="${esc(String(i.key))}">${esc(String(i.key))}</span>` +
+      `<span class="social-bar-track"><span class="social-bar-fill" style="width:${w}%"></span></span>` +
+      `<span class="social-bar-val">${fmt(v)}</span></div>`;
+  }).join('');
+}
+
+function renderSocialInsights() {
+  if (!_socialInsightsOpen) return;
+  const rows = socialFilteredRows();
+  const t = socialComputeTrends(rows);
+  const pct = v => v + '%';
+  document.getElementById('social-insights').innerHTML =
+    `<div class="social-insight-card"><h4>ER médio por dia da semana</h4>${socialBars(t.weekday, 'er', pct)}</div>` +
+    `<div class="social-insight-card"><h4>Views médias por hora de postagem</h4>${socialBars(t.hour, 'views', socialFmtNum)}</div>` +
+    `<div class="social-insight-card"><h4>ER médio por formato</h4>${socialBars(t.type, 'er', pct)}</div>` +
+    `<div class="social-insight-card"><h4>ER médio por duração (reels)</h4>${socialBars(t.duration, 'er', pct)}</div>` +
+    `<div class="social-insight-card social-insight-wide"><h4>${sic('hash')} Top hashtags por ER (mín. 2 posts)</h4>${socialBars(t.hashtag, 'er', pct)}</div>`;
+}
+
+async function socialExport() {
+  if (!_socialDatasetId) { showToast('Carregue uma coleta primeiro.', 'error'); return; }
+  const btn = document.getElementById('social-export-btn');
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Gerando…';
+  try {
+    const fd = new FormData();
+    fd.append('ds_id', _socialDatasetId);
+    fd.append('sort', document.getElementById('social-sort').value);
+    const r = await fetch('/api/social/export', { method: 'POST', body: fd });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || 'falha');
+    const a = document.createElement('a');
+    a.href = '/api/social/export-file/' + encodeURIComponent(j.excel);
+    a.download = j.excel; document.body.appendChild(a); a.click(); a.remove();
+    showToast('Excel gerado' + (j.thumbs ? '' : ' (sem miniaturas — Pillow ausente)') + '.', 'success');
+  } catch (e) {
+    showToast('Erro ao exportar: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = old;
+  }
+}

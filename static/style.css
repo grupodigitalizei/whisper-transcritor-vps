@@ -919,3 +919,240 @@
     @media (prefers-reduced-motion:reduce) {
       .cs-menu { transition:none; }
     }
+
+
+    /* ═══════════════════════════════════════════════════════════
+       Redes Sociais — sistema visual (hierarquia: coletor → perfil
+       → métricas → filtros → MOSAICO). Sem cards-dentro-de-card:
+       grupos internos usam espaço + divisores, não caixas com borda.
+       Ícones SVG (.sic) no lugar de emoji, para casar com o app.
+       ═══════════════════════════════════════════════════════════ */
+    .sic { width:15px; height:15px; flex:0 0 auto; stroke:currentColor; fill:none;
+      stroke-width:2; stroke-linecap:round; stroke-linejoin:round; vertical-align:-2px; }
+
+    .social-engine-status { display:inline-flex; align-items:center; gap:6px; font-size:12px;
+      font-weight:600; color:var(--slate-500); }
+    .social-engine-status::before { content:""; width:7px; height:7px; border-radius:50%;
+      background:var(--slate-300); }
+    .social-engine-status.ok    { color:var(--green); }
+    .social-engine-status.ok::before   { background:var(--green); box-shadow:0 0 0 3px rgba(22,163,74,.15); }
+    .social-engine-status.warn  { color:#B45309; }
+    .social-engine-status.warn::before { background:#D97706; box-shadow:0 0 0 3px rgba(217,119,6,.15); }
+
+    /* ── Coletor (zona de entrada, compacta) ── */
+    .social-collect { padding:16px; background:var(--slate-50); border:1px solid var(--slate-200);
+      border-radius:var(--r-lg); }
+    .social-input-row { display:flex; gap:14px; flex-wrap:wrap; align-items:flex-end; }
+    .social-field { display:flex; flex-direction:column; gap:6px; }
+    .social-field-grow { flex:1 1 240px; min-width:200px; }
+    .social-field label { font-size:11.5px; font-weight:600; color:var(--slate-500);
+      letter-spacing:.01em; }
+    /* Campo de texto no padrão do sistema (mesmos tokens do .select/.search-input,
+       mas sem chevron nem indent de busca) — o app não tinha uma classe .input. */
+    .social-input {
+      width:100%; height:40px; padding:0 13px; border:1.5px solid var(--slate-200);
+      border-radius:var(--r-sm); font-family:inherit; font-size:13.5px; color:var(--slate-800);
+      background:var(--white); outline:none; transition:border-color var(--t) var(--ease);
+    }
+    textarea.social-input { height:auto; padding:10px 13px; line-height:1.5; resize:vertical; min-height:70px; }
+    .social-input::placeholder { color:var(--slate-400); }
+    .social-input:focus { border-color:var(--blue); box-shadow:0 0 0 3px var(--blue-100); }
+    .social-field .social-input { width:100%; }
+    .social-collect-actions { display:flex; gap:12px; align-items:center; margin-top:14px; flex-wrap:wrap; }
+    .social-collect-hint { font-size:12.5px; color:var(--slate-500); }
+
+    /* Barra de progresso da coleta/download — caixa com spinner (não texto solto) */
+    .social-progress { display:flex; align-items:center; gap:11px; font-size:13px; font-weight:500;
+      color:var(--slate-600); background:var(--slate-50); border:1px solid var(--slate-200);
+      border-radius:var(--r-md); padding:13px 16px; margin-top:18px; }
+    .social-progress::before { content:""; width:15px; height:15px; flex:0 0 auto; border-radius:50%;
+      border:2px solid var(--slate-300); border-top-color:var(--blue);
+      animation:social-spin .7s linear infinite; }
+    @keyframes social-spin { to { transform:rotate(360deg); } }
+
+    /* ── Zona de analytics (aparece após coletar) ── */
+    #social-analytics { margin-top:24px; }
+
+    /* Perfil: avatar + nome + stats inline + ação */
+    .social-profile-head { display:flex; align-items:center; gap:14px; }
+    .social-avatar { position:relative; width:48px; height:48px; flex:0 0 48px; border-radius:50%;
+      background:var(--slate-100); border:1px solid var(--slate-200); display:grid; place-items:center;
+      font-weight:800; font-size:18px; color:var(--slate-400); overflow:hidden; }
+    .social-avatar img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+    .social-prof-meta { flex:1; min-width:0; }
+    .social-prof-name { font-size:17px; font-weight:800; color:var(--slate-900); letter-spacing:-.01em; }
+    .social-prof-name span { font-weight:500; color:var(--slate-400); }
+    .social-prof-stats { font-size:12.5px; color:var(--slate-500); font-variant-numeric:tabular-nums; margin-top:2px; }
+    .social-prof-actions { margin-left:auto; display:flex; gap:8px; }
+
+    /* Métricas: faixa inline com divisores (NÃO caixas) */
+    .social-metrics { display:flex; flex-wrap:wrap; gap:0; margin:18px 0 22px;
+      border:1px solid var(--slate-200); border-radius:var(--r-lg); overflow:hidden; background:var(--white); }
+    .social-metric { flex:1 1 0; min-width:130px; padding:14px 18px; border-left:1px solid var(--slate-100); }
+    .social-metric:first-child { border-left:none; }
+    .social-metric-l { display:flex; align-items:center; gap:6px; font-size:11.5px; font-weight:600;
+      color:var(--slate-500); margin-bottom:7px; }
+    .social-metric-l .sic { width:13px; height:13px; color:var(--slate-400); }
+    .social-metric-v { font-size:21px; font-weight:800; color:var(--slate-900);
+      font-variant-numeric:tabular-nums; line-height:1; letter-spacing:-.01em; }
+    .social-metric-v small { font-size:12px; font-weight:600; color:var(--slate-400); margin-left:1px; }
+
+    /* Controles / filtros: uma linha limpa */
+    .social-controls { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .social-selall { display:inline-flex; align-items:center; gap:7px; font-size:13px; font-weight:600;
+      color:var(--slate-600); cursor:pointer; padding-right:4px; }
+    .social-search { min-width:180px; flex:1 1 160px; max-width:300px; height:38px; }
+    .social-controls-right { display:flex; gap:8px; margin-left:auto; }
+
+    .social-resrow { font-size:12.5px; color:var(--slate-500); margin:12px 0 0;
+      font-variant-numeric:tabular-nums; }
+    .social-resrow b { color:var(--slate-700); font-weight:700; }
+
+    /* ── Insights (painel único de baixa saturação, não caixinhas) ── */
+    .social-insights { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));
+      gap:14px 28px; margin-top:18px; padding:18px 20px; background:var(--slate-50);
+      border:1px solid var(--slate-200); border-radius:var(--r-lg); }
+    .social-insight-card h4 { font-size:11.5px; font-weight:700; color:var(--slate-500);
+      text-transform:none; margin:0 0 11px; display:flex; align-items:center; gap:6px; }
+    .social-insight-card.social-insight-wide { grid-column:1 / -1; }
+    .social-insight-empty { font-size:12px; color:var(--slate-400); }
+    .social-bar-row { display:flex; align-items:center; gap:9px; margin-bottom:7px; font-size:11.5px; }
+    .social-bar-label { flex:0 0 76px; color:var(--slate-600); white-space:nowrap; overflow:hidden;
+      text-overflow:ellipsis; }
+    .social-bar-track { flex:1; height:7px; background:var(--slate-200); border-radius:6px; overflow:hidden; }
+    .social-bar-fill { display:block; height:100%; background:var(--blue); border-radius:6px; }
+    .social-bar-val { flex:0 0 auto; min-width:42px; text-align:right; font-weight:700;
+      color:var(--slate-700); font-variant-numeric:tabular-nums; }
+
+    /* ── MOSAICO (o herói) ── */
+    .social-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(190px, 1fr));
+      gap:18px; align-items:start; margin-top:24px; }
+
+    .social-card { border:1px solid var(--slate-200); border-radius:var(--r-lg); overflow:hidden;
+      background:var(--white); transition:box-shadow var(--t) var(--ease), border-color var(--t) var(--ease); }
+    .social-card:hover { box-shadow:var(--sh-md); }
+    .social-card.selected { border-color:var(--blue); box-shadow:0 0 0 2px var(--blue-100); }
+
+    .social-thumb { position:relative; aspect-ratio:9/16; background:var(--slate-900); overflow:hidden; }
+    .social-thumb img, .social-preview { width:100%; height:100%; object-fit:cover; display:block; }
+    .social-preview { position:absolute; inset:0; z-index:2; }
+    .social-noimg { width:100%; height:100%; display:grid; place-items:center; color:var(--slate-500); font-size:12px; }
+    .social-thumb::after { content:""; position:absolute; inset:0; z-index:1; pointer-events:none;
+      background:linear-gradient(to bottom, rgba(0,0,0,.28) 0%, transparent 22%, transparent 68%, rgba(0,0,0,.42) 100%); }
+
+    .social-badges { position:absolute; top:8px; left:8px; z-index:3; display:flex; gap:5px; }
+    .social-badge { display:inline-flex; align-items:center; gap:4px; background:rgba(15,23,42,.6);
+      color:#fff; font-size:10.5px; font-weight:700; padding:3px 7px; border-radius:7px;
+      backdrop-filter:blur(4px); font-variant-numeric:tabular-nums; }
+    .social-badge .sic { width:11px; height:11px; }
+    .social-er { position:absolute; top:8px; right:8px; z-index:3; color:#fff; font-size:10.5px;
+      font-weight:800; padding:3px 8px; border-radius:7px; backdrop-filter:blur(4px);
+      font-variant-numeric:tabular-nums; }
+    .social-er-hi  { background:rgba(22,163,74,.85); }
+    .social-er-mid { background:rgba(37,99,235,.85); }
+    .social-er-lo  { background:rgba(15,23,42,.6); }
+
+    /* Duração no canto inferior-esquerdo do thumb (evita colidir com o ER no topo) */
+    .social-dur { position:absolute; bottom:8px; left:8px; z-index:3; display:inline-flex;
+      align-items:center; gap:4px; background:rgba(15,23,42,.6); color:#fff; font-size:10.5px;
+      font-weight:700; padding:3px 7px; border-radius:7px; backdrop-filter:blur(4px);
+      font-variant-numeric:tabular-nums; }
+    .social-dur .sic { width:11px; height:11px; }
+
+    .social-thumb-actions { position:absolute; bottom:8px; right:8px; z-index:3; display:flex; gap:6px;
+      opacity:0; transform:translateY(4px); transition:opacity var(--t) var(--ease), transform var(--t) var(--ease); }
+    .social-card:hover .social-thumb-actions { opacity:1; transform:none; }
+    .social-iconbtn { width:28px; height:28px; display:grid; place-items:center; border:none; cursor:pointer;
+      border-radius:8px; background:rgba(15,23,42,.62); color:#fff; backdrop-filter:blur(4px); padding:0; }
+    .social-iconbtn:hover { background:var(--blue); }
+    .social-iconbtn .sic { width:14px; height:14px; }
+
+    .social-meta { padding:11px 12px 12px; }
+    .social-stats { display:flex; align-items:center; flex-wrap:wrap; gap:4px 11px; font-size:11.5px;
+      color:var(--slate-600); font-variant-numeric:tabular-nums; margin-bottom:7px; }
+    .social-stats span { display:inline-flex; align-items:center; gap:4px; }
+    .social-stats .sic { width:12.5px; height:12.5px; color:var(--slate-400); }
+    .social-stats .social-date { margin-left:auto; color:var(--slate-400); font-size:11px; }
+    .social-caption { font-size:12px; color:var(--slate-500); line-height:1.45; margin-bottom:11px;
+      display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; min-height:2.5em; }
+
+    /* Toggles de ação (baixar / transcrever) como botões-chip, não checkboxes crus */
+    .social-picks { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+    .social-pick { display:inline-flex; align-items:center; justify-content:center; gap:5px;
+      font-size:12px; font-weight:600; color:var(--slate-600); cursor:pointer; padding:6px 8px;
+      border:1px solid var(--slate-200); border-radius:8px; background:var(--white);
+      transition:all var(--t) var(--ease); user-select:none; }
+    .social-pick .sic { width:13px; height:13px; }
+    .social-pick:hover:not(.disabled) { border-color:var(--slate-300); background:var(--slate-50); }
+    .social-pick.on { background:var(--blue); border-color:var(--blue); color:#fff; }
+    .social-pick.disabled { opacity:.4; cursor:not-allowed; }
+
+    /* ── Barra de ação: FLUTUANTE fixa no rodapé ──
+       position:fixed (não sticky) porque o card ancestral tem overflow:hidden,
+       o que quebraria o sticky — a barra ficaria escondida no fim da página. */
+    .social-actionbar { position:fixed; left:50%; bottom:22px; transform:translateX(-50%);
+      z-index:200; display:flex; gap:16px; align-items:center; flex-wrap:wrap;
+      width:max-content; max-width:calc(100vw - 40px); background:var(--slate-900); color:#fff;
+      border-radius:14px; padding:12px 18px; box-shadow:var(--sh-lg);
+      animation:social-bar-in 200ms var(--ease); }
+    @keyframes social-bar-in { from { opacity:0; transform:translate(-50%, 12px); } }
+    @media (prefers-reduced-motion:reduce) { .social-actionbar { animation:none; } }
+    .social-actionbar-info { font-size:13px; font-weight:700; display:flex; align-items:center; gap:9px; }
+    .social-actionbar-info .sic { color:var(--blue-lt); }
+    .social-actionbar-sep { opacity:.35; }
+    .social-actionbar-opts { display:flex; gap:10px; align-items:center; margin-left:auto; }
+    .social-metachk { display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600;
+      color:rgba(255,255,255,.8); cursor:pointer; white-space:nowrap; }
+    .social-actionbar-opts .filter-select { background:rgba(255,255,255,.08); color:#fff;
+      border-color:rgba(255,255,255,.18); }
+    .social-actionbar-buttons { display:flex; gap:8px; }
+
+    @media (max-width:640px) {
+      .social-grid { grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:12px; }
+      .social-metric { min-width:calc(50% - 1px); flex:1 1 calc(50% - 1px); }
+      /* Em card estreito o texto "Transcrever" não cabe lado a lado — empilha. */
+      .social-picks { grid-template-columns:1fr; }
+      /* Perfil: no mobile o botão desce p/ linha própria (senão sobrepõe o texto),
+         com largura automática alinhado sob o nome (não esticado). */
+      .social-profile-head { flex-wrap:wrap; }
+      .social-prof-actions { flex:1 1 100%; margin:8px 0 0 62px; }
+      .social-actionbar-opts { margin-left:0; width:100%; flex-wrap:wrap; }
+      .social-actionbar-buttons { width:100%; }
+      .social-actionbar-buttons .btn { flex:1; }
+    }
+    @media (prefers-reduced-motion:reduce) {
+      .social-card, .social-thumb-actions, .social-pick { transition:none; }
+      .social-progress::before { animation:none; }
+    }
+
+    /* ── Seleção por clique no card (Cmd/Shift) + feedback de loading ── */
+    .social-card { position:relative; cursor:pointer; }
+    .social-card:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+    .social-check { position:absolute; top:8px; left:8px; z-index:4; width:24px; height:24px;
+      display:grid; place-items:center; border-radius:50%; background:var(--blue); color:#fff;
+      box-shadow:0 1px 4px rgba(0,0,0,.3); opacity:0; transform:scale(.7);
+      transition:opacity var(--t) var(--ease), transform var(--t) var(--ease); }
+    .social-check .sic { width:14px; height:14px; stroke-width:3; }
+    .social-card.selected .social-check { opacity:1; transform:none; }
+    .social-card.selected .social-badges { visibility:hidden; }   /* dá lugar ao check */
+
+    /* Spinner no ícone de ação do card durante o download */
+    .social-iconbtn { position:relative; }
+    .social-iconbtn.loading { pointer-events:none; }
+    .social-iconbtn.loading .sic { opacity:0; }
+    .social-iconbtn.loading::after { content:""; position:absolute; width:14px; height:14px;
+      border-radius:50%; border:2px solid rgba(255,255,255,.35); border-top-color:#fff;
+      animation:social-spin .7s linear infinite; }
+
+    /* Spinner nos botões da barra de ação */
+    .social-actionbar .btn.loading { position:relative; color:transparent; pointer-events:none; }
+    .social-actionbar .btn.loading::after { content:""; position:absolute; inset:0; margin:auto;
+      width:15px; height:15px; border-radius:50%; border:2px solid rgba(148,163,184,.45);
+      border-top-color:var(--blue); animation:social-spin .7s linear infinite; }
+
+    .social-clearsel { background:none; border:none; color:rgba(255,255,255,.6); font-size:12px;
+      font-weight:600; cursor:pointer; padding:2px 4px; margin-left:8px; text-decoration:underline; }
+    .social-clearsel:hover { color:#fff; }
+    @media (prefers-reduced-motion:reduce) {
+      .social-iconbtn.loading::after, .social-actionbar .btn.loading::after { animation:none; }
+    }

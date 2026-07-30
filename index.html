@@ -29,6 +29,10 @@
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         Biblioteca de Mídia
       </button>
+      <button type="button" id="main-tab-social" class="app-nav-item" role="tab" aria-selected="false" aria-controls="card-social" tabindex="-1" onclick="switchMainTab('social')" onkeydown="onTablistKey(event, 'main')">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1"/></svg>
+        Redes Sociais
+      </button>
       <button type="button" id="main-tab-advanced" class="app-nav-item" role="tab" aria-selected="false" aria-controls="card-advanced" tabindex="-1" onclick="switchMainTab('advanced')" onkeydown="onTablistKey(event, 'main')">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/><circle cx="18.5" cy="17.5" r="3.2"/><path d="M18.5 16.3v2.4M17.3 17.5h2.4"/></svg>
         Download Avançado
@@ -374,6 +378,147 @@
       </div>
     </div>
   </div><!-- /#card-media -->
+
+    <!-- Social Media Card -->
+    <div class="card" id="card-social" style="display:none;" role="tabpanel" aria-labelledby="main-tab-social">
+    <div class="card-header">
+      <div class="card-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1"/></svg>
+        Redes Sociais
+      </div>
+      <div class="social-engine-status" id="social-engine-status">verificando motor…</div>
+    </div>
+
+    <!-- Coletor -->
+    <div class="social-collect">
+      <div class="seg-tabs" role="tablist" aria-label="Modo de coleta" style="max-width:320px;margin-bottom:14px">
+        <button type="button" id="social-mode-profile" class="seg-tab" role="tab" aria-selected="true" tabindex="0" onclick="setSocialMode('profile')">Por perfil</button>
+        <button type="button" id="social-mode-urls" class="seg-tab" role="tab" aria-selected="false" tabindex="-1" onclick="setSocialMode('urls')">Por URLs</button>
+      </div>
+
+      <div id="social-input-profile" class="social-input-row">
+        <div class="social-field social-field-grow">
+          <label for="social-username">Perfil do Instagram</label>
+          <input type="text" id="social-username" class="social-input" placeholder="@perfil" autocomplete="off" spellcheck="false" onkeydown="if(event.key==='Enter')startSocialCollect()">
+        </div>
+        <div class="social-field">
+          <label for="social-period">Período</label>
+          <select id="social-period" class="filter-select">
+            <option value="">Tudo</option>
+            <option value="7">7 dias</option>
+            <option value="30" selected>30 dias</option>
+            <option value="90">90 dias</option>
+            <option value="365">12 meses</option>
+          </select>
+        </div>
+        <div class="social-field">
+          <label for="social-max">Máx. posts</label>
+          <input type="number" id="social-max" class="social-input" value="60" min="1" max="200" style="width:92px">
+        </div>
+      </div>
+
+      <div id="social-input-urls" class="social-input-row" style="display:none">
+        <div class="social-field social-field-grow">
+          <label for="social-urls">URLs de posts/reels (uma por linha)</label>
+          <textarea id="social-urls" class="social-input" rows="3" placeholder="https://www.instagram.com/reel/XXXXXXXXX/&#10;https://www.instagram.com/p/YYYYYYYYY/" spellcheck="false"></textarea>
+        </div>
+      </div>
+
+      <div class="social-collect-actions">
+        <button type="button" class="btn btn-primary" id="social-collect-btn" onclick="startSocialCollect()">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          Coletar
+        </button>
+        <select id="social-dataset-picker" class="filter-select" style="display:none" onchange="loadSocialDataset(this.value)" aria-label="Coletas anteriores"></select>
+        <span class="social-collect-hint" id="social-collect-hint"></span>
+      </div>
+    </div>
+
+    <!-- Progresso da coleta -->
+    <div class="social-progress" id="social-progress" style="display:none" role="status" aria-live="polite"></div>
+
+    <!-- Analytics (perfil + métricas + filtros + mosaico) — aparece após coletar -->
+    <div id="social-analytics" style="display:none">
+      <div class="social-profile-head" id="social-profile-head"></div>
+
+      <!-- Métricas: faixa inline (refletem os filtros ativos) -->
+      <div class="social-metrics" id="social-kpis"></div>
+
+      <div class="social-controls">
+        <label class="social-selall"><input type="checkbox" class="checkbox" id="social-select-all" onchange="socialToggleAll(this)"> Selecionar todos</label>
+        <div class="filter-select-wrap">
+          <select id="social-sort" class="filter-select" onchange="renderSocialGrid()" aria-label="Ordenar">
+            <option value="date">Mais recentes</option>
+            <option value="er">Engajamento (ER)</option>
+            <option value="views">Views</option>
+            <option value="likes">Likes</option>
+            <option value="comments">Comentários</option>
+            <option value="reshares">Reposts</option>
+          </select>
+        </div>
+        <div class="filter-select-wrap">
+          <select id="social-format" class="filter-select" onchange="renderSocialGrid()" aria-label="Formato">
+            <option value="all">Todos os formatos</option>
+            <option value="video">Só vídeos</option>
+            <option value="Reel/Vídeo">Reels</option>
+            <option value="Carrossel">Carrosséis</option>
+            <option value="Foto">Fotos</option>
+          </select>
+        </div>
+        <input type="search" id="social-search" class="social-input social-search" placeholder="Buscar na legenda…" oninput="renderSocialGrid()">
+        <div class="social-controls-right">
+          <button type="button" class="chip" id="social-insights-toggle" aria-pressed="false" onclick="toggleSocialInsights()">
+            <svg class="sic" viewBox="0 0 24 24" aria-hidden="true"><line x1="12" x2="12" y1="20" y2="10"/><line x1="18" x2="18" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="16"/></svg>
+            Insights
+          </button>
+        </div>
+      </div>
+      <div class="social-resrow" id="social-resrow"></div>
+
+      <!-- Insights / Tendências (refletem os filtros) -->
+      <div class="social-insights" id="social-insights" style="display:none"></div>
+
+      <!-- Mosaico -->
+      <div class="social-grid" id="social-grid"></div>
+    </div>
+
+    <!-- Empty state -->
+    <div class="empty-state" id="social-empty" role="status" aria-live="polite">
+      <div class="empty-icon" aria-hidden="true">
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1"/></svg>
+      </div>
+      <div class="empty-title">Colete um perfil ou cole URLs</div>
+      <div class="empty-sub">Usa sua sessão logada do ego lite para trazer os vídeos em HD com views, likes, comentários e ER — bem mais confiável que o download comum para Instagram.</div>
+    </div>
+
+    <!-- Barra de ação em lote (sticky) -->
+    <div class="social-actionbar" id="social-actionbar" style="display:none" role="toolbar" aria-label="Ações dos itens selecionados" aria-live="polite">
+      <div class="social-actionbar-info">
+        <span id="social-sel-count">0 selecionados</span>
+        <button type="button" class="social-clearsel" onclick="socialClearSel()">Limpar</button>
+      </div>
+      <div class="social-actionbar-opts">
+        <label class="social-metachk" title="Salva um .meta.json + legenda.txt ao lado de cada mídia baixada"><input type="checkbox" id="social-include-meta"> Metadados</label>
+        <select id="social-model" class="filter-select" aria-label="Modelo de transcrição" title="Modelo de transcrição">
+          <option value="turbo" selected>Turbo</option>
+          <option value="large">Large (preciso)</option>
+          <option value="medium">Medium</option>
+          <option value="small">Small</option>
+        </select>
+        <select id="social-language" class="filter-select" aria-label="Idioma" title="Idioma">
+          <option value="pt" selected>Português</option>
+          <option value="en">Inglês</option>
+          <option value="es">Espanhol</option>
+          <option value="auto">Detectar</option>
+        </select>
+      </div>
+      <div class="social-actionbar-buttons">
+        <button type="button" class="btn" id="social-btn-metrics" onclick="socialDownloadMetrics()">Baixar métricas</button>
+        <button type="button" class="btn" id="social-btn-download" onclick="submitSocialFetch('media')">Baixar mídia</button>
+        <button type="button" class="btn btn-primary" id="social-btn-transcribe" onclick="submitSocialFetch('transcribe')">Transcrever</button>
+      </div>
+    </div>
+  </div><!-- /#card-social -->
 
     <!-- Advanced Download Card -->
     <div class="card" id="card-advanced" style="display:none;" role="tabpanel" aria-labelledby="main-tab-advanced">

@@ -19,8 +19,23 @@ try:
     YT_DLP_OK = True
 except ImportError:
     YT_DLP_OK = False
+
+# Módulos de redes sociais (coleta via ego-lite + download HD). Portados do
+# sistema IGSorter do usuário — bem mais robustos que o yt-dlp para Instagram.
+try:
+    from social import core as social_core, collector as social_collector, \
+                       downloader as social_downloader, jobs as social_jobs
+    SOCIAL_OK = True
+    try:
+        from social import excel as social_excel
+        SOCIAL_EXCEL_OK = True
+    except Exception:
+        SOCIAL_EXCEL_OK = False
+except Exception:
+    SOCIAL_OK = False
+    SOCIAL_EXCEL_OK = False
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form, BackgroundTasks, Request
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 import uvicorn
@@ -890,6 +905,318 @@ async def api_ytdlp_update():
     _YTDLP_UPDATE_CHECK_CACHE["latest"] = None  # força recheck na próxima consulta a /status
     return {"ok": True, "restart_required": True, "output": result.stdout[-800:]}
 
+# ── Redes sociais (Instagram via ego-lite) ─────────────────────
+# Coleta perfis/URLs com a sessão logada do ego-lite (motor do IGSorter, bem mais
+# robusto que o yt-dlp para Instagram), mostra um mosaico 9:16 com metadados ricos
+# e deixa o usuário escolher o que baixar e o que transcrever. O download cai no
+# mesmo UPLOAD_DIR/media.json do app, então os itens aparecem na Biblioteca de
+# Mídia e a transcrição reusa exatamente o pipeline já existente.
+
+# Proxies de mídia só falam com o CDN do Instagram/Facebook — trava SSRF (nunca
+# viram um proxy aberto para qualquer host).
+_SOCIAL_CDN_SUFFIXES = ("cdninstagram.com", "fbcdn.net")
+
+def _is_social_cdn(url: str) -> bool:
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except Exception:
+        return False
+    # Fronteira de domínio real: `evilfbcdn.net`/`xcdninstagram.com` NÃO passam
+    # (host.endswith("fbcdn.net") passaria). Mesmo padrão de _host_allows_cookies.
+    return any(host == s or host.endswith("." + s) for s in _SOCIAL_CDN_SUFFIXES)
+
+def _require_social():
+    if not SOCIAL_OK:
+        raise HTTPException(500, "Módulo de redes sociais indisponível (falha ao importar social/).")
+
+@app.get("/api/social/status")
+async def api_social_status():
+    """Diz se o motor de coleta está pronto (ego-lite instalado)."""
+    ego = SOCIAL_OK and social_collector.ego_available()
+    return {"ok": SOCIAL_OK, "ego_browser": bool(ego)}
+
+@app.post("/api/social/collect")
+async def api_social_collect(
+    username:   str = Form(...),
+    max_posts:  int = Form(60),
+    since_days: str = Form(""),   # "" = sem limite de período
+):
+    """Coleta o feed de um perfil do Instagram (roda em background via ego-lite)."""
+    _require_social()
+    if not social_collector.ego_available():
+        raise HTTPException(400, "ego lite não encontrado. Instale (https://lite.ego.app) e faça login no Instagram.")
+    max_posts = max(1, min(int(max_posts or 60), 200))
+    sd = int(since_days) if (since_days or "").strip().isdigit() else None
+
+    def _task(job, log):
+        def prog(n, msg=None):
+            if n is not None:
+                job["progress"] = {"collected": n, "target": max_posts}
+            if msg:
+                log(msg)
+        ds_id, path = social_collector.collect_profile(username, max_posts,
+                                                        since_days=sd, on_progress=prog)
+        return {"ds_id": ds_id}
+
+    return {"job_id": social_jobs.start("collect", _task)}
+
+@app.post("/api/social/collect-urls")
+async def api_social_collect_urls(urls: str = Form(...)):
+    """Resolve uma lista de URLs de posts/reels individuais do Instagram."""
+    _require_social()
+    if not social_collector.ego_available():
+        raise HTTPException(400, "ego lite não encontrado. Instale (https://lite.ego.app) e faça login no Instagram.")
+    url_list = [u.strip() for u in re.split(r"[\n,;]+", urls or "") if u.strip()]
+    if not url_list:
+        raise HTTPException(400, "Cole ao menos uma URL de post/reel do Instagram.")
+    try:
+        social_collector.parse_instagram_urls(url_list)  # valida cedo
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    def _task(job, log):
+        def prog(n, msg=None):
+            if n is not None:
+                job["progress"] = {"collected": n, "target": len(url_list)}
+            if msg:
+                log(msg)
+        ds_id, path = social_collector.resolve_urls(url_list, on_progress=prog)
+        return {"ds_id": ds_id}
+
+    return {"job_id": social_jobs.start("collect-urls", _task)}
+
+@app.get("/api/social/job/{job_id}")
+async def api_social_job(job_id: str):
+    _require_social()
+    j = social_jobs.get(job_id)
+    if not j:
+        raise HTTPException(404, "job não encontrado")
+    return {"id": j["id"], "kind": j["kind"], "status": j["status"],
+            "progress": j["progress"], "log": j["log"][-8:],
+            "result": j["result"], "error": j["error"]}
+
+@app.get("/api/social/datasets")
+async def api_social_datasets():
+    _require_social()
+    return social_core.list_datasets()
+
+@app.get("/api/social/dataset/{ds_id}")
+async def api_social_dataset(ds_id: str):
+    _require_social()
+    try:
+        ds = social_core.load_dataset(social_core.dataset_path(ds_id))
+    except FileNotFoundError:
+        raise HTTPException(404, "coleta não encontrada")
+    return {"profile": ds["profile"], "collected_at": ds["collected_at"],
+            "rows": ds["rows"], "trends": social_core.build_trends(ds["rows"])}
+
+@app.get("/api/social/thumb")
+def api_social_thumb(url: str):
+    """Proxy + cache de capa (o CDN do IG às vezes bloqueia hotlink direto)."""
+    _require_social()
+    if not _is_social_cdn(url):
+        raise HTTPException(400, "host não permitido")
+    import hashlib
+    key = hashlib.sha1(url.encode()).hexdigest() + ".jpg"
+    path = os.path.join(social_core.CACHE_DIR, key)
+    if not (os.path.isfile(path) and os.path.getsize(path) > 0):
+        try:
+            social_downloader.download_media(url, path, timeout=15)
+        except Exception:
+            raise HTTPException(502, "não foi possível baixar a capa")
+    return FileResponse(path, media_type="image/jpeg")
+
+@app.get("/api/social/media")
+def api_social_media(url: str, request: Request):
+    """Proxy com suporte a Range para pré-visualizar o vídeo no hover do card."""
+    _require_social()
+    if not _is_social_cdn(url):
+        raise HTTPException(400, "host não permitido")
+    headers = {"User-Agent": social_downloader.UA}
+    rng = request.headers.get("range")
+    if rng:
+        headers["Range"] = rng
+    try:
+        # allow_redirects=False: o host já foi validado; sem isso um 302 poderia
+        # apontar para um alvo interno (SSRF). Links do CDN do IG são diretos.
+        r = requests.get(url, headers=headers, stream=True, timeout=30, allow_redirects=False)
+    except Exception:
+        raise HTTPException(502, "falha ao buscar mídia")
+    if r.status_code in (301, 302, 303, 307, 308):
+        raise HTTPException(502, "redirecionamento não permitido")
+    out_headers = {"Cache-Control": "public, max-age=3600"}
+    for h in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges"):
+        if h in r.headers:
+            out_headers[h] = r.headers[h]
+    return StreamingResponse(r.iter_content(1 << 16), status_code=r.status_code,
+                             headers=out_headers)
+
+# -- Download + (opcional) transcrição dos itens selecionados no mosaico
+def _social_nice_name(row: dict) -> str:
+    cap = (row.get("caption") or "").strip()
+    first = next((ln.strip() for ln in cap.splitlines() if ln.strip()), "")
+    if first:
+        return first[:70]
+    user = row.get("username") or "instagram"
+    return f"@{user} {row.get('code') or ''}".strip()
+
+def _social_start_transcription(file_path, filename, name, url, model,
+                                language, task, filter_fillers, folder):
+    """Dispara transcrição de um arquivo social JÁ baixado no disco — mesmo
+    pipeline do retry 'arquivo já presente' (linha do _retry_item)."""
+    task_id = str(uuid.uuid4())
+    _set_task(task_id, status="queued", progress=0, name=name or filename, filename=filename)
+    _save_to_history(filename, {}, model, status="queued", task_id=task_id,
+                     original_name=name, folder=folder, source="social",
+                     task_type=task, filter_fillers=filter_fillers)
+    _save_media(filename, name, url=url, is_transcribed=True, status="queued", force_name=True)
+    threading.Thread(target=_run_transcription,
+                     args=(task_id, file_path, filename, model, language, task, filter_fillers),
+                     daemon=True).start()
+    return task_id
+
+@app.post("/api/social/fetch")
+async def api_social_fetch(
+    ds_id:            str = Form(...),
+    download_codes:   str = Form("[]"),   # JSON: shortcodes só p/ baixar
+    transcribe_codes: str = Form("[]"),   # JSON: shortcodes p/ baixar + transcrever
+    model:            str = Form("turbo"),
+    language:         str = Form("pt"),
+    task:             str = Form("transcribe"),
+    filter_fillers:   str = Form("false"),
+    folder:           str = Form(""),
+    include_meta:     str = Form("false"),
+):
+    """Baixa a mídia HD dos posts selecionados para a Biblioteca de Mídia e, para
+    os marcados como 'transcrever', emenda direto no pipeline de transcrição.
+    Roda em background e devolve um job_id para acompanhar o progresso."""
+    _require_social()
+    want_meta = include_meta == "true"
+    try:
+        dl_codes = set(json.loads(download_codes) or [])
+        tr_codes = set(json.loads(transcribe_codes) or [])
+    except (json.JSONDecodeError, ValueError):
+        raise HTTPException(400, "listas de seleção inválidas")
+    all_codes = dl_codes | tr_codes
+    if not all_codes:
+        raise HTTPException(400, "Nenhum item selecionado.")
+
+    try:
+        ds = social_core.load_dataset(social_core.dataset_path(ds_id))
+    except FileNotFoundError:
+        raise HTTPException(404, "coleta não encontrada")
+
+    do_filter = filter_fillers == "true"
+    folder = _validate_folder_name(folder) if folder else ""
+    if tr_codes:
+        _ensure_folder_tree(folder)
+
+    by_code = {r["code"]: r for r in ds["rows"] if r.get("code")}
+    jobs_list = []  # (code, row, want_transcribe)
+    for code in all_codes:
+        row = by_code.get(code)
+        if row:
+            jobs_list.append((code, row, code in tr_codes))
+
+    def _task(job, log):
+        downloaded = failed = transcribing = skipped_no_video = 0
+        task_ids, media_files = [], []
+        total = len(jobs_list)
+        for i, (code, row, want_tr) in enumerate(jobs_list, 1):
+            job["progress"] = {"done": i - 1, "target": total}
+            medias = [m for m in row.get("media_urls", []) if m.get("url")]
+            if not medias:
+                failed += 1
+                log(f"{code}: sem mídia")
+                continue
+            name = _social_nice_name(row)
+            base = f"ig_{re.sub(r'[^A-Za-z0-9_-]', '', code)}"
+            if want_meta:
+                # Sidecar ao lado da mídia (não polui media.json, que lê só o índice):
+                # legenda.txt + meta.json com likes/views/ER/hashtags, como no IGSorter.
+                try:
+                    with open(os.path.join(UPLOAD_DIR, base + ".legenda.txt"), "w", encoding="utf-8") as f:
+                        f.write(row.get("caption") or "")
+                    meta = {k: row.get(k) for k in ("code", "url", "type", "date", "likes",
+                            "comments", "reshares", "views", "er", "duration_s", "hashtags", "username")}
+                    with open(os.path.join(UPLOAD_DIR, base + ".meta.json"), "w", encoding="utf-8") as f:
+                        json.dump(meta, f, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
+            downloaded_items = []  # (filename, fpath, is_video)
+            for n, m in enumerate(medias, 1):
+                ext = ".mp4" if m["type"] == "video" else ".jpg"
+                suffix = f"_{n}" if len(medias) > 1 else ""
+                filename = f"{base}{suffix}{ext}"
+                fpath = os.path.join(UPLOAD_DIR, filename)
+                try:
+                    if not (os.path.exists(fpath) and os.path.getsize(fpath) > 0):
+                        social_downloader.download_media(m["url"], fpath)
+                    downloaded += 1
+                    log(f"{code}: {filename}")
+                except Exception as e:
+                    failed += 1
+                    log(f"{code}: erro {e}")
+                    continue
+                downloaded_items.append((filename, fpath, m["type"] == "video"))
+
+            # O que vai para a transcrição (se pedido): o primeiro vídeo baixado.
+            transcribe_item = next((it for it in downloaded_items if it[2]), None) if want_tr else None
+            if transcribe_item:
+                fpath, filename = transcribe_item[1], transcribe_item[0]
+                tid = _social_start_transcription(fpath, filename, name, row.get("url"),
+                                                  model, language, task, do_filter, folder)
+                task_ids.append(tid)
+                transcribing += 1
+            elif want_tr:
+                skipped_no_video += 1
+                log(f"{code}: sem vídeo p/ transcrever")
+
+            # Registra em media.json TODOS os baixados — menos o que foi p/ a
+            # transcrição (esse é registrado por _social_start_transcription).
+            # Cobre carrosséis com vários vídeos: sem isso, os vídeos além do
+            # primeiro ficariam órfãos no disco (fora do media.json).
+            for filename, fpath, is_video in downloaded_items:
+                if transcribe_item and filename == transcribe_item[0]:
+                    continue
+                _save_media(filename, name, url=row.get("url"), is_transcribed=False, status="done")
+                media_files.append(filename)
+            time.sleep(0.3)  # respiro entre downloads
+        job["progress"] = {"done": total, "target": total}
+        return {"downloaded": downloaded, "failed": failed,
+                "transcribing": transcribing, "skipped_no_video": skipped_no_video,
+                "task_ids": task_ids, "media_files": media_files}
+
+    return {"job_id": social_jobs.start("fetch", _task)}
+
+@app.post("/api/social/export")
+async def api_social_export(ds_id: str = Form(...), sort: str = Form("er")):
+    """Gera Excel (+ CSV) da coleta, com aba de Tendências. Miniaturas entram só
+    se o Pillow estiver instalado — sem ele, sai sem thumbs (resto igual)."""
+    _require_social()
+    if not SOCIAL_EXCEL_OK:
+        raise HTTPException(500, "Exportação indisponível (openpyxl não instalado).")
+    try:
+        ds = social_core.load_dataset(social_core.dataset_path(ds_id))
+    except FileNotFoundError:
+        raise HTTPException(404, "coleta não encontrada")
+    res = social_excel.export_excel(ds, sort=sort, thumbs=social_excel.thumbs_supported())
+    return {"excel": os.path.basename(res["excel"]),
+            "csv": os.path.basename(res.get("csv", "")) if res.get("csv") else None,
+            "thumbs": social_excel.thumbs_supported()}
+
+@app.get("/api/social/export-file/{name}")
+async def api_social_export_file(name: str):
+    """Baixa uma planilha já gerada (só arquivos dentro de EXPORT_DIR)."""
+    _require_social()
+    safe = os.path.basename(name)
+    path = os.path.join(social_core.EXPORT_DIR, safe)
+    if not os.path.isfile(path):
+        raise HTTPException(404, "arquivo não encontrado")
+    media = "text/csv" if safe.lower().endswith(".csv") else \
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    return FileResponse(path, media_type=media, filename=safe)
+
 @app.get("/api/stats")
 async def api_stats():
     history = _load_history()
@@ -948,6 +1275,31 @@ async def api_download_media(filename: str):
         raise HTTPException(404, "Mídia não encontrada no servidor")
     return FileResponse(path, filename=_original_media_name_for(filename))
 
+def _cleanup_social_sidecars(filename: str) -> None:
+    """Ao deletar uma mídia social (ig_<code>[_N].ext), remove os sidecars
+    ig_<code>.legenda.txt / .meta.json quando não sobra mais nenhuma mídia do
+    mesmo post — senão os arquivos de metadados ficariam órfãos no disco."""
+    stem = os.path.splitext(filename)[0]
+    if not stem.startswith("ig_"):
+        return
+    base = re.sub(r"_\d+$", "", stem)  # tira sufixo _1/_2 de carrossel
+    try:
+        remaining = any(
+            f.startswith(base) and os.path.splitext(f)[1].lower() in (_VIDEO_EXTS | _AUDIO_EXTS | {".jpg", ".jpeg", ".png"})
+            and re.fullmatch(re.escape(base) + r"(_\d+)?", os.path.splitext(f)[0])
+            for f in os.listdir(UPLOAD_DIR)
+        )
+    except OSError:
+        remaining = True
+    if not remaining:
+        for ext in (".legenda.txt", ".meta.json"):
+            p = os.path.join(UPLOAD_DIR, base + ext)
+            if os.path.exists(p):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+
 @app.delete("/api/delete-media/{filename}")
 async def api_delete_media(filename: str):
     filename = _safe_filename(filename)
@@ -957,6 +1309,7 @@ async def api_delete_media(filename: str):
             os.remove(path)
         except Exception as e:
             raise HTTPException(500, f"Erro ao deletar: {e}")
+    _cleanup_social_sidecars(filename)
 
     with _media_lock:
         media = _load_media()
@@ -2361,6 +2714,28 @@ async def api_rename(filename: str, new_name: str = Form(...)):
     return {"ok": True, "name": new_name}
 
 # ── Entry point ────────────────────────────────────────────────
+def _reexec_into_venv_if_needed() -> None:
+    """Garante que o app rode SEMPRE no Python do venv do projeto.
+
+    Se alguém iniciar com o `python3` do sistema (ex.: `python3 whisper-app.py`),
+    o processo acaba usando um yt-dlp mais antigo — e o `/api/ytdlp/status` passa
+    a reportar "desatualizado" para sempre, além do botão "Atualizar agora" falhar
+    (o yt-dlp-ejs exige Python 3.10+). Aqui detectamos isso e re-executamos o
+    próprio script no `venv/bin/python`, corrigindo sozinho em vez de depender de
+    o usuário lembrar de usar o interpretador certo."""
+    import sys, os
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    venv_dir   = os.path.join(script_dir, "venv")
+    venv_py    = os.path.join(venv_dir, "bin", "python")
+    # sys.prefix aponta para a raiz do venv quando já estamos dentro dele; isso
+    # evita o problema de resolver symlinks (venv/bin/python costuma apontar para
+    # o Python-base) que poderia causar um loop de re-exec.
+    already_in_venv = os.path.abspath(sys.prefix) == os.path.abspath(venv_dir)
+    if os.path.exists(venv_py) and not already_in_venv:
+        print(f"↻  Reiniciando no Python do venv ({venv_py})…")
+        os.execv(venv_py, [venv_py, os.path.abspath(__file__), *sys.argv[1:]])
+
 if __name__ == "__main__":
+    _reexec_into_venv_if_needed()
     print("✅  Whisper Transcritor → http://127.0.0.1:7860")
     uvicorn.run(app, host="127.0.0.1", port=7860, log_level="warning")
