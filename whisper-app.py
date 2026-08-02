@@ -396,7 +396,31 @@ def _custom_tqdm_update(self, n=1):
 tqdm.tqdm.__init__ = _custom_tqdm_init
 tqdm.tqdm.update = _custom_tqdm_update
 
+# Modelos e tarefas aceitos. Lista fixa de propósito: não chamamos
+# whisper.available_models() em tempo de import (os testes stubam o whisper) e,
+# mais importante, recusamos um nome arbitrário ANTES de repassá-lo a
+# whisper.load_model — que trataria uma string desconhecida como caminho de
+# arquivo de checkpoint. Cobre todos os valores oferecidos pela interface.
+_VALID_MODELS = {
+    "tiny", "tiny.en", "base", "base.en", "small", "small.en",
+    "medium", "medium.en", "large-v1", "large-v2", "large-v3",
+    "large", "large-v3-turbo", "turbo",
+}
+_VALID_TASKS = {"transcribe", "translate"}
+
+def _validate_transcribe_params(model: str, task: str) -> None:
+    """Rejeita modelo/tarefa fora da lista conhecida com um 400 claro, em vez de
+    deixar o valor inválido virar erro lá dentro da thread de transcrição."""
+    if model not in _VALID_MODELS:
+        raise HTTPException(400, f"Modelo inválido: {model!r}")
+    if task not in _VALID_TASKS:
+        raise HTTPException(400, f"Tarefa inválida: {task!r}")
+
 def _load_model(name: str):
+    # Rede de segurança: qualquer caminho que chegue aqui (upload, URL, retry)
+    # passa por esta checagem antes de tocar em whisper.load_model.
+    if name not in _VALID_MODELS:
+        raise ValueError(f"modelo inválido: {name!r}")
     with _models_lock:
         if name not in _models:
             _models[name] = whisper.load_model(name)
@@ -750,7 +774,9 @@ def _set_task(task_id: str, **kw):
         if kw.get("status") in _TERMINAL_STATES:
             _prune_tasks_locked()
 
-def _get_task(task_id: str) -> dict | None:
+def _get_task(task_id: str) -> dict:
+    # Sempre retorna um dict (vazio se a task não existe) — nunca None. O código
+    # a jusante depende disso para poder chamar .get() sem checar antes.
     with _tasks_lock:
         return dict(_tasks.get(task_id, {}))
 
@@ -1900,9 +1926,17 @@ async def api_transcribe(
     filter_fillers:  str        = Form("false"),
     folder:          str        = Form(""),
 ):
+    _validate_transcribe_params(model, task)
     original_name = file.filename or f"audio_{uuid.uuid4().hex[:8]}.mp3"
     task_id  = str(uuid.uuid4())
-    filename = f"{task_id[:8]}_{original_name}"
+    # O nome de exibição (original_name) é preservado como veio. Já o nome que vai
+    # para o disco tem separadores e caracteres de controle trocados por "_": o
+    # prefixo aleatório já barrava traversal na prática, mas sanitizar é defesa
+    # bem menos frágil e ainda evita que um "\n" no nome contamine as listas
+    # separadas por quebra de linha usadas nas operações em lote.
+    safe_stem = re.sub(r"[/\\\x00-\x1f]+", "_", original_name).strip() \
+                or f"audio_{uuid.uuid4().hex[:8]}.mp3"
+    filename = f"{task_id[:8]}_{safe_stem}"
     # Enviado por funcionário nasce público; enviado pelo admin nasce privado.
     _mark_pending_visibility(filename, _visibility_for_new(request))
 
@@ -3374,11 +3408,12 @@ async def api_folders_delete(request: Request, path: str = Form(...),
     with _history_lock:
         history = _load_history()
         if cascade == "delete":
-            # Mark items inside this folder for deletion
-            to_delete = [h for h in history if (h.get("folder") or "") == path
-                         or (h.get("folder") or "").startswith(prefix)]
-            keep = [h for h in history if h not in to_delete]
-            history = keep
+            # Itens dentro desta pasta (ou de qualquer subpasta) vão embora.
+            def _in_folder(h):
+                f = h.get("folder") or ""
+                return f == path or f.startswith(prefix)
+            to_delete = [h for h in history if _in_folder(h)]
+            history = [h for h in history if not _in_folder(h)]  # O(n), não O(n²)
             # Remove their result directories
             for h in to_delete:
                 fname = h.get("file")
