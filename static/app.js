@@ -1161,11 +1161,20 @@ async function copyPublicLink() {
 }
 
 async function changePassword(target) {
-  const input = document.getElementById(target === 'admin' ? 'pub-pw-admin' : 'pub-pw-public');
-  const pw = (input?.value || '').trim();
+  const input   = document.getElementById(target === 'admin' ? 'pub-pw-admin' : 'pub-pw-public');
+  const confirm = document.getElementById(target === 'admin' ? 'pub-pw-admin-confirm' : 'pub-pw-public-confirm');
+  const pw   = (input?.value || '').trim();
+  const pw2  = (confirm?.value || '').trim();
   if (pw.length < 8) {
     _pubMsg('A senha precisa ter pelo menos 8 caracteres.', 'error');
     input?.focus();
+    return;
+  }
+  // Confirmação evita que um typo tranque a equipe fora (o admin reemite a
+  // própria sessão, mas os funcionários ficariam com a senha errada).
+  if (pw !== pw2) {
+    _pubMsg('As duas senhas não são iguais. Repita a mesma senha nos dois campos.', 'error');
+    confirm?.focus();
     return;
   }
   const label = target === 'admin' ? 'sua senha de admin' : 'a senha dos funcionários';
@@ -1184,7 +1193,8 @@ async function changePassword(target) {
     const r = await fetch('/api/auth/password', { method: 'POST', body: fd });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) { _pubMsg(d.detail || 'Não foi possível trocar a senha.', 'error'); return; }
-    if (input) input.value = '';
+    if (input)   input.value   = '';
+    if (confirm) confirm.value = '';
     _pubMsg(target === 'admin'
       ? 'Senha de admin trocada. Você continua logado neste navegador.'
       : 'Senha dos funcionários trocada. Envie a nova para a equipe — as sessões antigas caíram.', 'ok');
