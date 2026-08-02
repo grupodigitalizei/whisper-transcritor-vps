@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Entrar — Transcritor</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <!-- Tema claro por padrão; respeita a escolha salva (mesma da tela principal). -->
+  <script>
+    (function () {
+      try {
+        if (localStorage.getItem('whisper-theme') === 'dark')
+          document.documentElement.setAttribute('data-theme', 'dark');
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body class="login-body">
+
+  <main class="login-shell">
+    <div class="login-card">
+      <div class="login-brand">
+        <div class="login-brand-mark" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="10" x2="4" y2="14"/><line x1="8" y1="6" x2="8" y2="18"/><line x1="12" y1="3" x2="12" y2="21"/><line x1="16" y1="6" x2="16" y2="18"/><line x1="20" y1="10" x2="20" y2="14"/></svg>
+        </div>
+        <span class="login-brand-name">Transcritor</span>
+      </div>
+
+      <h1 class="login-title">Entrar</h1>
+      <p class="login-sub">Digite a senha de acesso para abrir as transcrições.</p>
+
+      <form class="login-form" id="login-form" autocomplete="on">
+        <label class="login-label" for="password">Senha</label>
+        <div class="login-input-wrap">
+          <input type="password" id="password" name="password" class="login-input"
+                 placeholder="••••••••••" autocomplete="current-password"
+                 autocapitalize="off" spellcheck="false" required
+                 aria-describedby="login-msg" />
+          <button type="button" class="login-eye" id="toggle-eye"
+                  onclick="togglePw()" aria-label="Mostrar senha" title="Mostrar senha">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+
+        <div class="login-msg" id="login-msg" role="status" aria-live="polite"></div>
+
+        <button type="submit" class="login-submit" id="login-submit">
+          Entrar
+        </button>
+      </form>
+
+      <p class="login-foot">
+        Não sabe a senha? Peça para o administrador do Transcritor.
+      </p>
+    </div>
+  </main>
+
+<script>
+function togglePw() {
+  const input = document.getElementById('password');
+  const btn   = document.getElementById('toggle-eye');
+  const show  = input.type === 'password';
+  input.type = show ? 'text' : 'password';
+  btn.setAttribute('aria-label', show ? 'Ocultar senha' : 'Mostrar senha');
+  btn.title = show ? 'Ocultar senha' : 'Mostrar senha';
+  btn.classList.toggle('is-on', show);
+}
+
+function setMsg(text, kind) {
+  const el = document.getElementById('login-msg');
+  el.textContent = text || '';
+  el.className = 'login-msg' + (text ? ' is-' + kind : '');
+}
+
+document.getElementById('login-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn   = document.getElementById('login-submit');
+  const input = document.getElementById('password');
+  const pw    = input.value;
+  if (!pw) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Verificando...';
+  setMsg('', '');
+
+  try {
+    const body = new FormData();
+    body.append('password', pw);
+    const res  = await fetch('/api/auth/login', { method: 'POST', body });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      btn.textContent = 'Entrando...';
+      // Recarrega na raiz — o cookie de sessão já está posto.
+      window.location.replace('/');
+      return;
+    }
+    setMsg(data.detail || 'Não foi possível entrar.', 'error');
+    input.select();
+  } catch {
+    setMsg('Servidor fora do ar. Tente de novo em instantes.', 'error');
+  }
+  btn.disabled = false;
+  btn.textContent = 'Entrar';
+});
+
+// Se o login está esfriando por tentativas erradas, avisa de cara em vez de
+// deixar a pessoa tentar de novo e tomar erro.
+(async () => {
+  try {
+    const res = await fetch('/api/auth/state');
+    const st  = await res.json();
+    if (st.locked_for > 0) {
+      setMsg(`Muitas tentativas erradas. Tente de novo em ${Math.max(1, Math.round(st.locked_for / 60))} min.`, 'error');
+    }
+  } catch { /* servidor ainda subindo — o form continua utilizável */ }
+})();
+</script>
+</body>
+</html>

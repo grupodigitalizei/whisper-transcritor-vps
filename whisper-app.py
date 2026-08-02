@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Whisper Transcritor — FastAPI + HTML frontend"""
 from __future__ import annotations
-import os, json, shutil, threading, uuid, datetime, re, zipfile, time, tempfile, ipaddress
+import os, json, shutil, threading, uuid, datetime, re, zipfile, time, tempfile, ipaddress, subprocess
 from urllib.parse import urlparse
 from contextlib import asynccontextmanager
 
@@ -22,6 +22,8 @@ except ImportError:
 
 # Módulos de redes sociais (coleta via ego-lite + download HD). Portados do
 # sistema IGSorter do usuário — bem mais robustos que o yt-dlp para Instagram.
+import gdrive  # download de arquivos públicos do Google Drive (trata token de confirmação)
+
 try:
     from social import core as social_core, collector as social_collector, \
                        downloader as social_downloader, jobs as social_jobs
@@ -31,11 +33,21 @@ try:
         SOCIAL_EXCEL_OK = True
     except Exception:
         SOCIAL_EXCEL_OK = False
+    # Tecnologia multi-rede atualizada: interceptação (IG/TikTok/YT/FB) + download
+    # por URL via yt-dlp com plano B no navegador logado.
+    try:
+        from social import intercept as social_intercept, medialink as social_medialink
+        SOCIAL_MULTI_OK = True
+    except Exception:
+        SOCIAL_MULTI_OK = False
 except Exception:
     SOCIAL_OK = False
     SOCIAL_EXCEL_OK = False
+    SOCIAL_MULTI_OK = False
+import auth
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form, BackgroundTasks, Request
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, StreamingResponse, \
+                              RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 import uvicorn
@@ -49,7 +61,12 @@ UPLOAD_DIR   = os.path.join(DATA_DIR, "uploads")
 HISTORY_FILE = os.path.join(DATA_DIR, "history.json")
 MEDIA_FILE   = os.path.join(DATA_DIR, "media.json")
 FOLDERS_FILE = os.path.join(DATA_DIR, "folders.json")
+# Pastas que um usuário público criou. Existem só para uma pasta recém-criada
+# (ainda vazia) não desaparecer da tela dele — as pastas com conteúdo público
+# já são deduzidas dos próprios itens.
+PUBLIC_FOLDERS_FILE = os.path.join(DATA_DIR, "public_folders.json")
 HTML_FILE    = os.path.join(SCRIPT_DIR, "index.html")
+LOGIN_FILE   = os.path.join(SCRIPT_DIR, "login.html")
 STATIC_DIR   = os.path.join(SCRIPT_DIR, "static")
 
 for d in (RESULTS_DIR, UPLOAD_DIR, STATIC_DIR):
@@ -71,7 +88,103 @@ COOKIE_ALLOWED_SUFFIXES = (
 )
 
 # Same-origin hosts accepted for state-changing requests (CSRF guard, finding #3).
+# O host real da requisição (header Host) é sempre aceito além destes — sem isso
+# o app pararia de funcionar assim que fosse publicado num domínio/túnel.
 ALLOWED_ORIGIN_HOSTS = {"127.0.0.1:7860", "localhost:7860"}
+
+# ── Área pública ───────────────────────────────────────────────
+# Cada item de history.json / media.json carrega um campo `visibility`:
+#
+#   "private" (ou ausente) → só o administrador vê. Todo o acervo que já existia
+#                            antes desta feature cai aqui automaticamente, que é
+#                            exatamente o que queremos: nada vaza por acidente.
+#   "public"               → aparece na Área Pública, acessível por quem entrar
+#                            com a senha compartilhada.
+#
+# O administrador publica/despublica manualmente (POST /api/visibility); tudo que
+# um usuário público cria já nasce "public".
+VIS_PRIVATE = "private"
+VIS_PUBLIC  = "public"
+
+# Ponte entre o request (que sabe QUEM está enviando) e as threads de background
+# de download/transcrição (que não sabem). O endpoint registra aqui a
+# visibilidade pretendida para o arquivo; _save_to_history/_save_media leem isso
+# na PRIMEIRA gravação. Depois disso o valor gravado é que vale — nada muda a
+# visibilidade de um item sem passar por /api/visibility.
+_pending_vis: dict = {}
+_pending_vis_lock  = threading.Lock()
+_PENDING_VIS_MAX   = 500
+
+def _mark_pending_visibility(filename: str, visibility: str) -> None:
+    if not filename:
+        return
+    with _pending_vis_lock:
+        if len(_pending_vis) >= _PENDING_VIS_MAX:
+            # Descarta os mais antigos (dict preserva ordem de inserção). Só
+            # importa até a primeira gravação em disco, que acontece em segundos.
+            for k in list(_pending_vis)[:_PENDING_VIS_MAX // 2]:
+                _pending_vis.pop(k, None)
+        _pending_vis[filename] = visibility
+
+def _pending_visibility(filename: str) -> str:
+    with _pending_vis_lock:
+        return _pending_vis.get(filename, VIS_PRIVATE)
+
+def _vis_of(entry: dict | None) -> str:
+    """Visibilidade de uma entrada de catálogo. Qualquer coisa diferente de
+    "public" é tratada como privada (fail-closed)."""
+    return VIS_PUBLIC if (entry or {}).get("visibility") == VIS_PUBLIC else VIS_PRIVATE
+
+def _visibility_for_file(filename: str,
+                         history: list | None = None,
+                         media: list | None = None) -> str:
+    """Visibilidade efetiva de um arquivo no disco.
+
+    O que já está gravado vence; se o arquivo ainda não chegou a nenhum catálogo
+    (upload/download em andamento), usa a intenção registrada no kickoff."""
+    if not filename:
+        return VIS_PRIVATE
+    for entry in (history if history is not None else _load_history()):
+        if entry.get("file") == filename:
+            return _vis_of(entry)
+    for entry in (media if media is not None else _load_media()):
+        if entry.get("file") == filename:
+            return _vis_of(entry)
+    return _pending_visibility(filename)
+
+def _role_of(request: Request) -> str:
+    """Papel da requisição, posto pelo middleware de autenticação."""
+    role = getattr(request.state, "role", None)
+    if role not in (auth.ROLE_ADMIN, auth.ROLE_PUBLIC):
+        raise HTTPException(401, "Não autenticado")
+    return role
+
+def _is_admin(request: Request) -> bool:
+    return _role_of(request) == auth.ROLE_ADMIN
+
+def _require_admin(request: Request) -> None:
+    if not _is_admin(request):
+        raise HTTPException(403, "Apenas o administrador pode fazer isso.")
+
+def _visibility_for_new(request: Request) -> str:
+    """Visibilidade de um item recém-criado: o que o funcionário envia nasce
+    público (é o acervo compartilhado dele); o que o admin envia nasce privado."""
+    return VIS_PRIVATE if _is_admin(request) else VIS_PUBLIC
+
+def _scope_entries(entries: list, role: str) -> list:
+    if role == auth.ROLE_ADMIN:
+        return entries
+    return [e for e in entries if _vis_of(e) == VIS_PUBLIC]
+
+def _require_file_access(filename: str, request: Request) -> None:
+    """Barra o acesso de um usuário público a um arquivo privado.
+
+    Responde 404 (e não 403) de propósito: para quem não tem acesso, o item
+    simplesmente não existe — não confirmamos nem a existência do arquivo."""
+    if _is_admin(request):
+        return
+    if _visibility_for_file(filename) != VIS_PUBLIC:
+        raise HTTPException(404, "Arquivo não encontrado")
 
 def _atomic_write_json(path: str, data) -> None:
     """Write JSON to `path` atomically: dump to a temp file in the same dir,
@@ -534,6 +647,9 @@ def _save_to_history(filename: str, result: dict, model_name: str,
             "source":       source_to_use,
             "task_type":      task_type_to_use,
             "filter_fillers": filter_fillers_to_use,
+            # Área pública: o valor já gravado manda (só /api/visibility troca);
+            # na primeira gravação, vale a intenção registrada no kickoff.
+            "visibility":   existing.get("visibility") or _pending_visibility(filename),
             # Timing fields (filled during transcription by _update_history_status)
             "started_at":   existing.get("started_at"),
             "completed_at": existing.get("completed_at"),
@@ -578,12 +694,23 @@ def _save_media(filename: str, original_name: str, url: str | None = None, is_tr
             "date": existing.get("date") or datetime.datetime.now().strftime("%d de %b. de %Y, %H:%M"),
             "queued_at": existing.get("queued_at") or time.time(),
             "folder": existing.get("folder", ""),
+            # Mesma regra do history: gravado vence, senão a intenção do kickoff.
+            "visibility": existing.get("visibility") or _pending_visibility(filename),
         }
 
         media = [m for m in media if m.get("file") != filename]
         media.insert(0, entry)
 
         _atomic_write_json(MEDIA_FILE, media)
+
+def _remove_media_entry(filename: str) -> None:
+    """Remove uma entrada do catálogo (sem tocar no arquivo). Usado quando um
+    download finaliza com um nome/extensão diferente do provisório."""
+    with _media_lock:
+        media = _load_media()
+        new = [m for m in media if m.get("file") != filename]
+        if len(new) != len(media):
+            _atomic_write_json(MEDIA_FILE, new)
 
 def _update_history_status(filename: str, status: str,
                            error: str | None = None, **extra):
@@ -717,28 +844,211 @@ def _reset_stale_on_boot():
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     _reset_stale_on_boot()
+    # Cria auth.json na primeira execução e imprime as senhas geradas uma única
+    # vez no terminal — não há como recuperá-las depois, só trocar.
+    created = auth.ensure_initialized()
+    if created:
+        print("\n" + "═" * 62)
+        print("  SENHAS DE ACESSO CRIADAS (anote — só aparecem desta vez)")
+        for role, pw in created.items():
+            label = "ADMIN (você)" if role == auth.ROLE_ADMIN else "FUNCIONÁRIOS (área pública)"
+            print(f"    {label:<28} {pw}")
+        print("  Troque quando quiser em Configurações → Área Pública.")
+        print("═" * 62 + "\n")
     yield
 
 app = FastAPI(title="Whisper Transcritor", lifespan=_lifespan)
 
+# Rotas que funcionam sem sessão — só o necessário para conseguir logar.
+_OPEN_PATHS = {"/login", "/api/auth/login", "/api/auth/state", "/favicon.ico"}
+
+def _is_open_path(path: str) -> bool:
+    return path in _OPEN_PATHS or path.startswith("/static/")
+
 @app.middleware("http")
-async def _csrf_guard(request: Request, call_next):
-    """CSRF guard (audit finding #3). For state-changing methods, require that
-    any Origin/Referer header points at our own host. Requests with NO Origin
-    and NO Referer (native clients like curl, the initial page load) are allowed
-    so local tooling keeps working — a malicious cross-site page always sends its
-    own Origin, which won't match ALLOWED_ORIGIN_HOSTS and is rejected."""
+async def _auth_and_csrf_guard(request: Request, call_next):
+    """Porteiro único: CSRF + autenticação por sessão.
+
+    CSRF (audit finding #3): em métodos que mudam estado, o Origin/Referer tem
+    que apontar para o próprio host da requisição. O host vem do header Host —
+    o navegador não deixa uma página em evil.com falsificar isso — então o app
+    continua protegido depois de publicado num domínio/túnel, sem precisar
+    manter uma lista fixa de domínios.
+
+    Autenticação: sem cookie de sessão válido, nada é servido além de /login e
+    dos estáticos. Não existe liberação por IP de propósito — atrás de um túnel
+    (Tailscale Funnel) TODO request chega como 127.0.0.1, então confiar no IP
+    daria acesso de administrador para a internet inteira."""
     if request.method in ("POST", "PUT", "PATCH", "DELETE"):
-        origin  = request.headers.get("origin")
-        referer = request.headers.get("referer")
-        host_ok = True
-        if origin:
-            host_ok = urlparse(origin).netloc in ALLOWED_ORIGIN_HOSTS
-        elif referer:
-            host_ok = urlparse(referer).netloc in ALLOWED_ORIGIN_HOSTS
-        if not host_ok:
-            return JSONResponse({"detail": "Origem não permitida (CSRF)"}, status_code=403)
+        src = request.headers.get("origin") or request.headers.get("referer")
+        if src:
+            allowed = set(ALLOWED_ORIGIN_HOSTS)
+            own_host = request.headers.get("host")
+            if own_host:
+                allowed.add(own_host)
+            if urlparse(src).netloc not in allowed:
+                return JSONResponse({"detail": "Origem não permitida (CSRF)"}, status_code=403)
+
+    role = auth.role_for_token(request.cookies.get(auth.COOKIE_NAME))
+    request.state.role = role
+    path = request.url.path
+
+    if role is None and not _is_open_path(path):
+        if path.startswith("/api/"):
+            return JSONResponse({"detail": "Não autenticado"}, status_code=401)
+        return RedirectResponse("/login", status_code=303)
+
+    # A aba Redes Sociais é ferramenta de administração (usa a sessão logada do
+    # Instagram do dono via ego-lite) e não faz parte da Área Pública. O bloqueio
+    # é por prefixo, aqui, e não endpoint por endpoint: assim um /api/social/*
+    # novo já nasce fechado para a equipe, sem depender de ninguém lembrar.
+    if role != auth.ROLE_ADMIN and path.startswith("/api/social/"):
+        return JSONResponse({"detail": "Apenas o administrador pode fazer isso."},
+                            status_code=403)
+
     return await call_next(request)
+
+def _cookie_is_secure(request: Request) -> bool:
+    """Marca o cookie como Secure quando a página está em HTTPS.
+
+    Atrás do túnel o uvicorn vê http (o TLS termina no proxy), então olhamos o
+    X-Forwarded-Proto. E se o acesso NÃO é local, tratamos como HTTPS de todo
+    jeito: um túnel só serve https, e é justamente o caso em que o cookie
+    precisa da proteção — se ficasse sem Secure, um downgrade para http
+    conseguiria carregá-lo."""
+    proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
+    if proto:
+        return proto == "https"
+    if request.url.scheme == "https":
+        return True
+    host = (request.headers.get("host") or "").split(":")[0].lower()
+    return host not in ("127.0.0.1", "localhost", "::1", "[::1]", "")
+
+# ── Login / sessão ─────────────────────────────────────────────
+@app.get("/login", response_class=HTMLResponse)
+async def serve_login(request: Request):
+    # Já logado? Não faz sentido mostrar o formulário.
+    if getattr(request.state, "role", None):
+        return RedirectResponse("/", status_code=303)
+    with open(LOGIN_FILE, encoding="utf-8") as f:
+        return f.read()
+
+@app.get("/api/auth/state")
+async def api_auth_state(request: Request):
+    """Usado pela tela de login para avisar de bloqueio por tentativas erradas."""
+    return {"authenticated": bool(getattr(request.state, "role", None)),
+            "locked_for": auth.login_locked_for()}
+
+@app.post("/api/auth/login")
+async def api_auth_login(request: Request, password: str = Form(...)):
+    locked = auth.login_locked_for()
+    if locked:
+        raise HTTPException(429, f"Muitas tentativas erradas. Tente de novo em "
+                                 f"{max(1, locked // 60)} min.")
+    role = auth.role_for_password(password or "")
+    if not role:
+        auth.record_login_failure()
+        raise HTTPException(401, "Senha incorreta.")
+    auth.record_login_success()
+    token = auth.create_session(role)
+    resp = JSONResponse({"ok": True, "role": role})
+    resp.set_cookie(auth.COOKIE_NAME, token, max_age=auth.SESSION_TTL_SECS,
+                    httponly=True, samesite="lax", secure=_cookie_is_secure(request),
+                    path="/")
+    return resp
+
+@app.post("/api/auth/logout")
+async def api_auth_logout(request: Request):
+    auth.destroy_session(request.cookies.get(auth.COOKIE_NAME))
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(auth.COOKIE_NAME, path="/")
+    return resp
+
+@app.get("/api/me")
+async def api_me(request: Request):
+    """Quem sou eu — o frontend usa isso para decidir o que mostrar."""
+    role = _role_of(request)
+    return {
+        "role":     role,
+        "is_admin": role == auth.ROLE_ADMIN,
+        "sessions": {"public": auth.active_session_count(auth.ROLE_PUBLIC),
+                     "admin":  auth.active_session_count(auth.ROLE_ADMIN)}
+                    if role == auth.ROLE_ADMIN else None,
+    }
+
+@app.post("/api/auth/password")
+async def api_auth_set_password(request: Request,
+                                target: str = Form(...),
+                                password: str = Form(...)):
+    """Troca a senha do admin ou da área pública. Só o admin pode.
+
+    Trocar a senha derruba todas as sessões ativas daquele papel — é assim que
+    se revoga o acesso de um funcionário que saiu."""
+    _require_admin(request)
+    if target not in (auth.ROLE_ADMIN, auth.ROLE_PUBLIC):
+        raise HTTPException(400, "Alvo inválido")
+    try:
+        auth.set_password(target, password)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    resp = JSONResponse({"ok": True, "target": target})
+    if target == auth.ROLE_ADMIN:
+        # A própria sessão do admin acabou de ser revogada — reemite uma nova
+        # para ele não ser expulso da tela que acabou de usar.
+        resp.set_cookie(auth.COOKIE_NAME, auth.create_session(auth.ROLE_ADMIN),
+                        max_age=auth.SESSION_TTL_SECS, httponly=True, samesite="lax",
+                        secure=_cookie_is_secure(request), path="/")
+    return resp
+
+@app.post("/api/auth/revoke-public")
+async def api_auth_revoke_public(request: Request):
+    """Desconecta todos os funcionários agora, sem trocar a senha."""
+    _require_admin(request)
+    return {"ok": True, "revoked": auth.destroy_sessions_for_role(auth.ROLE_PUBLIC)}
+
+# ── Publicar / despublicar ─────────────────────────────────────
+@app.post("/api/visibility")
+async def api_set_visibility(request: Request,
+                             files: str = Form(...),
+                             visibility: str = Form(...)):
+    """Marca itens como públicos ou privados. Só o admin.
+
+    `files` é uma lista de nomes de arquivo separados por `\\n`. Os DOIS catálogos
+    são atualizados para o mesmo arquivo: publicar uma transcrição sem publicar a
+    mídia deixaria o funcionário lendo o texto mas sem conseguir abrir o vídeo."""
+    _require_admin(request)
+    if visibility not in (VIS_PUBLIC, VIS_PRIVATE):
+        raise HTTPException(400, "Visibilidade inválida")
+    wanted = {f.strip() for f in (files or "").split("\n") if f.strip()}
+    if not wanted:
+        raise HTTPException(400, "Nenhum arquivo informado")
+
+    changed = 0
+    with _history_lock:
+        history = _load_history()
+        touched = False
+        for entry in history:
+            if entry.get("file") in wanted and _vis_of(entry) != visibility:
+                entry["visibility"] = visibility
+                touched = True
+                changed += 1
+        if touched:
+            _atomic_write_json(HISTORY_FILE, history)
+    with _media_lock:
+        media = _load_media()
+        touched = False
+        for entry in media:
+            if entry.get("file") in wanted and _vis_of(entry) != visibility:
+                entry["visibility"] = visibility
+                touched = True
+        if touched:
+            _atomic_write_json(MEDIA_FILE, media)
+
+    # Um item publicado no meio de uma transcrição ainda em curso: mantém a
+    # intenção alinhada para as gravações que a thread ainda vai fazer.
+    for f in wanted:
+        _mark_pending_visibility(f, visibility)
+    return {"ok": True, "visibility": visibility, "changed": changed}
 
 # Serve CSS / JS / fonts locally so the UI works offline and avoids CDN dependency.
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -762,7 +1072,7 @@ async def serve_html():
 
 # -- History & stats
 @app.get("/api/history")
-async def api_history():
+async def api_history(request: Request):
     """Returns the history with two computed fields injected per entry:
        - has_original: True if the original audio/video upload is still on disk.
                        Lets the UI badge each row as 'Original disponível' vs
@@ -770,7 +1080,9 @@ async def api_history():
        - source: how the entry first entered the system. Legacy rows without
                  a stored source default to 'upload' as a best-guess fallback
                  so the UI doesn't render a blank chip for them."""
-    history = _load_history()
+    # Escopo por papel: um usuário público nunca recebe as linhas privadas —
+    # o filtro é aqui no servidor, não no frontend.
+    history = _scope_entries(_load_history(), _role_of(request))
     # Single fast listdir + set membership beats one stat per entry on big histories
     try:
         on_disk = set(os.listdir(UPLOAD_DIR))
@@ -789,6 +1101,9 @@ async def api_history():
             entry["url"] = url
         if not entry.get("source"):
             entry["source"] = "url" if url else "upload"
+        # Normaliza para o frontend saber desenhar o selo "Pública" sem ter que
+        # tratar o caso legado (campo ausente = privado).
+        entry["visibility"] = _vis_of(entry)
         out.append(entry)
     return out
 
@@ -799,12 +1114,15 @@ async def api_get_settings():
 
 @app.post("/api/settings")
 async def api_set_settings(
+    request: Request,
     download_concurrent:   str = Form(None),
     transcribe_concurrent: str = Form(None),
 ):
     """Updates concurrency settings. Values are clamped to [1, 16].
     Changes take effect on the NEXT acquire of each semaphore — in-flight
-    work isn't interrupted but new work respects the new limit."""
+    work isn't interrupted but new work respects the new limit.
+    Admin-only: define a carga da máquina inteira, não de um usuário."""
+    _require_admin(request)
     new = {}
     if download_concurrent   is not None: new["download_concurrent"]   = download_concurrent
     if transcribe_concurrent is not None: new["transcribe_concurrent"] = transcribe_concurrent
@@ -874,11 +1192,13 @@ async def api_ytdlp_status():
     return {"installed": installed, "latest": latest, "outdated": outdated}
 
 @app.post("/api/ytdlp/update")
-async def api_ytdlp_update():
+async def api_ytdlp_update(request: Request):
     """Upgrades yt-dlp (+ yt-dlp-ejs) in place via pip, in the same venv this
     server runs from. Takes effect only after the server restarts — the
     module already imported in this process stays on the old version until
-    then — so the response makes that explicit for the UI to relay."""
+    then — so the response makes that explicit for the UI to relay.
+    Admin-only: mexe no venv do servidor."""
+    _require_admin(request)
     import subprocess, sys
     try:
         result = subprocess.run(
@@ -912,9 +1232,10 @@ async def api_ytdlp_update():
 # mesmo UPLOAD_DIR/media.json do app, então os itens aparecem na Biblioteca de
 # Mídia e a transcrição reusa exatamente o pipeline já existente.
 
-# Proxies de mídia só falam com o CDN do Instagram/Facebook — trava SSRF (nunca
-# viram um proxy aberto para qualquer host).
-_SOCIAL_CDN_SUFFIXES = ("cdninstagram.com", "fbcdn.net")
+# Proxies de mídia só falam com CDNs de redes sociais — trava SSRF (nunca viram
+# um proxy aberto para qualquer host). Multi-rede: capas de IG/FB/TikTok/YouTube/X.
+_SOCIAL_CDN_SUFFIXES = ("cdninstagram.com", "fbcdn.net", "tiktokcdn.com",
+                        "tiktokcdn-us.com", "ytimg.com", "twimg.com", "ggpht.com")
 
 def _is_social_cdn(url: str) -> bool:
     try:
@@ -929,6 +1250,10 @@ def _require_social():
     if not SOCIAL_OK:
         raise HTTPException(500, "Módulo de redes sociais indisponível (falha ao importar social/).")
 
+# Toda esta seção é exclusiva do administrador — o middleware fecha o prefixo
+# /api/social/* para a Área Pública, então aqui não há escopo por papel a
+# aplicar: quem chega já é admin.
+
 @app.get("/api/social/status")
 async def api_social_status():
     """Diz se o motor de coleta está pronto (ego-lite instalado)."""
@@ -939,26 +1264,57 @@ async def api_social_status():
 async def api_social_collect(
     username:   str = Form(...),
     max_posts:  int = Form(60),
-    since_days: str = Form(""),   # "" = sem limite de período
+    since_days: str = Form(""),   # "" = sem limite de período (só Instagram)
+    platform:   str = Form("instagram"),
 ):
-    """Coleta o feed de um perfil do Instagram (roda em background via ego-lite)."""
+    """Coleta um perfil de rede social (roda em background via ego-lite).
+
+    Instagram usa a API do feed (mais posts). TikTok/YouTube/Facebook usam
+    interceptação de rede (tecnologia das extensões Sort Feed)."""
     _require_social()
     if not social_collector.ego_available():
-        raise HTTPException(400, "ego lite não encontrado. Instale (https://lite.ego.app) e faça login no Instagram.")
+        raise HTTPException(400, "ego lite não encontrado. Instale (https://lite.ego.app) e faça login na rede.")
+    platform = (platform or "instagram").strip().lower()
     max_posts = max(1, min(int(max_posts or 60), 200))
     sd = int(since_days) if (since_days or "").strip().isdigit() else None
 
-    def _task(job, log):
-        def prog(n, msg=None):
-            if n is not None:
-                job["progress"] = {"collected": n, "target": max_posts}
-            if msg:
-                log(msg)
-        ds_id, path = social_collector.collect_profile(username, max_posts,
-                                                        since_days=sd, on_progress=prog)
+    if platform == "instagram":
+        def _task(job, log):
+            def prog(n, msg=None):
+                if n is not None:
+                    job["progress"] = {"collected": n, "target": max_posts}
+                if msg:
+                    log(msg)
+            ds_id, path = social_collector.collect_profile(username, max_posts,
+                                                           since_days=sd, on_progress=prog)
+            return {"ds_id": ds_id}
+        return {"job_id": social_jobs.start("collect", _task)}
+
+    # TikTok / YouTube / Facebook: coleta por yt-dlp (medialink.probe) — lista o
+    # canal/perfil e traz views/likes por vídeo. É bem mais confiável que a
+    # interceptação para essas redes (o YouTube embute os dados no HTML, não em
+    # fetch). A interceptação segue disponível internamente como reserva.
+    _PROFILE_URL = {
+        "tiktok":   "https://www.tiktok.com/@{u}",
+        "youtube":  "https://www.youtube.com/@{u}/videos",
+        "facebook": "https://www.facebook.com/{u}/videos",
+    }
+    if not SOCIAL_MULTI_OK or platform not in _PROFILE_URL:
+        raise HTTPException(400, f"Rede não suportada: {platform}")
+    target = username.strip()
+    prof_url = target if target.startswith("http") else \
+        _PROFILE_URL[platform].format(u=target.lstrip("@"))
+
+    def _task_multi(job, log):
+        def prog(done, total):
+            job["progress"] = {"collected": done, "target": total or max_posts}
+        res = social_medialink.probe(prof_url, max_items=max_posts, on_progress=prog)
+        if not res.get("rows"):
+            raise RuntimeError("nenhum vídeo encontrado (perfil privado, vazio ou exige login).")
+        ds_id, path = social_medialink.save_dataset(res)
         return {"ds_id": ds_id}
 
-    return {"job_id": social_jobs.start("collect", _task)}
+    return {"job_id": social_jobs.start("collect", _task_multi)}
 
 @app.post("/api/social/collect-urls")
 async def api_social_collect_urls(urls: str = Form(...)):
@@ -1060,6 +1416,73 @@ def _social_nice_name(row: dict) -> str:
     user = row.get("username") or "instagram"
     return f"@{user} {row.get('code') or ''}".strip()
 
+def _media_utilizavel(path, precisa_audio=True):
+    """Confere com ffprobe que o arquivo é mídia decodificável. Devolve
+    (ok, motivo). Existe porque um .mp4 de 0 byte ou truncado passava direto
+    para o Whisper e só explodia lá dentro, com um traceback de ffmpeg que
+    não diz ao usuário o que fazer ("moov atom not found").
+    """
+    if not os.path.isfile(path):
+        return False, "o arquivo não existe"
+    tam = os.path.getsize(path)
+    if tam < 1024:
+        return False, f"o arquivo tem só {tam} bytes — o download não completou"
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return True, ""          # sem ffprobe não dá para checar; segue o baile
+    try:
+        out = subprocess.run(
+            [ffprobe, "-v", "error", "-show_entries", "stream=codec_type",
+             "-of", "default=nw=1:nk=1", path],
+            capture_output=True, text=True, timeout=30)
+    except (subprocess.TimeoutExpired, OSError):
+        return True, ""
+    if out.returncode != 0:
+        motivo = (out.stderr or "").strip().splitlines()
+        detalhe = motivo[-1] if motivo else "formato não reconhecido"
+        return False, f"o arquivo não é um vídeo/áudio válido ({detalhe})"
+    tipos = [l.strip() for l in (out.stdout or "").splitlines() if l.strip()]
+    if precisa_audio and "audio" not in tipos:
+        return False, "o arquivo não tem faixa de áudio para transcrever"
+    return True, ""
+
+
+def _social_baixar(cdn_url, fpath, post_url, log, code):
+    """Baixa a mídia de um post. Duas tentativas, nesta ordem:
+
+      1. URL direta do CDN que veio na coleta (rápido);
+      2. se falhar, reabre o post no navegador logado do ego lite para
+         RE-RESOLVER uma URL assinada nova e baixa de novo.
+
+    O passo 2 existe porque o link assinado do Instagram expira em poucas
+    horas: coletar de manhã e mandar transcrever à tarde caía sempre no erro.
+    """
+    erro1 = None
+    try:
+        return social_downloader.download_media(cdn_url, fpath)
+    except Exception as e:
+        erro1 = e
+        log(f"{code}: link da coleta falhou ({e}); tentando reabrir o post no ego lite")
+
+    if not (post_url and SOCIAL_MULTI_OK and social_collector.ego_available()):
+        raise RuntimeError(
+            f"{erro1}. Sem ego lite disponível para reabrir o post e pegar um link novo.")
+
+    try:
+        achado = social_intercept.resolve_media(post_url)
+    except Exception as e2:
+        raise RuntimeError(f"{erro1}. Reabrir o post também falhou: {e2}")
+
+    quer_video = fpath.lower().endswith((".mp4", ".mov", ".webm", ".mkv"))
+    nova = achado.get("video") if quer_video else achado.get("image")
+    nova = nova or achado.get("video") or achado.get("image")
+    if not nova:
+        raise RuntimeError(f"{erro1}. O post não tem mídia acessível (privado ou removido).")
+    tam = social_downloader.download_media(nova, fpath)
+    log(f"{code}: recuperado com link novo do ego lite")
+    return tam
+
+
 def _social_start_transcription(file_path, filename, name, url, model,
                                 language, task, filter_fillers, folder):
     """Dispara transcrição de um arquivo social JÁ baixado no disco — mesmo
@@ -1125,7 +1548,9 @@ async def api_social_fetch(
         for i, (code, row, want_tr) in enumerate(jobs_list, 1):
             job["progress"] = {"done": i - 1, "target": total}
             medias = [m for m in row.get("media_urls", []) if m.get("url")]
-            if not medias:
+            platform = (row.get("platform") or "Instagram")
+            is_ig = (platform == "Instagram")
+            if is_ig and not medias:
                 failed += 1
                 log(f"{code}: sem mídia")
                 continue
@@ -1144,30 +1569,82 @@ async def api_social_fetch(
                 except Exception:
                     pass
             downloaded_items = []  # (filename, fpath, is_video)
-            for n, m in enumerate(medias, 1):
-                ext = ".mp4" if m["type"] == "video" else ".jpg"
-                suffix = f"_{n}" if len(medias) > 1 else ""
-                filename = f"{base}{suffix}{ext}"
-                fpath = os.path.join(UPLOAD_DIR, filename)
-                try:
-                    if not (os.path.exists(fpath) and os.path.getsize(fpath) > 0):
-                        social_downloader.download_media(m["url"], fpath)
-                    downloaded += 1
-                    log(f"{code}: {filename}")
-                except Exception as e:
+            if is_ig:
+                for n, m in enumerate(medias, 1):
+                    ext = ".mp4" if m["type"] == "video" else ".jpg"
+                    suffix = f"_{n}" if len(medias) > 1 else ""
+                    filename = f"{base}{suffix}{ext}"
+                    # A coleta é sempre do admin, então a mídia baixada nasce privada
+                    # (ele publica depois o que a equipe pode ver).
+                    _mark_pending_visibility(filename, VIS_PRIVATE)
+                    fpath = os.path.join(UPLOAD_DIR, filename)
+                    try:
+                        if not (os.path.exists(fpath) and os.path.getsize(fpath) > 0):
+                            _social_baixar(m["url"], fpath, row.get("url"), log, code)
+                        # Confere o resultado SEMPRE, inclusive quando o arquivo já
+                        # existia: um 0 byte de execução anterior não pode virar
+                        # "sucesso" e seguir para a transcrição.
+                        ok, motivo = _media_utilizavel(fpath, precisa_audio=False)
+                        if not ok:
+                            try:
+                                os.remove(fpath)
+                            except OSError:
+                                pass
+                            raise RuntimeError(motivo)
+                        downloaded += 1
+                        log(f"{code}: {filename}")
+                    except Exception as e:
+                        failed += 1
+                        log(f"{code}: erro {e}")
+                        continue
+                    downloaded_items.append((filename, fpath, m["type"] == "video"))
+            else:
+                # TikTok/YouTube/Facebook: a interceptação não dá uma URL de CDN
+                # direta e utilizável, então baixa pelo próprio link do post via
+                # medialink (yt-dlp + plano B do navegador logado).
+                fn = f"{base}.mp4"
+                _mark_pending_visibility(fn, VIS_PRIVATE)
+                fpath = os.path.join(UPLOAD_DIR, fn)
+                if not (SOCIAL_MULTI_OK and row.get("url")):
                     failed += 1
-                    log(f"{code}: erro {e}")
-                    continue
-                downloaded_items.append((filename, fpath, m["type"] == "video"))
+                    log(f"{code}: sem forma de baixar (rede {platform})")
+                else:
+                    tmpdir = tempfile.mkdtemp(dir=UPLOAD_DIR)
+                    try:
+                        if not (os.path.exists(fpath) and os.path.getsize(fpath) > 0):
+                            res = social_medialink.download(row["url"], dest=tmpdir, on_progress=None)
+                            os.replace(res["file"], fpath)
+                        ok, motivo = _media_utilizavel(fpath, precisa_audio=False)
+                        if not ok:
+                            try:
+                                os.remove(fpath)
+                            except OSError:
+                                pass
+                            raise RuntimeError(motivo)
+                        downloaded += 1
+                        log(f"{code}: {fn}")
+                        downloaded_items.append((fn, fpath, True))
+                    except Exception as e:
+                        failed += 1
+                        log(f"{code}: erro {e}")
+                    finally:
+                        shutil.rmtree(tmpdir, ignore_errors=True)
 
             # O que vai para a transcrição (se pedido): o primeiro vídeo baixado.
             transcribe_item = next((it for it in downloaded_items if it[2]), None) if want_tr else None
             if transcribe_item:
                 fpath, filename = transcribe_item[1], transcribe_item[0]
-                tid = _social_start_transcription(fpath, filename, name, row.get("url"),
-                                                  model, language, task, do_filter, folder)
-                task_ids.append(tid)
-                transcribing += 1
+                # Última barreira antes do Whisper: sem faixa de áudio a
+                # transcrição só produziria um erro de ffmpeg incompreensível.
+                ok, motivo = _media_utilizavel(fpath, precisa_audio=True)
+                if not ok:
+                    failed += 1
+                    log(f"{code}: não enviado para transcrição — {motivo}")
+                else:
+                    tid = _social_start_transcription(fpath, filename, name, row.get("url"),
+                                                      model, language, task, do_filter, folder)
+                    task_ids.append(tid)
+                    transcribing += 1
             elif want_tr:
                 skipped_no_video += 1
                 log(f"{code}: sem vídeo p/ transcrever")
@@ -1218,8 +1695,9 @@ async def api_social_export_file(name: str):
     return FileResponse(path, media_type=media, filename=safe)
 
 @app.get("/api/stats")
-async def api_stats():
-    history = _load_history()
+async def api_stats(request: Request):
+    # Os números do topo da tela têm que bater com a lista que o usuário vê.
+    history = _scope_entries(_load_history(), _role_of(request))
     total_secs = sum(h.get("duration_secs", 0) for h in history)
     h, rem = divmod(int(total_secs), 3600)
     m      = rem // 60
@@ -1239,7 +1717,7 @@ def _media_type_for(filename: str) -> str:
     return "other"
 
 @app.get("/api/media-history")
-async def api_media_history():
+async def api_media_history(request: Request):
     """Returns the media catalog enriched with live disk state:
        - on_disk: whether the original upload file is still physically present
          (the Biblioteca de Mídia tab only lists what's actually still on disk)
@@ -1247,7 +1725,7 @@ async def api_media_history():
          only a snapshot from when the file was first saved, and can go stale
        - type: 'audio' | 'video' | 'other', derived from the extension, so the
          UI can filter without re-deriving it per row"""
-    media = _load_media()
+    media = _scope_entries(_load_media(), _role_of(request))
     try:
         on_disk_set = set(os.listdir(UPLOAD_DIR))
     except OSError:
@@ -1264,12 +1742,14 @@ async def api_media_history():
             except OSError:
                 pass
         entry["type"] = _media_type_for(filename)
+        entry["visibility"] = _vis_of(entry)
         out.append(entry)
     return out
 
 @app.get("/api/download-media/{filename}")
-async def api_download_media(filename: str):
+async def api_download_media(filename: str, request: Request):
     filename = _safe_filename(filename)
+    _require_file_access(filename, request)
     path = os.path.join(UPLOAD_DIR, filename)
     if not os.path.exists(path):
         raise HTTPException(404, "Mídia não encontrada no servidor")
@@ -1301,8 +1781,9 @@ def _cleanup_social_sidecars(filename: str) -> None:
                     pass
 
 @app.delete("/api/delete-media/{filename}")
-async def api_delete_media(filename: str):
+async def api_delete_media(filename: str, request: Request):
     filename = _safe_filename(filename)
+    _require_file_access(filename, request)
     path = os.path.join(UPLOAD_DIR, filename)
     if os.path.exists(path):
         try:
@@ -1363,18 +1844,22 @@ def _audit_old_media(min_age_days: float = 7.0) -> dict:
     }
 
 @app.get("/api/media/older-than")
-async def api_media_older_than(days: float = 7.0):
+async def api_media_older_than(request: Request, days: float = 7.0):
     """List media files older than N days (default 7) so the UI can prompt
     cleanup. Transcriptions are NEVER included — only the audio/video originals
-    in uploads/ that have aged past the retention window."""
+    in uploads/ that have aged past the retention window.
+    Admin-only: a faxina varre o disco inteiro, incluindo itens privados."""
+    _require_admin(request)
     days = max(0.0, float(days))
     return _audit_old_media(days)
 
 @app.post("/api/media/cleanup")
-async def api_media_cleanup(files: str = Form(...)):
+async def api_media_cleanup(request: Request, files: str = Form(...)):
     """Bulk-delete a list of media uploads (audio/video originals only).
     `files` is a comma-separated list of safe filenames. Transcriptions linked
-    to these files are preserved — they keep working from results/."""
+    to these files are preserved — they keep working from results/.
+    Admin-only: é uma exclusão em massa sobre todo o acervo."""
+    _require_admin(request)
     requested = [_safe_filename(f.strip()) for f in (files or "").split(",") if f.strip()]
     if not requested:
         raise HTTPException(400, "Nenhum arquivo informado")
@@ -1406,6 +1891,7 @@ async def api_media_cleanup(files: str = Form(...)):
 # -- Transcription
 @app.post("/api/transcribe")
 async def api_transcribe(
+    request:         Request,
     background_tasks: BackgroundTasks,
     file:            UploadFile = File(...),
     model:           str        = Form("turbo"),
@@ -1417,6 +1903,8 @@ async def api_transcribe(
     original_name = file.filename or f"audio_{uuid.uuid4().hex[:8]}.mp3"
     task_id  = str(uuid.uuid4())
     filename = f"{task_id[:8]}_{original_name}"
+    # Enviado por funcionário nasce público; enviado pelo admin nasce privado.
+    _mark_pending_visibility(filename, _visibility_for_new(request))
 
     # Validate/normalize destination folder (auto-create ancestors so the tree shows it)
     folder = _validate_folder_name(folder) if folder else ""
@@ -1462,17 +1950,19 @@ async def api_transcribe(
     return {"task_id": task_id, "filename": filename}
 
 @app.get("/api/progress/{task_id}")
-async def api_progress(task_id: str):
+async def api_progress(task_id: str, request: Request):
     # task_id is a UUID; reject anything else to prevent abuse
     if not re.fullmatch(r"[0-9a-fA-F-]{8,40}", task_id or ""):
         raise HTTPException(400, "task_id inválido")
     task = _get_task(task_id)
     if not task:
         raise HTTPException(404, "Task not found")
+    # O progresso carrega nome do arquivo e erros — mesmo escopo do item.
+    _require_file_access(task.get("filename") or "", request)
     return task
 
 @app.delete("/api/transcribe/{task_id}")
-async def api_cancel_transcribe(task_id: str):
+async def api_cancel_transcribe(task_id: str, request: Request):
     """Request cancellation of any task (download-only, URL→transcribe, or
     file→transcribe). Queued tasks are skipped immediately. In-flight downloads
     abort at the next yt-dlp progress tick. In-flight transcriptions finish the
@@ -1482,6 +1972,7 @@ async def api_cancel_transcribe(task_id: str):
     task = _get_task(task_id)
     if not task:
         raise HTTPException(404, "Task not found")
+    _require_file_access(task.get("filename") or "", request)
     _set_task(task_id, cancel_requested=True)
     # Mark BOTH catalogs so the UI reflects the cancel instantly, regardless of
     # which tab the user is looking at (transcriptions / media library).
@@ -1498,25 +1989,35 @@ async def api_cancel_transcribe(task_id: str):
     return {"status": "cancel_requested", "task_id": task_id}
 
 @app.get("/api/active-tasks")
-async def api_active_tasks():
-    """Return all in-memory tasks that are still queued or processing."""
+async def api_active_tasks(request: Request):
+    """Return all in-memory tasks that are still queued or processing.
+    Um usuário público só recebe as tarefas dos itens que ele pode ver."""
+    role = _role_of(request)
     with _tasks_lock:
-        return {
-            tid: dict(t)
-            for tid, t in _tasks.items()
-            if t.get("status") in ("queued", "processing")
-        }
+        alive = {tid: dict(t) for tid, t in _tasks.items()
+                 if t.get("status") in ("queued", "processing")}
+    if role == auth.ROLE_ADMIN:
+        return alive
+    # Carrega os catálogos uma vez e reaproveita para todas as tarefas.
+    history, media = _load_history(), _load_media()
+    return {tid: t for tid, t in alive.items()
+            if _visibility_for_file(t.get("filename") or "", history, media) == VIS_PUBLIC}
 
 @app.post("/api/reset-stale")
-async def api_reset_stale():
+async def api_reset_stale(request: Request):
     """Mark queued/processing history entries whose task is no longer in memory as interrupted.
-    Called by the frontend on page load after a server restart."""
+    Called by the frontend on page load after a server restart.
+    Um usuário público só mexe nas entradas públicas — a tela dele não pode
+    reescrever o status de itens privados que ele nem enxerga."""
+    role = _role_of(request)
     with _tasks_lock:
         active_ids = set(_tasks.keys())
     with _history_lock:
         history = _load_history()
         changed = 0
         for entry in history:
+            if role != auth.ROLE_ADMIN and _vis_of(entry) != VIS_PUBLIC:
+                continue
             if entry.get("status") in ("queued", "processing"):
                 tid = entry.get("task_id")
                 if not tid or tid not in active_ids:
@@ -1532,8 +2033,9 @@ async def api_reset_stale():
 
 # -- Results
 @app.get("/api/result/{filename}")
-async def api_result(filename: str):
+async def api_result(filename: str, request: Request):
     filename = _safe_filename(filename)
+    _require_file_access(filename, request)
     result = _load_result_files(filename)
     if result is None:
         raise HTTPException(404, "Resultado não encontrado")
@@ -1541,8 +2043,9 @@ async def api_result(filename: str):
 
 # -- Downloads
 @app.get("/api/download/{filename}/{fmt}")
-async def api_download(filename: str, fmt: str):
+async def api_download(filename: str, fmt: str, request: Request):
     filename = _safe_filename(filename)
+    _require_file_access(filename, request)
     base = _result_base(filename)
     d    = os.path.join(RESULTS_DIR, base)
     MAP  = {
@@ -1566,12 +2069,13 @@ async def api_download(filename: str, fmt: str):
     return FileResponse(path, media_type=media, filename=download_name)
 
 @app.get("/api/download-with-original/{filename}")
-async def api_download_with_original(filename: str):
+async def api_download_with_original(filename: str, request: Request):
     """Zip the transcription files (txt, srt, json, timestamps, md) together with the
     original audio/video upload — if it's still on disk. Lets the user grab the
     transcription AND the source media in a single download. If the original was
     already cleaned up, the ZIP still contains the transcription files."""
     filename = _safe_filename(filename)
+    _require_file_access(filename, request)
     base = _result_base(filename)
     d = os.path.join(RESULTS_DIR, base)
     # Defense-in-depth: keep the results dir inside RESULTS_DIR
@@ -1604,12 +2108,20 @@ async def api_download_with_original(filename: str):
                         background=BackgroundTask(_safe_remove, zip_path))
 
 @app.get("/api/download-all")
-async def api_download_all():
+async def api_download_all(request: Request):
     # Unique temp name so concurrent requests don't corrupt each other's ZIP
     # (finding #4); deleted after the response is streamed.
     zip_path = os.path.join(DATA_DIR, f"todas_transcricoes_{uuid.uuid4().hex[:8]}.zip")
+    # ATENÇÃO: não dá para varrer results/ direto — a pasta contém o acervo
+    # inteiro. Montamos a lista de diretórios permitidos a partir do histórico
+    # já filtrado pelo papel de quem pediu.
+    allowed_dirs = {_result_base(h.get("file") or "")
+                    for h in _scope_entries(_load_history(), _role_of(request))}
+    allowed_dirs.discard("")
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for d in os.listdir(RESULTS_DIR):
+            if d not in allowed_dirs:
+                continue
             full_d = os.path.join(RESULTS_DIR, d)
             if os.path.isdir(full_d):
                 for fname in os.listdir(full_d):
@@ -1618,7 +2130,8 @@ async def api_download_all():
                         background=BackgroundTask(_safe_remove, zip_path))
 
 @app.post("/api/download-selected-zip")
-async def api_download_selected_zip(files: str = Form(...), formats: str = Form("txt,srt,json,timestamps")):
+async def api_download_selected_zip(request: Request, files: str = Form(...),
+                                    formats: str = Form("txt,srt,json,timestamps")):
     """Download only the selected transcriptions as a ZIP.
     `files` is a JSON array of filenames (history ids) to include.
     `formats` is a comma-separated list of formats to include:
@@ -1660,6 +2173,10 @@ async def api_download_selected_zip(files: str = Form(...), formats: str = Form(
         if not isinstance(fn, str):
             raise HTTPException(400, "Cada item de 'files' deve ser string")
         fn = _safe_filename(fn)
+        # Um item privado no meio da seleção derruba o ZIP inteiro com 404, em
+        # vez de sair sem ele: a tela de um usuário público só lista itens
+        # públicos, então uma seleção mista significa pedido forjado.
+        _require_file_access(fn, request)
         base = _result_base(fn)
         d = os.path.join(RESULTS_DIR, base)
         # Defense-in-depth: ensure path stays inside RESULTS_DIR
@@ -1721,7 +2238,7 @@ async def api_download_selected_zip(files: str = Form(...), formats: str = Form(
 
 # -- Delete
 @app.delete("/api/delete/{filename}")
-async def api_delete(filename: str, scope: str = "both"):
+async def api_delete(filename: str, request: Request, scope: str = "both"):
     """User-initiated delete from the transcriptions screen.
 
     `scope` controls what actually gets removed:
@@ -1735,6 +2252,7 @@ async def api_delete(filename: str, scope: str = "both"):
         intact; the row just starts showing "Original apagado".
     """
     filename = _safe_filename(filename)
+    _require_file_access(filename, request)
     if scope not in ("both", "transcription", "media"):
         scope = "both"
 
@@ -1771,9 +2289,10 @@ async def api_delete(filename: str, scope: str = "both"):
 
 
 @app.get("/api/gaps/{filename}")
-async def api_gaps(filename: str, min_gap: float = 1.0):
+async def api_gaps(filename: str, request: Request, min_gap: float = 1.0):
     """Detecta silêncios/respiros entre segmentos de fala e gera texto intercalado."""
     filename = _safe_filename(filename)
+    _require_file_access(filename, request)
     base = _result_base(filename)
     json_path = os.path.join(RESULTS_DIR, base, f"{base}.json")
     if not os.path.exists(json_path):
@@ -1823,9 +2342,221 @@ async def api_gaps(filename: str, min_gap: float = 1.0):
 
 # Shared kickoff so /api/transcribe-url (single) and /api/transcribe-batch (many)
 # don't duplicate yt-dlp setup, hook plumbing, and thread spawning.
+# ── Google Drive (arquivos públicos) ──────────────────────────
+# O yt-dlp é frágil com Drive (arquivos grandes, página de confirmação). Estes
+# runners usam gdrive.download, que trata o token de confirmação. São roteados
+# a partir dos kickoffs de URL quando o link é do Google Drive, então o usuário
+# só cola o link nos mesmos campos de sempre.
+def _run_gdrive_download_only(task_id, url, existing_filename=None, visibility=VIS_PRIVATE):
+    stem = os.path.splitext(existing_filename)[0] if existing_filename else f"{task_id[:8]}_gdrive"
+    state = {"filename": existing_filename or (stem + ".mp4")}  # provisório até saber a extensão real
+    # Marca a visibilidade já no nome provisório para que uma eventual entrada de
+    # ERRO (falha antes de saber o nome real) herde a visibilidade certa — senão
+    # o download que falhou nasceria privado e sumiria para o membro da equipe.
+    _mark_pending_visibility(state["filename"], visibility)
+    _set_task(task_id, status="processing", progress=0, phase="download", phase_progress=0,
+              name="Baixando do Google Drive…", filename=state["filename"])
+
+    def _on_start(dest, title, total):
+        fn = os.path.basename(dest)
+        state["filename"] = fn
+        _mark_pending_visibility(fn, visibility)
+        _save_media(fn, f"{title}{os.path.splitext(fn)[1]}", url=url, is_transcribed=False, status="processing")
+        _set_task(task_id, filename=fn, name=title or fn)
+
+    def _progress(pct):
+        if (_get_task(task_id) or {}).get('cancel_requested'):
+            raise gdrive.GDriveCancelled()
+        _set_task(task_id, phase="download", phase_progress=pct, progress=pct)
+
+    def _cancel():
+        return bool((_get_task(task_id) or {}).get('cancel_requested'))
+
+    try:
+        with _download_sem:
+            dest, title = gdrive.download(url, UPLOAD_DIR, stem, force_filename=existing_filename,
+                                          on_start=_on_start, progress_cb=_progress, cancel_cb=_cancel)
+        fn = os.path.basename(dest)
+        _save_media(fn, f"{title}{os.path.splitext(fn)[1]}", url=url, is_transcribed=False, status="done")
+        _set_task(task_id, status="done", progress=100, phase="done", phase_progress=100,
+                  name=title or fn, filename=fn)
+    except gdrive.GDriveCancelled:
+        _cleanup_task_files(os.path.splitext(state["filename"])[0])
+        _save_media(state["filename"], "Download cancelado", url=url, is_transcribed=False, status="cancelled")
+        _set_task(task_id, status="cancelled", progress=0, phase="cancelled",
+                  name="Download cancelado", filename=state["filename"])
+    except Exception as e:
+        _cleanup_task_files(os.path.splitext(state["filename"])[0])
+        _save_media(state["filename"], "Erro no Download", url=url, is_transcribed=False, status="error")
+        _set_task(task_id, status="error", progress=0, phase="error",
+                  name="Erro no Download", error=str(e), filename=state["filename"])
+
+def _kickoff_gdrive_transcription(url, model, language, task, filter_fillers, folder,
+                                  existing_filename=None, visibility=VIS_PRIVATE):
+    task_id = str(uuid.uuid4())
+    stem = os.path.splitext(existing_filename)[0] if existing_filename else f"{task_id[:8]}_gdrive"
+    state = {"filename": existing_filename or (stem + ".mp4")}
+    # Visibilidade no nome provisório (ver comentário em _run_gdrive_download_only).
+    _mark_pending_visibility(state["filename"], visibility)
+    _set_task(task_id, status="processing", progress=0, phase="download", phase_progress=0,
+              name="Baixando do Google Drive…", filename=state["filename"])
+
+    def _on_start(dest, title, total):
+        fn = os.path.basename(dest)
+        state["filename"] = fn
+        _mark_pending_visibility(fn, visibility)
+        _save_to_history(fn, {}, model, status="queued", task_id=task_id, original_name=title or fn,
+                         folder=folder, source="url", task_type=task, filter_fillers=filter_fillers)
+        _save_media(fn, f"{title}{os.path.splitext(fn)[1]}", url=url, is_transcribed=True, status="queued", force_name=True)
+        _set_task(task_id, filename=fn)
+
+    def _progress(pct):
+        if (_get_task(task_id) or {}).get('cancel_requested'):
+            raise gdrive.GDriveCancelled()
+        _set_task(task_id, phase="download", phase_progress=pct, progress=pct * 0.25)
+
+    def _cancel():
+        return bool((_get_task(task_id) or {}).get('cancel_requested'))
+
+    def _run():
+        try:
+            with _download_sem:
+                dest, title = gdrive.download(url, UPLOAD_DIR, stem, force_filename=existing_filename,
+                                              on_start=_on_start, progress_cb=_progress, cancel_cb=_cancel)
+        except gdrive.GDriveCancelled:
+            _cleanup_task_files(os.path.splitext(state["filename"])[0])
+            _update_history_status(state["filename"], "cancelled")
+            _save_media(state["filename"], "Download cancelado", url=url, is_transcribed=True, status="cancelled")
+            _set_task(task_id, status="cancelled", progress=0, phase="cancelled",
+                      name="Download cancelado", filename=state["filename"])
+            return
+        except Exception as e:
+            _cleanup_task_files(os.path.splitext(state["filename"])[0])
+            _save_to_history(state["filename"], {}, model, status="error",
+                             error=f"Erro ao baixar do Google Drive: {e}", task_id=task_id,
+                             folder=folder, source="url", task_type=task, filter_fillers=filter_fillers)
+            _save_media(state["filename"], "Erro no Download", url=url, is_transcribed=True, status="error")
+            _set_task(task_id, status="error", progress=0, phase="error",
+                      name="Erro no Download", error=str(e), filename=state["filename"])
+            return
+        if _cancel():
+            _set_task(task_id, status="cancelled", progress=0, phase="cancelled")
+            _update_history_status(state["filename"], "cancelled")
+            return
+        _run_transcription(task_id, dest, os.path.basename(dest), model, language, task, filter_fillers)
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"task_id": task_id, "filename": state["filename"]}
+
+# ── Redes sociais por URL (yt-dlp + plano B no navegador logado) ──────
+# Instagram, TikTok, Facebook e X são o ponto fraco do yt-dlp puro; o
+# medialink cai no navegador logado (intercept.resolve_media) quando o yt-dlp
+# falha. YouTube/Vimeo/genérico continuam no fluxo yt-dlp normal (que tem as
+# opções de qualidade/legenda do Download Avançado).
+_SOCIAL_DL_SUFFIXES = ("instagram.com", "tiktok.com", "facebook.com", "fb.watch",
+                       "twitter.com", "x.com", "kwai.com", "kwai-video.com")
+
+def _is_social_dl_url(url: str) -> bool:
+    if not SOCIAL_MULTI_OK:
+        return False
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except Exception:
+        return False
+    return any(host == s or host.endswith("." + s) for s in _SOCIAL_DL_SUFFIXES)
+
+def _run_social_download_only(task_id, url, media_type, existing_filename=None, visibility=VIS_PRIVATE):
+    audio_only = (media_type == "audio")
+    prov = existing_filename or f"{task_id[:8]}_social.{'mp3' if audio_only else 'mp4'}"
+    state = {"filename": prov}
+    _mark_pending_visibility(prov, visibility)
+    _save_media(prov, "Obtendo mídia…", url=url, is_transcribed=False, status="processing")
+    _set_task(task_id, status="processing", progress=0, phase="download", phase_progress=0,
+              name="Baixando da rede social…", filename=prov)
+
+    def _prog(done, total, name):
+        pct = (done / total * 100) if total else 0
+        _set_task(task_id, phase="download", phase_progress=pct, progress=pct)
+
+    tmpdir = tempfile.mkdtemp(dir=UPLOAD_DIR)
+    try:
+        with _download_sem:
+            res = social_medialink.download(url, dest=tmpdir, audio_only=audio_only, on_progress=_prog)
+        src = res["file"]
+        ext = os.path.splitext(src)[1].lower() or (".mp3" if audio_only else ".mp4")
+        fn = existing_filename or f"{task_id[:8]}_social{ext}"
+        if fn != prov:
+            _remove_media_entry(prov)   # nome/ext real difere do provisório
+        state["filename"] = fn
+        os.replace(src, os.path.join(UPLOAD_DIR, fn))
+        title = res.get("title") or os.path.splitext(fn)[0]
+        _mark_pending_visibility(fn, visibility)
+        _save_media(fn, f"{title}{ext}", url=url, is_transcribed=False, status="done", force_name=True)
+        _set_task(task_id, status="done", progress=100, phase="done", phase_progress=100,
+                  name=title, filename=fn)
+    except Exception as e:
+        _cleanup_task_files(os.path.splitext(state["filename"])[0])
+        _save_media(state["filename"], "Erro no Download", url=url, is_transcribed=False, status="error")
+        _set_task(task_id, status="error", progress=0, phase="error",
+                  name="Erro no Download", error=str(e), filename=state["filename"])
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+def _kickoff_social_transcription(url, model, language, task, filter_fillers, folder,
+                                  existing_filename=None, visibility=VIS_PRIVATE):
+    task_id = str(uuid.uuid4())
+    fn = existing_filename or f"{task_id[:8]}_social.mp4"   # vídeo é sempre mesclado p/ mp4
+    _mark_pending_visibility(fn, visibility)
+    _save_to_history(fn, {}, model, status="queued", task_id=task_id, original_name=_result_base(fn),
+                     folder=folder, source="url", task_type=task, filter_fillers=filter_fillers)
+    _save_media(fn, "Obtendo mídia…", url=url, is_transcribed=True, status="queued")
+    _set_task(task_id, status="processing", progress=0, phase="download", phase_progress=0,
+              name="Baixando da rede social…", filename=fn)
+
+    def _prog(done, total, name):
+        pct = (done / total * 100) if total else 0
+        _set_task(task_id, phase="download", phase_progress=pct, progress=pct * 0.25)
+
+    def _run():
+        tmpdir = tempfile.mkdtemp(dir=UPLOAD_DIR)
+        try:
+            with _download_sem:
+                res = social_medialink.download(url, dest=tmpdir, audio_only=False, on_progress=_prog)
+            src = res["file"]
+            final = os.path.join(UPLOAD_DIR, fn)
+            os.replace(src, final)   # força o nome .mp4 esperado pela entrada
+            title = res.get("title") or os.path.splitext(fn)[0]
+            _save_to_history(fn, {}, model, status="queued", task_id=task_id, original_name=title,
+                             folder=folder, source="url", task_type=task, filter_fillers=filter_fillers)
+            _save_media(fn, f"{title}.mp4", url=url, is_transcribed=True, status="queued", force_name=True)
+        except Exception as e:
+            _cleanup_task_files(os.path.splitext(fn)[0])
+            _save_to_history(fn, {}, model, status="error",
+                             error=f"Erro ao baixar da rede social: {e}", task_id=task_id,
+                             folder=folder, source="url", task_type=task, filter_fillers=filter_fillers)
+            _save_media(fn, "Erro no Download", url=url, is_transcribed=True, status="error")
+            _set_task(task_id, status="error", progress=0, phase="error",
+                      name="Erro no Download", error=str(e), filename=fn)
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            return
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        _run_transcription(task_id, os.path.join(UPLOAD_DIR, fn), fn, model, language, task, filter_fillers)
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"task_id": task_id, "filename": fn}
+
 def _kickoff_url_transcription(url: str, model: str, language: str, task: str,
                                 filter_fillers: bool, folder: str,
-                                existing_filename: str | None = None) -> dict:
+                                existing_filename: str | None = None,
+                                visibility: str = VIS_PRIVATE) -> dict:
+    # Google Drive: caminho dedicado (o yt-dlp não é confiável aqui).
+    if gdrive.is_gdrive_url(url):
+        return _kickoff_gdrive_transcription(url, model, language, task, filter_fillers, folder,
+                                             existing_filename=existing_filename, visibility=visibility)
+    # Redes sociais (IG/TikTok/FB/X): yt-dlp com plano B no navegador logado.
+    if _is_social_dl_url(url):
+        return _kickoff_social_transcription(url, model, language, task, filter_fillers, folder,
+                                             existing_filename=existing_filename, visibility=visibility)
     task_id = str(uuid.uuid4())
     safe_name = re.sub(r'[^\w.-]', '_', url.split('/')[-1] or 'video')[:50] or 'video'
     original_name = f"{safe_name}.mp3"
@@ -1833,6 +2564,9 @@ def _kickoff_url_transcription(url: str, model: str, language: str, task: str,
     # history.json/media.json em vez de criar um novo (só um envio novo gera
     # um filename fresco a partir do task_id).
     filename = existing_filename or f"{task_id[:8]}_{original_name}"
+    # Num retry (existing_filename) a entrada já existe e a visibilidade gravada
+    # nela vence — este marcador só decide o caso de um item novo.
+    _mark_pending_visibility(filename, visibility)
     upload_path = os.path.join(UPLOAD_DIR, filename)
 
     _set_task(task_id, status="processing", progress=0, phase="download", phase_progress=0,
@@ -1917,6 +2651,7 @@ def _kickoff_url_transcription(url: str, model: str, language: str, task: str,
 
 @app.post("/api/transcribe-url")
 async def api_transcribe_url(
+    request: Request,
     background_tasks: BackgroundTasks,
     url: str = Form(...),
     model: str = Form("turbo"),
@@ -1933,7 +2668,8 @@ async def api_transcribe_url(
     _ensure_folder_tree(folder)
 
     return _kickoff_url_transcription(url, model, language, task,
-                                       filter_fillers == "true", folder)
+                                       filter_fillers == "true", folder,
+                                       visibility=_visibility_for_new(request))
 
 
 # Batch dispatch — accepts a newline / comma separated list of URLs and fires
@@ -1943,6 +2679,7 @@ async def api_transcribe_url(
 # Returns counts + the first few task_ids so the UI can hook polling.
 @app.post("/api/transcribe-batch")
 async def api_transcribe_batch(
+    request:        Request,
     urls:           str  = Form(...),
     model:          str  = Form("turbo"),
     language:       str  = Form("pt"),
@@ -1979,14 +2716,16 @@ async def api_transcribe_batch(
         _ensure_folder_tree(folder)
 
     do_filter = filter_fillers == "true"
+    new_vis = _visibility_for_new(request)
     task_ids: list[str] = []
     for u in clean:
         try:
             u = _validate_media_url(u)   # SSRF + scheme guard per URL (finding #10)
             if do_transcribe:
-                res = _kickoff_url_transcription(u, model, language, task, do_filter, folder)
+                res = _kickoff_url_transcription(u, model, language, task, do_filter, folder,
+                                                 visibility=new_vis)
             else:
-                res = _kickoff_download_only(u, media_type, quality)
+                res = _kickoff_download_only(u, media_type, quality, visibility=new_vis)
             task_ids.append(res["task_id"])
         except Exception:
             # Don't fail the whole batch if one URL trips validation/kickoff; skip it.
@@ -2068,13 +2807,14 @@ def _retry_item(filename: str) -> dict:
     raise HTTPException(404, "Item não encontrado em histórico nem em mídia.")
 
 @app.post("/api/retry/{filename}")
-async def api_retry(filename: str):
+async def api_retry(filename: str, request: Request):
     if not YT_DLP_OK:
         raise HTTPException(400, "yt-dlp não instalado.")
+    _require_file_access(filename, request)
     return _retry_item(filename)
 
 @app.post("/api/retry-batch")
-async def api_retry_batch(files: str = Form(...)):
+async def api_retry_batch(request: Request, files: str = Form(...)):
     """`files` é um array JSON de filenames (mesmo id usado nas tabelas)."""
     if not YT_DLP_OK:
         raise HTTPException(400, "yt-dlp não instalado.")
@@ -2092,6 +2832,7 @@ async def api_retry_batch(files: str = Form(...)):
         if not isinstance(fn, str):
             continue
         try:
+            _require_file_access(fn, request)
             r = _retry_item(fn)
             results.append({"file": fn, "ok": True, **r})
         except HTTPException as e:
@@ -2109,12 +2850,16 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str,
                        subtitles: bool = False, sub_langs: str = "pt,en",
                        auto_subs: bool = False, thumbnail: bool = False,
                        metadata: bool = False, audio_lang: str | None = None,
-                       existing_filename: str | None = None):
+                       existing_filename: str | None = None,
+                       visibility: str = VIS_PRIVATE):
     is_video = media_type == "video"
     ext = "mp4" if is_video else "mp3"
     # Retry: reaproveita o MESMO filename — atualiza o item já existente em
     # media.json em vez de criar um novo.
     filename = existing_filename or f"{task_id[:8]}_download.{ext}"
+    # O nome só existe aqui dentro (roda em thread), então é aqui que a
+    # visibilidade herdada do request é registrada, antes do primeiro _save_media.
+    _mark_pending_visibility(filename, visibility)
     try:
         _save_media(filename, f"Obtendo {'vídeo' if is_video else 'áudio'}...", url=url, is_transcribed=False, status="processing")
         _set_task(task_id, status="processing", progress=0,
@@ -2209,7 +2954,29 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str,
 # the "Download Avançado" options — every existing caller keeps working
 # unchanged since they all default to off.
 def _kickoff_download_only(url: str, media_type: str, quality: str, **advanced) -> dict:
+    # `visibility` chega junto com os kwargs avançados e segue direto para o
+    # worker — ver _run_download_only.
     task_id = str(uuid.uuid4())
+    # Google Drive: caminho dedicado. As opções avançadas do yt-dlp (legendas,
+    # thumbnail, qualidade) não se aplicam a um arquivo cru do Drive — só
+    # herdamos existing_filename (retry) e visibility.
+    if gdrive.is_gdrive_url(url):
+        t = threading.Thread(target=_run_gdrive_download_only,
+                             args=(task_id, url),
+                             kwargs={"existing_filename": advanced.get("existing_filename"),
+                                     "visibility": advanced.get("visibility", VIS_PRIVATE)},
+                             daemon=True)
+        t.start()
+        return {"task_id": task_id}
+    # Redes sociais (IG/TikTok/FB/X): medialink (yt-dlp + plano B no navegador).
+    if _is_social_dl_url(url):
+        t = threading.Thread(target=_run_social_download_only,
+                             args=(task_id, url, media_type),
+                             kwargs={"existing_filename": advanced.get("existing_filename"),
+                                     "visibility": advanced.get("visibility", VIS_PRIVATE)},
+                             daemon=True)
+        t.start()
+        return {"task_id": task_id}
     t = threading.Thread(target=_run_download_only,
                          args=(task_id, url, media_type, quality), kwargs=advanced, daemon=True)
     t.start()
@@ -2217,6 +2984,7 @@ def _kickoff_download_only(url: str, media_type: str, quality: str, **advanced) 
 
 @app.post("/api/yt-download-only")
 async def api_yt_download_only(
+    request: Request,
     background_tasks: BackgroundTasks,
     url: str = Form(...),
     media_type: str = Form("video"),
@@ -2225,7 +2993,8 @@ async def api_yt_download_only(
     if not YT_DLP_OK:
         raise HTTPException(400, "yt-dlp não instalado.")
     url = _validate_media_url(url)   # SSRF + scheme guard (finding #10)
-    res = _kickoff_download_only(url, media_type, quality)
+    res = _kickoff_download_only(url, media_type, quality,
+                                 visibility=_visibility_for_new(request))
     return {"message": "Download_start", "task_id": res["task_id"]}
 
 # ── Download Avançado — playlist, legendas, metadados, thumbnail, faixa de
@@ -2279,6 +3048,7 @@ _ADVANCED_MAX_TOTAL_ITEMS = 150
 
 @app.post("/api/download-advanced")
 async def api_download_advanced(
+    request:    Request,
     url:        str = Form(""),
     urls:       str = Form(""),   # modo lote: uma URL por linha/vírgula
     media_type: str = Form("video"),
@@ -2336,6 +3106,7 @@ async def api_download_advanced(
         subtitles=subtitles == "true", sub_langs=sub_langs,
         auto_subs=auto_subs == "true", thumbnail=thumbnail == "true",
         metadata=metadata == "true", audio_lang=(audio_lang or "").strip() or None,
+        visibility=_visibility_for_new(request),
     )
     task_ids: list[str | None] = []
     for u in final_urls:
@@ -2424,18 +3195,43 @@ def _ensure_folder_tree(folder: str) -> None:
             paths.add(a)
         _save_folders_paths(sorted(paths))
 
+def _load_public_folders() -> list[str]:
+    if not os.path.exists(PUBLIC_FOLDERS_FILE):
+        return []
+    try:
+        with open(PUBLIC_FOLDERS_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        return [p for p in data if isinstance(p, str)]
+    except (json.JSONDecodeError, ValueError, OSError):
+        return []
+
+def _add_public_folder(folder: str) -> None:
+    if not folder:
+        return
+    with _folders_lock:
+        paths = set(_load_public_folders())
+        paths.update(_ancestors_of(folder))
+        _atomic_write_json(PUBLIC_FOLDERS_FILE, sorted(paths))
+
 @app.get("/api/folders")
-async def api_folders():
+async def api_folders(request: Request):
     """Returns every folder path (explicit + implicit from entries) with item counts.
-    A folder's count includes items in that folder AND all its descendants."""
+    A folder's count includes items in that folder AND all its descendants.
+
+    Para um usuário público a árvore é reconstruída do zero: só aparecem as
+    pastas que contêm algum item público (mais os ancestrais) e as que ele
+    mesmo criou. Nome de pasta é informação — "Psicologas", "Vendas" — e não
+    deve escapar junto com a contagem."""
+    role = _role_of(request)
     # Snapshot state under locks (brief) — counts are informational, no need for
     # a single global transaction across all three files.
     with _folders_lock:
-        explicit_paths = set(_load_folders_paths())
+        explicit_paths = set(_load_folders_paths()) if role == auth.ROLE_ADMIN \
+                         else set(_load_public_folders())
     with _history_lock:
-        hist = list(_load_history())
+        hist = _scope_entries(list(_load_history()), role)
     with _media_lock:
-        med = list(_load_media())
+        med = _scope_entries(list(_load_media()), role)
 
     # Paths = explicit + every ancestor implied by existing entries.
     # We merge hist + med here so paths inferred from EITHER source are visible,
@@ -2469,7 +3265,7 @@ async def api_folders():
     return [{"path": p, "count": counts.get(p, 0)} for p in sorted(paths)]
 
 @app.post("/api/folders/create")
-async def api_folders_create(path: str = Form(...)):
+async def api_folders_create(request: Request, path: str = Form(...)):
     """Create a folder (and implicitly all ancestors). No-op if it already exists."""
     path = _validate_folder_name(path)
     if not path:
@@ -2480,11 +3276,16 @@ async def api_folders_create(path: str = Form(...)):
         for p in _ancestors_of(path):
             paths.add(p)
         _save_folders_paths(sorted(paths))
+    if not _is_admin(request):
+        _add_public_folder(path)
     return {"ok": True, "path": path}
 
 @app.post("/api/folders/rename")
-async def api_folders_rename(old_path: str = Form(...), new_path: str = Form(...)):
-    """Rename a folder. Cascades to all descendants and all affected history/media entries."""
+async def api_folders_rename(request: Request, old_path: str = Form(...),
+                             new_path: str = Form(...)):
+    """Rename a folder. Cascades to all descendants and all affected history/media entries.
+    Admin-only: a cascata reescreve o campo `folder` de itens privados também."""
+    _require_admin(request)
     old_path = _validate_folder_name(old_path)
     new_path = _validate_folder_name(new_path)
     if not old_path or not new_path:
@@ -2541,7 +3342,8 @@ async def api_folders_rename(old_path: str = Form(...), new_path: str = Form(...
     return {"ok": True, "path": new_path, "renamed": renamed_count}
 
 @app.post("/api/folders/delete")
-async def api_folders_delete(path: str = Form(...), cascade: str = Form("move")):
+async def api_folders_delete(request: Request, path: str = Form(...),
+                             cascade: str = Form("move")):
     """Delete a folder. `cascade` controls what happens to items inside:
       - 'move'   (default): move all descendant items to the parent folder
       - 'delete': delete all descendant items (history entries + result files);
@@ -2552,6 +3354,8 @@ async def api_folders_delete(path: str = Form(...), cascade: str = Form("move"))
         raise HTTPException(400, "Não é possível excluir a raiz")
     if cascade not in ("move", "delete"):
         raise HTTPException(400, "cascade deve ser 'move' ou 'delete'")
+    # Admin-only: apagar uma pasta mexe (ou remove) itens privados dentro dela.
+    _require_admin(request)
 
     prefix = path + "/"
     # Parent path of `path` (for move); may be "" (root)
@@ -2626,14 +3430,19 @@ async def api_folders_delete(path: str = Form(...), cascade: str = Form("move"))
     }
 
 @app.post("/api/move-to-folder")
-async def api_move_to_folder(filename: str = Form(...), folder: str = Form("")):
+async def api_move_to_folder(request: Request, filename: str = Form(...),
+                             folder: str = Form("")):
     """Moves a history entry and its matching media entry to a folder.
     Empty folder string = move back to root. Folder path may be nested (e.g. 'A/B/C')."""
     filename = _safe_filename(filename)
+    _require_file_access(filename, request)
     folder   = _validate_folder_name(folder)
 
     # Auto-create ancestor folders in folders.json so the UI tree keeps them visible
     _ensure_folder_tree(folder)
+    if not _is_admin(request):
+        # A pasta de destino passa a fazer parte da árvore que o funcionário vê.
+        _add_public_folder(folder)
 
     moved = False
     with _history_lock:
@@ -2676,12 +3485,13 @@ def _validate_display_name(name: str) -> str:
     return name
 
 @app.post("/api/rename/{filename}")
-async def api_rename(filename: str, new_name: str = Form(...)):
+async def api_rename(filename: str, request: Request, new_name: str = Form(...)):
     """Renames the display name of a transcription (history entry) and, if
     present, its matching media-library entry. Does not touch the internal
     filename on disk — only the user-facing label shown in the UI and used
     as the download filename stem."""
     filename = _safe_filename(filename)
+    _require_file_access(filename, request)
     new_name = _validate_display_name(new_name)
 
     updated = False

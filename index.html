@@ -2,12 +2,24 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Whisper Transcritor</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <!-- Tema: CLARO por padrão. Só fica escuro se o usuário tiver escolhido antes.
+       Roda antes do CSS para não haver flash de tema errado no carregamento. -->
+  <script>
+    (function () {
+      try {
+        if (localStorage.getItem('whisper-theme') === 'dark')
+          document.documentElement.setAttribute('data-theme', 'dark');
+      } catch (e) {}
+    })();
+  </script>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
+
+<a class="skip-link" href="#main">Pular para o conteúdo</a>
 
 <div class="app-shell">
 
@@ -25,11 +37,15 @@
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
         Transcrições
       </button>
+      <button type="button" id="main-tab-public" class="app-nav-item admin-only" role="tab" aria-selected="false" aria-controls="card-transcriptions" tabindex="-1" onclick="switchMainTab('public')" onkeydown="onTablistKey(event, 'main')">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        Transcrições Públicas
+      </button>
       <button type="button" id="main-tab-media" class="app-nav-item" role="tab" aria-selected="false" aria-controls="card-media" tabindex="-1" onclick="switchMainTab('media')" onkeydown="onTablistKey(event, 'main')">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         Biblioteca de Mídia
       </button>
-      <button type="button" id="main-tab-social" class="app-nav-item" role="tab" aria-selected="false" aria-controls="card-social" tabindex="-1" onclick="switchMainTab('social')" onkeydown="onTablistKey(event, 'main')">
+      <button type="button" id="main-tab-social" class="app-nav-item admin-only" role="tab" aria-selected="false" aria-controls="card-social" tabindex="-1" onclick="switchMainTab('social')" onkeydown="onTablistKey(event, 'main')">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1"/></svg>
         Redes Sociais
       </button>
@@ -37,7 +53,7 @@
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/><circle cx="18.5" cy="17.5" r="3.2"/><path d="M18.5 16.3v2.4M17.3 17.5h2.4"/></svg>
         Download Avançado
       </button>
-      <button type="button" class="app-nav-item" onclick="openSettings()">
+      <button type="button" class="app-nav-item admin-only" onclick="openSettings()">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         Configurações
       </button>
@@ -56,10 +72,25 @@
         <!-- populated by renderFolderTree() -->
       </div>
     </aside>
+
+    <!-- Identidade da sessão + sair -->
+    <div class="session-box" id="session-box">
+      <div class="session-avatar" id="session-avatar" aria-hidden="true">—</div>
+      <div class="session-info">
+        <div class="session-role" id="session-role">Carregando...</div>
+        <div class="session-hint" id="session-hint"></div>
+      </div>
+      <button type="button" class="session-logout" id="theme-toggle" onclick="toggleTheme()" aria-label="Alternar tema claro/escuro" title="Tema claro/escuro">
+        <span id="theme-icon" aria-hidden="true"></span>
+      </button>
+      <button type="button" class="session-logout" onclick="doLogout()" aria-label="Sair" title="Sair">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      </button>
+    </div>
   </aside>
 
   <!-- ═══ COLUNA PRINCIPAL ═══ -->
-  <div class="app-main">
+  <div class="app-main" id="main" role="main">
 
     <!-- Header -->
     <header class="topbar">
@@ -148,6 +179,16 @@
     <!-- Card principal (conte\u00fado original) -->
     <div id="card-transcriptions-main" style="display:flex;flex-direction:column;min-width:0;">
 
+    <!-- Faixa da Área Pública: aparece na aba "Transcrições Públicas" (admin) e
+         no topo da tela de quem entrou com a senha de funcionário. -->
+    <div class="public-banner" id="public-banner" style="display:none">
+      <svg class="public-banner-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+      <div class="public-banner-text" id="public-banner-text">—</div>
+      <div class="public-banner-actions admin-only">
+        <button type="button" class="btn btn-ghost" onclick="openSettings()">Gerenciar acesso</button>
+      </div>
+    </div>
+
     <!-- Bulk bar -->
     <div class="bulk-bar" id="bulk-bar" role="toolbar" aria-label="Ações em lote" aria-live="polite">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
@@ -168,6 +209,14 @@
         <button type="button" class="bulk-btn" onclick="moveSelectedToFolder()">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
           Mover para pasta
+        </button>
+        <button type="button" class="bulk-btn admin-only" onclick="publishSelected(true)">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          Publicar
+        </button>
+        <button type="button" class="bulk-btn admin-only" onclick="publishSelected(false)">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          Tornar privado
         </button>
         <button type="button" class="bulk-btn danger" onclick="deleteSelected()">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
@@ -264,7 +313,7 @@
       <table class="files-table" aria-label="Lista de arquivos transcritos">
         <thead>
           <tr>
-            <th class="col-check" scope="col"><input type="checkbox" class="checkbox" id="check-all" aria-label="Selecionar todos" onchange="toggleAll(this)" /></th>
+            <th class="col-check" scope="col"><input type="checkbox" class="checkbox" id="check-all" aria-label="Selecionar todas as linhas visíveis" onchange="toggleAll(this)" /></th>
             <th class="col-name   sortable" scope="col" data-sort="name"><button type="button" class="th-sort-btn" onclick="setSort('name')">Nome <span class="sort-arrow" aria-hidden="true">↕</span></button></th>
             <th class="col-date   sortable" scope="col" data-sort="date"><button type="button" class="th-sort-btn" onclick="setSort('date')">Enviado <span class="sort-arrow" aria-hidden="true">↕</span></button></th>
             <th class="col-dur"             scope="col">Duração</th>
@@ -276,14 +325,23 @@
         <tbody id="files-tbody"></tbody>
       </table>
 
+      <!-- Skeleton: espelha a estrutura da tabela durante o carregamento inicial.
+           Evita anunciar "nenhum registro" antes de os dados chegarem. -->
+      <div class="tbl-skeleton" id="files-skeleton" aria-hidden="true">
+        <div class="skel-row"><span class="skel-bone w-check"></span><span class="skel-bone w-name"></span><span class="skel-bone w-date"></span><span class="skel-bone w-badge"></span></div>
+        <div class="skel-row"><span class="skel-bone w-check"></span><span class="skel-bone w-name"></span><span class="skel-bone w-date"></span><span class="skel-bone w-badge"></span></div>
+        <div class="skel-row"><span class="skel-bone w-check"></span><span class="skel-bone w-name"></span><span class="skel-bone w-date"></span><span class="skel-bone w-badge"></span></div>
+        <div class="skel-row"><span class="skel-bone w-check"></span><span class="skel-bone w-name"></span><span class="skel-bone w-date"></span><span class="skel-bone w-badge"></span></div>
+      </div>
+
       <!-- Empty state -->
       <div class="empty-state" id="empty-state" role="status" aria-live="polite">
         <div class="empty-icon" aria-hidden="true">
           <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
         </div>
-        <div class="empty-title">Nenhuma transcrição ainda</div>
-        <div class="empty-sub">Envie um áudio ou vídeo e a transcrição fica pronta em minutos.</div>
-        <button type="button" class="btn btn-primary-lg" style="max-width:300px" onclick="openModal('file')">
+        <div class="empty-title" id="empty-title">Nenhuma transcrição ainda</div>
+        <div class="empty-sub" id="empty-sub">Envie um áudio ou vídeo e a transcrição fica pronta em minutos.</div>
+        <button type="button" class="btn btn-primary-lg" id="empty-cta" style="max-width:300px" onclick="openModal('file')">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
           Transcrever primeiro arquivo
         </button>
@@ -315,6 +373,14 @@
         <button type="button" class="bulk-btn" onclick="retrySelectedMedia()">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
           Tentar novamente
+        </button>
+        <button type="button" class="bulk-btn admin-only" onclick="publishSelectedMedia(true)">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          Publicar
+        </button>
+        <button type="button" class="bulk-btn admin-only" onclick="publishSelectedMedia(false)">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          Tornar privado
         </button>
         <button type="button" class="bulk-btn danger" onclick="deleteSelectedMedia()">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
@@ -397,11 +463,20 @@
       </div>
 
       <div id="social-input-profile" class="social-input-row">
+        <div class="social-field">
+          <label for="social-network">Rede</label>
+          <select id="social-network" class="filter-select" onchange="setSocialNetwork(this.value)">
+            <option value="instagram" selected>Instagram</option>
+            <option value="tiktok">TikTok</option>
+            <option value="youtube">YouTube</option>
+            <option value="facebook">Facebook</option>
+          </select>
+        </div>
         <div class="social-field social-field-grow">
-          <label for="social-username">Perfil do Instagram</label>
+          <label for="social-username" id="social-username-label">Perfil do Instagram</label>
           <input type="text" id="social-username" class="social-input" placeholder="@perfil" autocomplete="off" spellcheck="false" onkeydown="if(event.key==='Enter')startSocialCollect()">
         </div>
-        <div class="social-field">
+        <div class="social-field" id="social-period-field">
           <label for="social-period">Período</label>
           <select id="social-period" class="filter-select">
             <option value="">Tudo</option>
@@ -578,7 +653,7 @@
       <div style="display:flex; gap:12px; margin-bottom:18px">
         <div style="flex:1">
           <label class="field-label" for="adv-quality-select">Qualidade</label>
-          <select id="adv-quality-select" class="select" aria-label="Qualidade">
+          <select id="adv-quality-select" class="select">
             <option value="best">Melhor (Máxima)</option>
             <option value="1080p">1080p</option>
             <option value="720p">720p</option>
@@ -733,25 +808,25 @@
 
       <!-- URL tab -->
       <div id="content-url" style="display:none" role="tabpanel" aria-labelledby="tab-url">
-        <label class="field-label" for="url-input">URL de vídeo ou áudio (YouTube, Vimeo, TikTok, etc.)</label>
+        <label class="field-label" for="url-input">URL de vídeo ou áudio (YouTube, Vimeo, TikTok, Google Drive, etc.)</label>
         <input id="url-input" type="url" class="select" style="height:40px;padding:0 12px;margin-bottom:14px"
-          placeholder="https://youtube.com/watch?v=..." aria-label="URL do vídeo ou áudio" />
+          placeholder="https://youtube.com/watch?v=…  ou  https://drive.google.com/file/d/…" />
 
         <!-- Mode switcher: clear visual separation between transcribe and download -->
         <div class="mode-switch" role="radiogroup" aria-label="O que fazer com a URL">
           <button type="button" class="mode-opt" aria-checked="true" data-mode="transcribe" onclick="setModalMode('transcribe')">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-            <div>
-              <div class="mode-title">Transcrever</div>
-              <div class="mode-sub">Baixa, extrai áudio e gera texto</div>
-            </div>
+            <span style="display:block">
+              <span class="mode-title" style="display:block">Transcrever</span>
+              <span class="mode-sub" style="display:block">Baixa, extrai áudio e gera texto</span>
+            </span>
           </button>
           <button type="button" class="mode-opt" aria-checked="false" data-mode="download" onclick="setModalMode('download')">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            <div>
-              <div class="mode-title">Apenas baixar</div>
-              <div class="mode-sub">Salva o arquivo na Biblioteca</div>
-            </div>
+            <span style="display:block">
+              <span class="mode-title" style="display:block">Apenas baixar</span>
+              <span class="mode-sub" style="display:block">Salva o arquivo na Biblioteca</span>
+            </span>
           </button>
         </div>
 
@@ -760,14 +835,14 @@
           <div style="display:flex; gap:12px;">
             <div style="flex:1">
               <label class="field-label" for="dl-type-select">Formato</label>
-              <select id="dl-type-select" class="select" aria-label="Formato de Download" onchange="updateQualityOptions()">
+              <select id="dl-type-select" class="select" onchange="updateQualityOptions()">
                 <option value="video" selected>Vídeo (.mp4)</option>
                 <option value="audio">Áudio (.mp3)</option>
               </select>
             </div>
             <div style="flex:1">
               <label class="field-label" for="dl-quality-select">Qualidade</label>
-              <select id="dl-quality-select" class="select" aria-label="Qualidade de Download">
+              <select id="dl-quality-select" class="select">
                 <option value="best">Melhor (Máxima)</option>
                 <option value="1080p">1080p</option>
                 <option value="720p">720p</option>
@@ -802,7 +877,7 @@
         <div class="dz-or">ou cole URLs (uma por linha)</div>
         <textarea id="batch-urls-input" rows="6" class="select"
           style="height:auto;padding:10px 12px;resize:vertical;font-family:ui-monospace,monospace;font-size:12.5px;line-height:1.5"
-          placeholder="https://youtube.com/watch?v=...&#10;https://facebook.com/watch/?v=...&#10;https://vimeo.com/...&#10;..."
+          placeholder="https://youtube.com/watch?v=...&#10;https://drive.google.com/file/d/...&#10;https://vimeo.com/...&#10;..."
           aria-label="URLs em lote (uma por linha)"
           oninput="updateBatchCount()"></textarea>
 
@@ -815,17 +890,17 @@
         <div class="mode-switch" role="radiogroup" aria-label="O que fazer com o lote">
           <button type="button" class="mode-opt" aria-checked="true" data-mode="transcribe" onclick="setModalMode('transcribe')">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-            <div>
-              <div class="mode-title">Transcrever lote</div>
-              <div class="mode-sub">Baixa cada URL e gera transcrição</div>
-            </div>
+            <span style="display:block">
+              <span class="mode-title" style="display:block">Transcrever lote</span>
+              <span class="mode-sub" style="display:block">Baixa cada URL e gera transcrição</span>
+            </span>
           </button>
           <button type="button" class="mode-opt" aria-checked="false" data-mode="download" onclick="setModalMode('download')">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            <div>
-              <div class="mode-title">Apenas baixar</div>
-              <div class="mode-sub">Salva todos na Biblioteca de Mídia</div>
-            </div>
+            <span style="display:block">
+              <span class="mode-title" style="display:block">Apenas baixar</span>
+              <span class="mode-sub" style="display:block">Salva todos na Biblioteca de Mídia</span>
+            </span>
           </button>
         </div>
 
@@ -858,7 +933,7 @@
       <!-- Model -->
       <div>
         <label class="field-label" for="mode-select">Modelo de transcrição</label>
-        <select id="mode-select" class="select" aria-label="Modelo de transcrição">
+        <select id="mode-select" class="select">
           <option value="tiny">tiny — mais rápido, menor precisão</option>
           <option value="base">base — rápido e leve</option>
           <option value="small">small — boa precisão</option>
@@ -871,7 +946,7 @@
       <!-- Language -->
       <div>
         <label class="field-label" for="lang-select">Idioma do áudio</label>
-        <select id="lang-select" class="select" aria-label="Idioma do áudio">
+        <select id="lang-select" class="select">
           <option value="pt">Português 🇧🇷</option>
           <option value="en">English 🇺🇸</option>
           <option value="es">Español 🇪🇸</option>
@@ -1078,7 +1153,7 @@
         <small style="display:block;font-size:11px;color:var(--slate-500);margin:-4px 0 6px">
           Quantos vídeos/áudios o yt-dlp baixa ao mesmo tempo. Recomendado: 2–4.
         </small>
-        <select id="set-download-concurrent" class="select" style="height:40px;padding:0 12px" aria-label="Downloads em paralelo">
+        <select id="set-download-concurrent" class="select" style="height:40px;padding:0 12px">
           <option value="1">1</option><option value="2">2</option><option value="3" selected>3</option>
           <option value="4">4</option><option value="5">5</option><option value="6">6</option>
           <option value="8">8</option><option value="10">10</option><option value="12">12</option><option value="16">16</option>
@@ -1090,7 +1165,7 @@
         <small style="display:block;font-size:11px;color:var(--slate-500);margin:-4px 0 6px">
           Quantas transcrições Whisper rodam ao mesmo tempo. Cada uma usa CPU/GPU pesada — só aumente em máquinas potentes.
         </small>
-        <select id="set-transcribe-concurrent" class="select" style="height:40px;padding:0 12px" aria-label="Transcrições em paralelo">
+        <select id="set-transcribe-concurrent" class="select" style="height:40px;padding:0 12px">
           <option value="1" selected>1</option><option value="2">2</option><option value="3">3</option>
           <option value="4">4</option><option value="5">5</option><option value="6">6</option>
           <option value="8">8</option><option value="10">10</option><option value="12">12</option><option value="16">16</option>
@@ -1100,6 +1175,65 @@
       <p id="settings-hint" style="font-size:11.5px;color:var(--slate-500);margin-top:4px;line-height:1.5">
         ⚙️ Mudanças valem imediatamente — tarefas em andamento terminam normalmente; as novas respeitam o novo limite.
       </p>
+
+      <!-- ── ÁREA PÚBLICA ── só o admin enxerga este bloco ── -->
+      <div class="pub-section admin-only">
+        <div class="pub-section-title">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          Área Pública (funcionários)
+        </div>
+        <p class="pub-section-sub">
+          Quem entra com a senha de funcionário só vê o que você marcou como
+          <strong>Público</strong>. Todo o resto do seu acervo continua invisível para eles.
+        </p>
+
+        <div class="pub-stat" id="pub-stat">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/></svg>
+          <span id="pub-stat-text">—</span>
+        </div>
+
+        <div class="pub-row">
+          <div class="field">
+            <label for="pub-link">Link para os funcionários</label>
+            <input type="text" id="pub-link" class="pub-input" readonly
+                   onclick="this.select()" aria-describedby="pub-link-hint" />
+          </div>
+          <button type="button" class="btn btn-secondary" onclick="copyPublicLink()">Copiar</button>
+        </div>
+        <p id="pub-link-hint" style="font-size:11.5px;color:var(--slate-500);margin:-4px 0 14px;line-height:1.5">
+          É o endereço por onde você está acessando agora. Enquanto for
+          <code>localhost</code>, só funciona neste Mac — o link de internet aparece aqui
+          depois que o túnel estiver no ar.
+        </p>
+
+        <div class="pub-msg" id="pub-msg"></div>
+
+        <div class="pub-row">
+          <div class="field">
+            <label for="pub-pw-public">Senha dos funcionários</label>
+            <input type="text" id="pub-pw-public" class="pub-input" placeholder="nova senha (mín. 8 caracteres)"
+                   autocomplete="off" spellcheck="false" />
+          </div>
+          <button type="button" class="btn btn-secondary" onclick="changePassword('public')">Trocar</button>
+        </div>
+
+        <div class="pub-row">
+          <div class="field">
+            <label for="pub-pw-admin">Sua senha de admin</label>
+            <input type="text" id="pub-pw-admin" class="pub-input" placeholder="nova senha (mín. 8 caracteres)"
+                   autocomplete="off" spellcheck="false" />
+          </div>
+          <button type="button" class="btn btn-secondary" onclick="changePassword('admin')">Trocar</button>
+        </div>
+
+        <button type="button" class="btn btn-secondary" style="width:100%" onclick="revokePublicSessions()">
+          Desconectar todos os funcionários agora
+        </button>
+        <p style="font-size:11.5px;color:var(--slate-500);margin-top:8px;line-height:1.5">
+          Trocar a senha também derruba todas as sessões abertas daquele acesso —
+          é assim que você revoga o acesso de quem saiu da empresa.
+        </p>
+      </div>
     </div>
 
     <div class="modal-foot">
@@ -1110,7 +1244,7 @@
 </div>
 
 <!-- Toast container -->
-<div class="toast-area" id="toast-area" aria-live="polite" aria-label="Notificações"></div>
+<div class="toast-area" id="toast-area" aria-live="polite" role="region" aria-label="Notificações"></div>
 
 
 <script src="/static/app.js" defer></script>

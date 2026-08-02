@@ -18,7 +18,8 @@ SOCIAL_DIR = os.path.join(_APP_DIR, ".whisper_data", "social")
 DATA_DIR = os.path.join(SOCIAL_DIR, "data")          # datasets coletados (JSON)
 CACHE_DIR = os.path.join(SOCIAL_DIR, "cache", "thumbs")
 EXPORT_DIR = os.path.join(SOCIAL_DIR, "exports")     # planilhas Excel/CSV geradas
-for _d in (DATA_DIR, CACHE_DIR, EXPORT_DIR):
+MEDIA_DIR = os.path.join(SOCIAL_DIR, "media")        # usado por medialink (default de dest)
+for _d in (DATA_DIR, CACHE_DIR, EXPORT_DIR, MEDIA_DIR):
     os.makedirs(_d, exist_ok=True)
 
 
@@ -109,9 +110,22 @@ def compute_er(row, wl=1.0, wc=4.0, wr=4.0):
 def load_dataset(path, weights=(1, 4, 4)):
     payload = load_payload(path)
     profile = payload.get("profile")
-    rows = [normalize_item(it, profile) for it in payload.get("items", [])]
-    for r in rows:
-        r["er"] = compute_er(r, *weights)
+    # Dois formatos de dataset:
+    #  - feed API do Instagram: guarda `items` crus → normaliza aqui.
+    #  - intercept/medialink (multi-rede): já guarda `rows` normalizados.
+    if isinstance(payload.get("rows"), list):
+        rows = payload["rows"]
+        for r in rows:
+            # completa campos que o resto do app espera, sem depender da rede
+            if "is_video" not in r:
+                r["is_video"] = any(m.get("type") == "video" for m in (r.get("media_urls") or [])) \
+                    or r.get("type") == "Reel/Vídeo"
+            if r.get("er") is None:
+                r["er"] = compute_er(r, *weights)
+    else:
+        rows = [normalize_item(it, profile) for it in payload.get("items", [])]
+        for r in rows:
+            r["er"] = compute_er(r, *weights)
     return {"profile": profile, "rows": rows,
             "collected_at": payload.get("collected_at")}
 

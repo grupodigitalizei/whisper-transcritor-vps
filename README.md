@@ -14,6 +14,7 @@ Transcritor de áudio e vídeo **100% local** usando [OpenAI Whisper](https://gi
 - 🌍 Suporte a múltiplos idiomas (PT, EN, ES, FR, DE, IT, JP, ZH)
 - 🤖 Modelos: `tiny`, `base`, `small`, `medium`, `large-v3`, `turbo`
 - 🔇 Filtro de vícios de linguagem ("né", "hmm", "ã...", etc.)
+- 🔗 Download por URL (YouTube, Vimeo, TikTok…) e **Google Drive** — cole o link de um arquivo público (`Qualquer pessoa com o link`) para baixar ou transcrever
 - 📱 **Aba Redes Sociais** — coleta reels/posts de perfis do Instagram via [ego lite](https://lite.ego.app) (sua sessão logada), mostra um mosaico 9:16 com métricas ricas (views, likes, comentários, **ER**), e deixa você selecionar o que **baixar** e **transcrever** em lote
 
 ---
@@ -100,6 +101,144 @@ acima).
 
 ---
 
+## 🔐 Acesso e Área Pública
+
+O app pede senha. Existem **dois acessos**, cada um com sua senha:
+
+| Acesso | Quem usa | O que vê |
+|--------|----------|----------|
+| **Admin** | você | **Tudo** — todo o acervo, privado e público, mais Configurações e Redes Sociais |
+| **Equipe** | funcionários | **Só o que você marcou como Público** — sem Redes Sociais |
+
+A primeira execução gera as duas senhas e as imprime no terminal — **anote, elas
+não podem ser recuperadas depois**, só trocadas em *Configurações → Área Pública*.
+Para redefinir uma senha esquecida sem mexer em JSON:
+
+```bash
+WHISPER_ADMIN_PASSWORD='sua-nova-senha' ./venv/bin/python whisper-app.py
+```
+
+### Como um item vai para a Área Pública
+
+Nada é compartilhado por acidente: **todo o acervo que já existia é privado**, e
+qualquer item novo enviado por você também nasce privado.
+
+- **Você publica manualmente**: selecione itens na aba *Transcrições* (ou na
+  *Biblioteca de Mídia*) e clique em **Publicar** — ou use *Publicar na Área
+  Pública* no menu de três pontinhos da linha.
+- **O que o funcionário envia já nasce público**: é o acervo compartilhado dele.
+- A aba **Transcrições Públicas** (só o admin vê) mostra exatamente o que está
+  compartilhado, com as mesmas funções da aba normal.
+
+Publicar uma transcrição publica junto o vídeo/áudio original — senão o
+funcionário leria o texto sem conseguir abrir a mídia.
+
+### Como isolamento funciona (e o que ele garante)
+
+O filtro é no **servidor**, não na tela. Um funcionário que adivinhe a URL de um
+item privado recebe `404`, não o arquivo. Concretamente, para o acesso da equipe:
+
+- `/api/history`, `/api/media-history`, `/api/stats`, `/api/folders` só devolvem
+  itens públicos — **inclusive os nomes das pastas** ficam escondidos;
+- baixar, ler, renomear, mover, apagar ou retentar um item privado → `404`;
+- Configurações, faxina de disco, atualização do yt-dlp, renomear/apagar pastas
+  e publicar/despublicar → `403` (só admin);
+- **a aba Redes Sociais não existe para a equipe**: todo o prefixo
+  `/api/social/*` responde `403`. O bloqueio é por prefixo no middleware, então
+  um endpoint social novo já nasce fechado. Ela usa a sua sessão logada do
+  Instagram (via ego lite) — é ferramenta de administração, não de acervo.
+
+As abas que a equipe **tem**: Transcrições, Biblioteca de Mídia e Download
+Avançado, com todas as funções (enviar, transcrever, baixar em todos os
+formatos, renomear, mover, excluir, tentar novamente).
+
+### Revogar acesso
+
+Trocar a senha da equipe **derruba todas as sessões abertas** daquele acesso — é
+assim que se remove quem saiu da empresa. Há também *Desconectar todos os
+funcionários agora*, que encerra as sessões mantendo a mesma senha.
+
+O login tem freio de força-bruta: 10 tentativas erradas em 10 min bloqueiam
+novas tentativas por 5 min.
+
+---
+
+## 🌐 Publicar na internet (Tailscale Funnel)
+
+O app **precisa continuar rodando neste Mac** — o Whisper usa a CPU/GPU daqui, o
+que hospedagem compartilhada (Hostgator e afins) não oferece. Para os
+funcionários acessarem de fora, um túnel HTTPS aponta para o servidor local.
+
+O Tailscale é usado em modo **userspace-networking**: o daemon roda como o seu
+usuário, sem senha de administrador do Mac e sem extensão de kernel. Este Mac não
+entra na sua rede Tailscale como um nó comum — ele só serve este túnel.
+
+**Instalação (uma vez só):**
+
+```bash
+brew install tailscale
+```
+
+Depois é só rodar o script — ele sobe o daemon sozinho e, na primeira vez, mostra
+o link para você entrar na sua conta Tailscale (crie uma grátis, se não tiver):
+
+```bash
+./publicar.sh
+```
+
+Se o Funnel ainda não estiver liberado na conta, o script avisa e mostra o link
+do admin console para habilitar. Rode de novo depois de cada um desses passos.
+
+O script confere que o app está no ar, sobe o túnel e imprime o endereço
+`https://<nome>.<tailnet>.ts.net`. Mande esse link + a senha da equipe para os
+funcionários.
+
+Comandos auxiliares:
+
+```bash
+./publicar.sh login    # mostra o link de login na conta Tailscale
+```
+
+```bash
+./publicar.sh status   # ver se está no ar e qual o endereço
+./publicar.sh parar    # derrubar o túnel (o app continua local)
+```
+
+### E a Hostgator?
+
+**Nada precisa ser configurado nela para o app funcionar.** Hospedagem
+compartilhada não roda este projeto: o Whisper exige PyTorch (~2,5 GB), ffmpeg e
+vários GB de RAM com CPU saturada por minutos a cada arquivo — plano
+compartilhado derruba processo longo e limita RAM/CPU por conta. E mesmo num VPS
+barato o resultado seria **mais lento** que o Mac (Apple Silicon), com
+mensalidade a mais.
+
+O que a Hostgator faz bem aqui é ser o **endereço de entrada**, para a equipe não
+precisar decorar uma URL `.ts.net`. No cPanel:
+
+1. *Domínios → Subdomínios*: crie `transcricoes` no seu domínio.
+2. *Domínios → Redirecionamentos*: origem = o subdomínio, destino = a URL
+   `https://<nome>.<tailnet>.ts.net`, tipo **302 (temporário)**.
+
+Ou, se preferir editar arquivo, um `.htaccess` na pasta do subdomínio:
+
+```apache
+RewriteEngine On
+RewriteRule ^(.*)$ https://SEU-ENDERECO.ts.net/$1 [R=302,L]
+```
+
+Use **302 e não 301**: se um dia a URL do túnel mudar, o 301 fica gravado no
+navegador de quem já acessou. E note que é redirect, não proxy — a barra de
+endereços do funcionário vai mostrar o `.ts.net`, porque é de lá que vem o
+certificado HTTPS. O domínio bonito é o atalho de entrada, não uma máscara.
+
+**O que lembrar:** o link só funciona com este Mac ligado e o app rodando. O
+túnel não sobrevive a um reboot — rode `./publicar.sh` de novo depois. Se você
+tem domínio na Hostgator, aponte `transcricoes.seudominio.com` para esse
+endereço com um redirect.
+
+---
+
 ## 📱 Aba Redes Sociais (Instagram)
 
 Coleta de conteúdo do Instagram usando a **sua sessão logada** via
@@ -137,7 +276,10 @@ status ("ego lite conectado") no topo da aba.
 ```
 whisper-transcritor/
 ├── whisper-app.py   # Backend FastAPI (API + servidor)
+├── auth.py          # Senhas (PBKDF2) + sessões dos dois acessos
 ├── index.html       # Frontend (HTML)
+├── login.html       # Tela de login
+├── publicar.sh      # Sobe/derruba o túnel público (Tailscale Funnel)
 ├── static/          # app.js, style.css, fontes, favicon
 ├── social/          # Aba Redes Sociais: coletor ego-lite + normalização + download + export
 │   ├── collector.py     # Coleta Instagram (perfil/URLs) via ego-browser
@@ -148,7 +290,9 @@ whisper-transcritor/
 ├── requirements.txt
 ├── .gitignore
 └── .whisper_data/   # Criado automaticamente — NÃO vai pro GitHub
-    ├── history.json      # Histórico de transcrições
+    ├── auth.json         # Hashes das senhas (0600) — NUNCA versionar
+    ├── sessions.json     # Sessões ativas (0600) — NUNCA versionar
+    ├── history.json      # Histórico de transcrições (campo `visibility` por item)
     ├── results/          # Arquivos de resultado por transcrição
     ├── uploads/          # Uploads temporários (limpos após transcrição)
     └── social/           # Coletas do Instagram (datasets + cache + exports)
@@ -158,12 +302,26 @@ whisper-transcritor/
 
 ## 🔌 API REST
 
+> Todas as rotas exigem sessão. O que cada uma devolve depende do acesso
+> (admin vê tudo; equipe vê só o público) — ver *Acesso e Área Pública*.
+
+### Autenticação e Área Pública
+
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| `POST` | `/api/auth/login` | Entra com a senha; descobre o papel pela senha |
+| `POST` | `/api/auth/logout` | Encerra a sessão |
+| `GET` | `/api/me` | Papel atual + nº de sessões ativas (admin) |
+| `POST` | `/api/auth/password` | Troca a senha de `admin` ou `public` (admin) |
+| `POST` | `/api/auth/revoke-public` | Desconecta todos os funcionários (admin) |
+| `POST` | `/api/visibility` | Publica/despublica itens (admin) |
+
 ### Histórico e estatísticas
 
 | Método | Endpoint | Descrição |
 |--------|----------|-----------|
-| `GET` | `/api/history` | Lista todo o histórico de transcrições |
-| `GET` | `/api/stats` | Total de arquivos e horas transcritas |
+| `GET` | `/api/history` | Lista o histórico de transcrições (filtrado pelo papel) |
+| `GET` | `/api/stats` | Total de arquivos e horas transcritas (filtrado pelo papel) |
 
 ### Transcrição
 

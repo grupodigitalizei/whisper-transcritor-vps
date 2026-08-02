@@ -12,24 +12,80 @@ let _viewerData  = {};
 let _autoSyncInterval = null;
 let _syncFingerprint  = '';
 
+// Quem está logado. Preenchido por loadSession() antes de qualquer render, para
+// a tela nunca piscar controles de admin para um funcionário.
+let _me = { role: null, is_admin: false };
+
+// ═══════════════════════════════════════════════════════════════
+//  SESSÃO (admin x funcionário)
+// ═══════════════════════════════════════════════════════════════
+// O backend já filtra tudo por papel — isto aqui só ajusta a interface. Uma
+// falha aqui nunca expõe dado privado, no máximo esconde botões.
+async function loadSession() {
+  try {
+    const r = await fetch('/api/me');
+    if (r.status === 401) { window.location.replace('/login'); return; }
+    _me = await r.json();
+  } catch {
+    _me = { role: 'public', is_admin: false };  // fail-closed na UI
+  }
+  // O CSS usa este atributo para esconder tudo que é .admin-only.
+  document.body.dataset.role = _me.is_admin ? 'admin' : 'public';
+
+  const avatar = document.getElementById('session-avatar');
+  const role   = document.getElementById('session-role');
+  const hint   = document.getElementById('session-hint');
+  if (avatar) avatar.textContent = _me.is_admin ? 'AD' : 'EQ';
+  if (role)   role.textContent   = _me.is_admin ? 'Administrador' : 'Acesso da equipe';
+  if (hint)   hint.textContent   = _me.is_admin ? 'vê tudo' : 'área pública';
+
+  // Funcionário: a tela dele JÁ é a área pública, então a faixa de contexto
+  // fica fixa no topo e a aba "Públicas" não existe.
+  if (!_me.is_admin) {
+    _view.visibility = 'all';   // o servidor já mandou só o que é público
+    _syncPublicBanner('public-only');
+  }
+}
+
+async function doLogout() {
+  const ok = await showConfirm({
+    title: 'Sair da conta',
+    message: 'Você vai precisar digitar a senha de novo para voltar.',
+    confirmText: 'Sair',
+  });
+  if (!ok) return;
+  try { await fetch('/api/auth/logout', { method: 'POST' }); } catch { /* segue pro login */ }
+  window.location.replace('/login');
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  INIT
 // ═══════════════════════════════════════════════════════════════
 async function init() {
+  await loadSession();   // define o papel ANTES do primeiro render
+  // Lê busca/filtros/ordenação da URL antes de qualquer render, senão a tela
+  // pisca o estado padrão e só depois aplica o que o link pedia.
+  _hydrateViewFromUrl();
   await Promise.all([loadHistory(), loadStats(), loadFolders()]);
   await resumeActivePolling();
   startAutoSync();
-  // Non-blocking — banner appears later if there are old media files to clean
-  checkOldMediaCleanup();
-  // Non-blocking — banner appears later if yt-dlp is outdated (may fail silently offline)
-  checkYtdlpOutdated();
+  // Os dois avisos abaixo são de manutenção da máquina (faxina de disco e versão
+  // do yt-dlp) e os endpoints são só do admin — nem chamamos como funcionário.
+  if (_me.is_admin) {
+    // Non-blocking — banner appears later if there are old media files to clean
+    checkOldMediaCleanup();
+    // Non-blocking — banner appears later if yt-dlp is outdated (may fail silently offline)
+    checkYtdlpOutdated();
+  }
   // Re-check periodically and whenever the tab regains focus — a tab left
   // open for hours would otherwise show a stale "outdated" banner forever
   // (or keep hiding a real one) since the very first page load.
-  setInterval(checkYtdlpOutdated, 30 * 60 * 1000);
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) checkYtdlpOutdated();
-  });
+  if (_me.is_admin) {
+    setInterval(checkYtdlpOutdated, 30 * 60 * 1000);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) checkYtdlpOutdated();
+    });
+  }
 }
 
 async function resumeActivePolling() {
@@ -85,6 +141,9 @@ function _historyToFiles(data) {
       source:         h.source         || 'upload',  // 'upload' | 'url'
       url:            h.url            || null,       // original link (yt-dlp), if any
       has_original:   h.has_original !== false,      // default true if backend omits
+      // 'public' = está na Área Pública. O backend sempre manda o campo
+      // normalizado; o fallback cobre uma resposta antiga em cache.
+      visibility:     h.visibility === 'public' ? 'public' : 'private',
       _progress:      carried._progress,
       _phase:         carried._phase,
       _phaseProgress: carried._phaseProgress,
@@ -93,20 +152,40 @@ function _historyToFiles(data) {
 }
 
 function _makeFingerprint(data) {
-  return data.map(h => `${h.file}|${h.status}|${h.words}|${h.duration}`).join('\n');
+  return data.map(h => `${h.file}|${h.status}|${h.words}|${h.duration}|${h.visibility || ''}`).join('\n');
 }
 
+// Estados de carga da lista: 'loading' | 'ready' | 'error'.
+// Governa qual dos 8 estados de tela o usuário vê (skeleton, populado,
+// vazio educativo, sem-resultado de busca/filtro, erro com retry).
+let _listState = 'loading';
+
 async function loadHistory() {
+  const first = _listState === 'loading';
   try {
     const res  = await fetch('/api/history');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     files = _historyToFiles(data);
     _syncFingerprint = _makeFingerprint(data);
+    _listState = 'ready';
     renderFiles();
   } catch (e) {
     console.error('loadHistory:', e);
-    renderFiles([]);
+    // Só derruba a tela para o estado de erro se ainda não havia dado nenhum.
+    // Se já existe lista na tela, uma falha de sync não pode apagá-la.
+    _listState = first ? 'error' : 'ready';
+    renderFiles();
   }
+}
+
+// Retry do estado de erro — o usuário precisa de um caminho de volta,
+// não só de um ícone triste (regra 182).
+async function retryLoadHistory() {
+  _listState = 'loading';
+  renderFiles();
+  await loadHistory();
+  loadStats?.();
 }
 
 // ─── AUTO-SYNC ───────────────────────────────────────────────
@@ -160,12 +239,25 @@ async function _autoSyncTick() {
 }
 
 async function loadStats() {
+  // Na aba pública os números têm que descrever o recorte publicado, não o
+  // acervo inteiro. O /api/stats devolve o total do papel, então esse caso é
+  // calculado aqui a partir da lista que já está na memória.
+  if (_view.visibility === 'public') { _renderLocalStats(); return; }
   try {
     const res  = await fetch('/api/stats');
     const data = await res.json();
     document.getElementById('stat-count').textContent = data.total ?? '0';
     document.getElementById('stat-hours').textContent = data.duration || '0m';
   } catch { /* ignore */ }
+}
+
+function _renderLocalStats() {
+  const scoped = _filterByVisibility(files);
+  const secs   = scoped.reduce((acc, f) => acc + (f.dur_secs || 0), 0);
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  document.getElementById('stat-count').textContent = scoped.length;
+  document.getElementById('stat-hours').textContent = h ? `${h}h ${m}m` : `${m}m`;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -185,9 +277,33 @@ function _focusable(root) {
     .filter(el => el.offsetParent !== null || el === document.activeElement);
 }
 
+// Conta quantos overlays estão abertos, para só liberar o fundo no último.
+let _inertDepth = 0;
+
+function _lockBackground() {
+  if (_inertDepth++ > 0) return;
+  const shell = document.querySelector('.app-shell');
+  // `inert` remove o fundo da árvore de acessibilidade E do foco — é o que
+  // torna aria-modal="true" verdadeiro. aria-hidden solto não bloqueia Tab.
+  if (shell) shell.inert = true;
+  // Compensa a largura da barra de rolagem, senão o conteúdo "salta"
+  // horizontalmente ao abrir o modal.
+  const sw = window.innerWidth - document.documentElement.clientWidth;
+  if (sw > 0) document.body.style.paddingRight = sw + 'px';
+}
+
+function _unlockBackground() {
+  if (--_inertDepth > 0) return;
+  _inertDepth = 0;
+  const shell = document.querySelector('.app-shell');
+  if (shell) shell.inert = false;
+  document.body.style.paddingRight = '';
+}
+
 function attachFocusTrap(overlayId) {
   const overlay = document.getElementById(overlayId);
   if (!overlay || _activeTraps.has(overlay)) return;
+  _lockBackground();
   const returnFocusEl = document.activeElement;
   const handler = (e) => {
     if (e.key !== 'Tab') return;
@@ -211,6 +327,7 @@ function detachFocusTrap(overlayId) {
   if (!entry) return;
   overlay.removeEventListener('keydown', entry.handler);
   _activeTraps.delete(overlay);
+  _unlockBackground();
   // Restore focus to whatever triggered the open (skip if it's gone or hidden)
   const r = entry.returnFocusEl;
   if (r && document.contains(r) && r.offsetParent !== null) {
@@ -276,6 +393,9 @@ function _showDialog({ type, title, iconKind, iconColor, bodyBuilder, footBuilde
 
     const overlay = document.getElementById('dialog-overlay');
     overlay.dataset.type = type;
+    // Ação destrutiva/irreversível usa alertdialog: o leitor de tela anuncia
+    // o conteúdo imediatamente em vez de só o título (regra 341).
+    overlay.setAttribute('role', type === 'confirm' ? 'alertdialog' : 'dialog');
     document.getElementById('dialog-title').textContent = title || '';
 
     _setDialogIcon(iconKind || 'info', iconColor);
@@ -288,6 +408,8 @@ function _showDialog({ type, title, iconKind, iconColor, bodyBuilder, footBuilde
     msg.textContent = '';
     msg.style.display = 'none';
     inp.style.display = 'none'; inp.classList.remove('invalid'); inp.value = '';
+    inp.removeAttribute('aria-invalid');
+    inp.setAttribute('aria-describedby', 'dialog-message dialog-error');
     err.style.display = 'none'; err.textContent = '';
     ch.style.display  = 'none'; ch.innerHTML = '';
 
@@ -378,7 +500,9 @@ function showPrompt({ title = 'Digite um valor', message = '', initialValue = ''
           const errMsg = validator(val);
           if (errMsg) {
             err.textContent = errMsg; err.style.display = 'block';
-            inp.classList.add('invalid'); inp.focus();
+            inp.classList.add('invalid');
+            inp.setAttribute('aria-invalid', 'true');
+            inp.focus();
             return;
           }
         }
@@ -386,7 +510,17 @@ function showPrompt({ title = 'Digite um valor', message = '', initialValue = ''
       };
       inp.onkeydown = (e) => {
         if (e.key === 'Enter') { e.preventDefault(); doConfirm(); }
-        else { err.style.display = 'none'; inp.classList.remove('invalid'); }
+      };
+      // Erro já visível: revalida a cada tecla e some assim que ficar válido.
+      inp.oninput = () => {
+        if (err.style.display === 'none') return;
+        if (!validator || !validator(inp.value)) {
+          err.style.display = 'none';
+          inp.classList.remove('invalid');
+          inp.removeAttribute('aria-invalid');
+        } else {
+          err.textContent = validator(inp.value);
+        }
       };
       // Exponha o handler pro footer usar
       inp.dataset._bound = '1';
@@ -511,8 +645,29 @@ async function loadFolders() {
 
 // Build a nested tree from the flat list of paths + counts.
 // Also injects items with folder='' into the root "(sem pasta)" bucket for display.
+// Na aba "Transcrições Públicas" as contagens do backend (que cobrem o acervo
+// inteiro) mentiriam: a pasta apareceria com 26 e a lista com 0. Aqui elas são
+// recalculadas a partir da lista já filtrada, incluindo as subpastas.
+function _folderCountsForScope() {
+  if (_view.visibility !== 'public') return null;
+  const scoped = _filterByVisibility(files);
+  const counts = new Map();
+  for (const f of scoped) {
+    const path = f.folder || '';
+    if (!path) continue;
+    // Propaga para os ancestrais — a contagem de uma pasta inclui as filhas.
+    const segs = path.split('/');
+    for (let i = 1; i <= segs.length; i++) {
+      const anc = segs.slice(0, i).join('/');
+      counts.set(anc, (counts.get(anc) || 0) + 1);
+    }
+  }
+  return counts;
+}
+
 function _buildFolderTree() {
   const root = { path: '', name: '(raiz)', count: 0, children: {} };
+  const scopedCounts = _folderCountsForScope();
   for (const f of _folders) {
     const segments = f.path.split('/');
     let node = root;
@@ -524,7 +679,7 @@ function _buildFolderTree() {
       }
       node = node.children[seg];
     }
-    node.count = f.count;
+    node.count = scopedCounts ? (scopedCounts.get(f.path) || 0) : f.count;
   }
   return root;
 }
@@ -535,8 +690,9 @@ function renderFolderTree() {
   const tree = _buildFolderTree();
 
   // In-memory counts for the special "virtual" buckets
-  const allCount  = files.length;
-  const rootCount = files.filter(f => !(f.folder || '')).length;
+  const scopedFiles = _filterByVisibility(files);
+  const allCount  = scopedFiles.length;
+  const rootCount = scopedFiles.filter(f => !(f.folder || '')).length;
 
   const html = [];
   html.push(`<ul>`);
@@ -854,6 +1010,7 @@ async function openSettings() {
       _setConcurrencyValue('set-transcribe-concurrent', s.transcribe_concurrent ?? 1);
     }
   } catch { /* defaults already selected in DOM */ }
+  if (_me.is_admin) _refreshPublicPanel();
   document.getElementById('settings-overlay').classList.add('open');
   document.body.style.overflow = 'hidden';
   attachFocusTrap('settings-overlay');
@@ -889,6 +1046,174 @@ async function saveSettings() {
     showToast('Erro de rede ao salvar.', 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Salvar'; }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ÁREA PÚBLICA — publicar itens e gerenciar o acesso da equipe
+// ═══════════════════════════════════════════════════════════════
+
+// Faixa de contexto no topo da tabela. Três estados:
+//   'admin-public' → admin na aba Transcrições Públicas
+//   'public-only'  → funcionário (a tela dele inteira é a área pública)
+//   'none'         → admin na aba normal
+function _syncPublicBanner(mode) {
+  const box = document.getElementById('public-banner');
+  const txt = document.getElementById('public-banner-text');
+  if (!box || !txt) return;
+  if (mode === 'none') { box.style.display = 'none'; return; }
+  box.style.display = 'flex';
+  txt.innerHTML = mode === 'public-only'
+    ? 'Você está no <strong>acervo compartilhado da equipe</strong>. Tudo que você enviar aqui fica visível para os outros que têm a senha de acesso.'
+    : 'Estes são os itens <strong>visíveis para os funcionários</strong>. O resto do seu acervo continua privado. Para publicar, selecione itens na aba <strong>Transcrições</strong> e clique em <strong>Publicar</strong>.';
+}
+
+async function _applyVisibility(fileIds, makePublic) {
+  const fd = new FormData();
+  fd.append('files', fileIds.join('\n'));
+  fd.append('visibility', makePublic ? 'public' : 'private');
+  const r = await fetch('/api/visibility', { method: 'POST', body: fd });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    throw new Error(d.detail || 'Falha ao mudar a visibilidade.');
+  }
+  return r.json();
+}
+
+// Publica/despublica UM item, pelo menu de três pontinhos.
+async function setFileVisibility(id, makePublic) {
+  closeAllDDs();
+  const f = files.find(x => x.id === id);
+  if (makePublic) {
+    const ok = await showConfirm({
+      title: 'Publicar para os funcionários',
+      message: `"${f?.name || id}" passa a aparecer na Área Pública — qualquer pessoa `
+             + 'com a senha de acesso vai poder ler a transcrição e baixar o vídeo/áudio.',
+      confirmText: 'Publicar',
+    });
+    if (!ok) return;
+  }
+  try {
+    await _applyVisibility([id], makePublic);
+    await loadHistory();
+    showToast(makePublic ? 'Publicado na Área Pública.' : 'Item voltou a ser privado.', 'success');
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+// Publica/despublica os itens marcados (barra de lote).
+async function publishSelected(makePublic) {
+  const ids = selectedVisibleIds();
+  if (!ids.length) { showToast('Selecione ao menos um item.', 'error'); return; }
+  const ok = await showConfirm({
+    title: makePublic ? 'Publicar para os funcionários' : 'Tornar privado',
+    message: makePublic
+      ? `${ids.length} ${ids.length === 1 ? 'item vai' : 'itens vão'} aparecer na Área Pública — `
+        + 'quem tem a senha de acesso poderá ler as transcrições e baixar as mídias.'
+      : `${ids.length} ${ids.length === 1 ? 'item sai' : 'itens saem'} da Área Pública e volta`
+        + `${ids.length === 1 ? '' : 'm'} a ser visível só para você.`,
+    confirmText: makePublic ? 'Publicar' : 'Tornar privado',
+  });
+  if (!ok) return;
+  try {
+    const res = await _applyVisibility(ids, makePublic);
+    selected.clear();
+    await loadHistory();
+    syncBulkBar();
+    showToast(`${res.changed} ${res.changed === 1 ? 'item atualizado' : 'itens atualizados'}.`, 'success');
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+function _pubMsg(text, kind) {
+  const el = document.getElementById('pub-msg');
+  if (!el) return;
+  el.textContent = text || '';
+  el.className = 'pub-msg' + (text ? ' is-' + kind : '');
+}
+
+function _refreshPublicPanel() {
+  const publicCount = files.filter(f => f.visibility === 'public').length;
+  const sessions    = _me.sessions?.public ?? 0;
+  const txt = document.getElementById('pub-stat-text');
+  if (txt) {
+    txt.textContent =
+      `${publicCount} ${publicCount === 1 ? 'transcrição publicada' : 'transcrições publicadas'} · `
+      + `${sessions} ${sessions === 1 ? 'funcionário conectado' : 'funcionários conectados'}`;
+  }
+  const link = document.getElementById('pub-link');
+  if (link) link.value = window.location.origin;
+  _pubMsg('', '');
+}
+
+async function copyPublicLink() {
+  const link = document.getElementById('pub-link');
+  if (!link) return;
+  try {
+    await navigator.clipboard.writeText(link.value);
+    showToast('Link copiado.', 'success');
+  } catch {
+    link.select();
+    showToast('Copie manualmente (Cmd+C).', 'error');
+  }
+}
+
+async function changePassword(target) {
+  const input = document.getElementById(target === 'admin' ? 'pub-pw-admin' : 'pub-pw-public');
+  const pw = (input?.value || '').trim();
+  if (pw.length < 8) {
+    _pubMsg('A senha precisa ter pelo menos 8 caracteres.', 'error');
+    input?.focus();
+    return;
+  }
+  const label = target === 'admin' ? 'sua senha de admin' : 'a senha dos funcionários';
+  const ok = await showConfirm({
+    title: 'Trocar senha',
+    message: `Isso muda ${label} e desconecta quem estiver usando esse acesso agora. `
+           + 'Guarde a senha nova antes de confirmar — ela não pode ser recuperada depois.',
+    confirmText: 'Trocar senha',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const fd = new FormData();
+    fd.append('target', target);
+    fd.append('password', pw);
+    const r = await fetch('/api/auth/password', { method: 'POST', body: fd });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { _pubMsg(d.detail || 'Não foi possível trocar a senha.', 'error'); return; }
+    if (input) input.value = '';
+    _pubMsg(target === 'admin'
+      ? 'Senha de admin trocada. Você continua logado neste navegador.'
+      : 'Senha dos funcionários trocada. Envie a nova para a equipe — as sessões antigas caíram.', 'ok');
+    // A contagem de sessões mudou.
+    try { _me = await (await fetch('/api/me')).json(); } catch { /* mantém o valor anterior */ }
+    _refreshPublicPanel();
+  } catch {
+    _pubMsg('Erro de rede ao trocar a senha.', 'error');
+  }
+}
+
+async function revokePublicSessions() {
+  const ok = await showConfirm({
+    title: 'Desconectar funcionários',
+    message: 'Todos os funcionários conectados vão precisar digitar a senha de novo. '
+           + 'A senha continua a mesma.',
+    confirmText: 'Desconectar todos',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch('/api/auth/revoke-public', { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { _pubMsg(d.detail || 'Não foi possível desconectar.', 'error'); return; }
+    _pubMsg(`${d.revoked} ${d.revoked === 1 ? 'sessão encerrada' : 'sessões encerradas'}.`, 'ok');
+    try { _me = await (await fetch('/api/me')).json(); } catch { /* mantém o valor anterior */ }
+    _refreshPublicPanel();
+  } catch {
+    _pubMsg('Erro de rede.', 'error');
   }
 }
 
@@ -1064,7 +1389,7 @@ function _renderSortIndicators() {
 // de "Disponível", e vice-versa. Antes disso, as contagens usavam a
 // biblioteca inteira e ficavam erradas assim que você entrava numa pasta.
 function _renderStatusFilterCounts() {
-  const folderScoped = _filterByFolder(_filterBySearch(files));
+  const folderScoped = _filterByFolder(_filterBySearch(_filterByVisibility(files)));
 
   const forStatus = _view.originalFilter === 'all' ? folderScoped
     : folderScoped.filter(f => _view.originalFilter === 'available' ? f.has_original : !f.has_original);
@@ -1176,7 +1501,9 @@ function _renderQueueSummary() {
       }, 0);
       pct = sum / inProgress.length;
     }
-    fill.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+    // scaleX sobre trilho de largura fixa, não `width` (regra 137): width
+    // dispara layout a cada frame; transform só dispara composite.
+    fill.style.transform = `scaleX(${Math.max(0, Math.min(100, pct)) / 100})`;
   }
 }
 
@@ -1277,12 +1604,103 @@ const STATUS_MAP = {
 // Pipeline: files -> search -> statusFilter -> originalFilter -> folderFilter -> sort -> render
 const _view = {
   search:       '',
+  // 'all'    → tudo que o servidor mandou (aba Transcrições do admin; e a tela
+  //            inteira de um funcionário, que já vem filtrada do servidor)
+  // 'public' → só os itens publicados (aba Transcrições Públicas do admin)
+  visibility:   'all',
   statusFilter: 'all',      // 'all' | 'queued' | 'processing' | 'done' | 'error'
   originalFilter: 'all',    // 'all' | 'available' | 'missing' — arquivo original ainda no disco?
   folderFilter: 'all',      // 'all' | '__root__' | '<folder name>'
   sortKey:      'date',     // 'name' | 'date' | 'mode' | 'status'
   sortDir:      'desc',     // 'asc' | 'desc'
 };
+
+// ═══════════════════════════════════════════════════════════════
+//  ESTADO NA URL — busca, filtros e ordenação (regras 433/578)
+//  Sem isto o usuário não consegue favoritar uma visão, compartilhar um link
+//  filtrado, usar o botão Voltar, e um F5 perdia tudo.
+// ═══════════════════════════════════════════════════════════════
+// Só grava na URL o que difere do padrão, para o endereço ficar curto e legível.
+const _VIEW_URL_DEFAULTS = {
+  q: '', status: 'all', orig: 'all', pasta: 'all',
+  vis: 'all', ord: 'date', dir: 'desc',
+};
+const _VIEW_URL_MAP = {
+  q:      ['search',         v => v],
+  status: ['statusFilter',   v => v],
+  orig:   ['originalFilter', v => v],
+  pasta:  ['folderFilter',   v => v],
+  vis:    ['visibility',     v => v],
+  ord:    ['sortKey',        v => v],
+  dir:    ['sortDir',        v => v],
+};
+
+let _urlSyncTimer = null;
+
+function _syncViewToUrl() {
+  // Debounce: digitar na busca não pode gerar uma entrada de histórico por tecla.
+  clearTimeout(_urlSyncTimer);
+  _urlSyncTimer = setTimeout(() => {
+    const params = new URLSearchParams();
+    for (const [param, [chave]] of Object.entries(_VIEW_URL_MAP)) {
+      const valor = _view[chave];
+      if (valor !== undefined && String(valor) !== String(_VIEW_URL_DEFAULTS[param])) {
+        params.set(param, String(valor));
+      }
+    }
+    const qs = params.toString();
+    const alvo = location.pathname + (qs ? '?' + qs : '') + location.hash;
+    // replaceState, não pushState: cada ajuste de filtro não merece uma entrada
+    // no histórico — o Voltar deve sair da página, não desfazer filtro por filtro.
+    if (alvo !== location.pathname + location.search + location.hash) {
+      try { history.replaceState(null, '', alvo); } catch {}
+    }
+  }, 300);
+}
+
+// Lê a URL para dentro de _view. Valida cada valor contra a lista de opções
+// aceitas — parâmetro inventado à mão não pode quebrar o render.
+const _VIEW_URL_VALIDOS = {
+  statusFilter:   ['all', 'queued', 'processing', 'done', 'error'],
+  originalFilter: ['all', 'available', 'missing'],
+  visibility:     ['all', 'public'],
+  sortKey:        ['name', 'date', 'mode', 'status'],
+  sortDir:        ['asc', 'desc'],
+};
+
+function _hydrateViewFromUrl() {
+  let mudou = false;
+  const params = new URLSearchParams(location.search);
+  for (const [param, [chave]] of Object.entries(_VIEW_URL_MAP)) {
+    if (!params.has(param)) continue;
+    const bruto = params.get(param);
+    const validos = _VIEW_URL_VALIDOS[chave];
+    if (validos && !validos.includes(bruto)) continue;   // ignora valor inválido
+    _view[chave] = bruto;
+    mudou = true;
+  }
+  if (mudou) {
+    // Espelha nos controles visíveis, senão a tela mente sobre o próprio estado.
+    const busca = _view.search || '';
+    for (const id of ['topbar-search-input', 'search-input']) {
+      const el = document.getElementById(id);
+      if (el) el.value = busca;
+    }
+    if (busca) {
+      const bar = document.getElementById('search-bar');
+      const btn = document.getElementById('search-toggle');
+      if (bar) bar.classList.add('open');
+      if (btn) { btn.classList.add('active'); btn.setAttribute('aria-expanded', 'true'); }
+    }
+  }
+  return mudou;
+}
+
+// Voltar/Avançar do navegador reidrata a visão em vez de não fazer nada.
+window.addEventListener('popstate', () => {
+  _hydrateViewFromUrl();
+  renderFiles();
+});
 
 // Canonical ordering for the "status" column sort.
 const _STATUS_ORDER = { processing: 0, queued: 1, done: 2, error: 3 };
@@ -1300,6 +1718,15 @@ function _sortValue(f, key) {
     case 'date':
     default:       return f.queued_at || 0;
   }
+}
+
+// Escopo da aba: na aba "Transcrições Públicas" o admin vê só o que publicou.
+// Extraído porque os contadores dos chips e as estatísticas do topo precisam do
+// MESMO recorte — senão a aba pública mostraria "1483 arquivos" com 1 linha.
+function _filterByVisibility(arr) {
+  return _view.visibility === 'public'
+    ? arr.filter(f => f.visibility === 'public')
+    : arr;
 }
 
 // Filtro de busca por nome — extraído pra ser reaproveitado nas contagens dos chips.
@@ -1326,7 +1753,7 @@ function applyPipeline(allFiles) {
   // Stamp each file with its original array index so we have a stable
   // tiebreaker for date sorting of legacy entries without queued_at.
   const stamped = allFiles.map((f, i) => ({ ...f, _order: i }));
-  let arr = _filterBySearch(stamped);
+  let arr = _filterBySearch(_filterByVisibility(stamped));
   if (_view.statusFilter !== 'all') arr = arr.filter(f => f.status === _view.statusFilter);
   if (_view.originalFilter !== 'all') {
     arr = arr.filter(f => _view.originalFilter === 'available' ? f.has_original : !f.has_original);
@@ -1489,7 +1916,7 @@ function _rowSignature(f) {
   return [
     f.id, f.status, f.name, f.date, f.dur, f.mode, f.folder || '',
     f.source || '', f.has_original ? '1' : '0', f.url || '',
-    selected.has(f.id) ? '1' : '0',
+    f.visibility || '', selected.has(f.id) ? '1' : '0',
   ].join('|');
 }
 
@@ -1512,15 +1939,18 @@ function _buildRowInner(f) {
           ${f.source === 'url'
             ? `<span class="ftag ftag-url" title="Adicionado via URL (yt-dlp)"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>URL</span>`
             : `<span class="ftag ftag-upload" title="Adicionado por upload"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Upload</span>`}
+          ${(f.visibility === 'public' && _me.is_admin)
+            ? `<span class="ftag ftag-public" title="Visível para os funcionários na Área Pública"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>Pública</span>`
+            : ''}
           ${f.has_original
             ? `<span class="ftag ftag-orig-ok" title="O arquivo de áudio/vídeo original ainda está em uploads/"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>Original disponível</span>`
             : `<span class="ftag ftag-orig-gone" title="Arquivo original foi apagado — a transcrição continua disponível"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>Original apagado</span>`}
         </div>
       </td>
-      <td class="col-date"><div class="file-date">${esc(f.date)}</div></td>
-      <td class="col-dur"><div class="file-dur">${esc(f.dur)}</div></td>
-      <td class="col-mode"><span class="mode-badge">${esc(f.mode)}</span></td>
-      <td class="col-status">${renderStatus(f.status, f)}</td>
+      <td class="col-date" data-label="Enviado"><div class="file-date">${esc(f.date)}</div></td>
+      <td class="col-dur" data-label="Duração"><div class="file-dur">${esc(f.dur)}</div></td>
+      <td class="col-mode" data-label="Modelo"><span class="mode-badge">${esc(f.mode)}</span></td>
+      <td class="col-status" data-label="Status">${renderStatus(f.status, f)}</td>
       <td class="col-actions">
         <div class="action-wrap">
           <button type="button" class="dots-btn" aria-label="Ações — ${esc(f.name)}" aria-haspopup="menu" aria-expanded="false"
@@ -1589,6 +2019,15 @@ function _buildRowInner(f) {
               Copiar link original
             </div>
             <div class="dd-sep"></div>` : ''}
+            ${_me.is_admin ? (f.visibility === 'public' ? `
+            <div class="dd-item" role="menuitem" tabindex="-1" onclick="setFileVisibility('${jsAttr(f.id)}', false)">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              Tornar privado
+            </div>` : `
+            <div class="dd-item" role="menuitem" tabindex="-1" onclick="setFileVisibility('${jsAttr(f.id)}', true)">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+              Publicar na Área Pública
+            </div>`) + '<div class="dd-sep"></div>' : ''}
             <div class="dd-item" role="menuitem" tabindex="-1" onclick="promptRenameFile('${jsAttr(f.id)}')">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>
               Renomear
@@ -1630,6 +2069,9 @@ function _attachTbodyDelegation(tbody) {
 function renderFiles(dataOverride) {
   // If no explicit data passed, apply the current view pipeline.
   const data = dataOverride || _getVisibleFiles();
+  // Espelha a visão na URL (debounced). Ancorado aqui de propósito: é o funil
+  // por onde passa toda mudança de busca/filtro/pasta/ordenação.
+  if (!dataOverride) _syncViewToUrl();
   const tbody = document.getElementById('files-tbody');
   const empty = document.getElementById('empty-state');
   const table = tbody.closest('table');
@@ -1640,11 +2082,26 @@ function renderFiles(dataOverride) {
   _renderQueueSummary();
   _attachTbodyDelegation(tbody);
 
+  const skel = document.getElementById('files-skeleton');
+
+  // Carregando o primeiro lote: mostra o skeleton (que espelha a estrutura
+  // real da tabela) e NADA de "nenhuma transcrição" — seria status falso.
+  if (_listState === 'loading' && !files.length) {
+    tbody.innerHTML = '';
+    _renderedRowSigs.clear();
+    table.style.display = 'none';
+    empty.style.display = 'none';
+    if (skel) skel.classList.add('show');
+    return;
+  }
+  if (skel) skel.classList.remove('show');
+
   if (!data.length) {
     tbody.innerHTML = '';
     _renderedRowSigs.clear();
     table.style.display = 'none';
     empty.style.display = 'flex';
+    _syncEmptyStateCopy();
     return;
   }
   table.style.display = '';
@@ -1687,6 +2144,85 @@ function renderFiles(dataOverride) {
 // ═══════════════════════════════════════════════════════════════
 //  SEARCH
 // ═══════════════════════════════════════════════════════════════
+// O estado vazio muda de sentido conforme a aba: na aba pública o problema não
+// é "não há transcrição", é "nada foi publicado ainda" — e o botão de enviar
+// arquivo ali criaria um item PRIVADO, o que confundiria.
+// Há filtro ativo além do padrão? (status, origem, tipo, pasta)
+function _hasActiveFilter() {
+  return !!(
+    (_view.statusFilter   && _view.statusFilter   !== 'all') ||
+    (_view.originalFilter && _view.originalFilter !== 'all') ||
+    (_view.folderFilter   && _view.folderFilter   !== 'all')
+  );
+}
+
+// "Nada aqui" colapsa três situações diferentes em uma. Cada uma tem texto
+// próprio E ação própria: limpar a busca, limpar os filtros, ou criar o
+// primeiro item. Regra 181.
+function _syncEmptyStateCopy() {
+  const title = document.getElementById('empty-title');
+  const sub   = document.getElementById('empty-sub');
+  const cta   = document.getElementById('empty-cta');
+  if (!title || !sub) return;
+
+  const setCta = (label, handler, show = true) => {
+    if (!cta) return;
+    cta.style.display = show ? '' : 'none';
+    if (!show) return;
+    cta.textContent = label;          // remove o ícone do CTA padrão
+    cta.onclick     = handler;
+  };
+
+  // 1) Falha de carregamento — o que falhou + como tentar de novo.
+  if (_listState === 'error' && !files.length) {
+    title.textContent = 'Não conseguimos carregar suas transcrições';
+    sub.textContent   = 'O servidor não respondeu. Suas transcrições continuam salvas no disco — é só tentar de novo.';
+    setCta('Tentar novamente', () => retryLoadHistory());
+    return;
+  }
+
+  const q = (_view.search || '').trim();
+
+  // 2) Busca sem resultado — repete o termo e mantém um caminho de saída.
+  if (q) {
+    title.textContent = `Nenhum resultado para “${q}”`;
+    sub.textContent   = 'Confira a grafia ou limpe a busca para ver todas as transcrições.';
+    setCta('Limpar busca', () => {
+      _view.search = '';
+      const a = document.getElementById('topbar-search-input');
+      const b = document.getElementById('search-input');
+      if (a) a.value = ''; if (b) b.value = '';
+      renderFiles();
+    });
+    return;
+  }
+
+  // 3) Filtro sem resultado — a ação relaxa o filtro, não manda criar item.
+  if (_hasActiveFilter() && files.length) {
+    title.textContent = 'Nenhuma transcrição com esses filtros';
+    sub.textContent   = 'Existem transcrições, mas nenhuma corresponde à combinação de filtros aplicada.';
+    setCta('Limpar filtros', () => {
+      _view.statusFilter   = 'all';
+      _view.originalFilter = 'all';
+      _view.folderFilter   = 'all';
+      renderFiles();
+    });
+    return;
+  }
+
+  // 4) Vazio educativo — ensina a função da área e oferece a ação principal.
+  const isPublicTab = _view.visibility === 'public';
+  if (isPublicTab) {
+    title.textContent = 'Nada publicado ainda';
+    sub.textContent   = 'Vá em Transcrições, selecione o que a equipe pode ver e clique em Publicar.';
+    setCta('', null, false);
+  } else {
+    title.textContent = 'Nenhuma transcrição ainda';
+    sub.textContent   = 'Envie um áudio ou vídeo e a transcrição fica pronta em minutos.';
+    setCta('Transcrever primeiro arquivo', () => openModal('file'));
+  }
+}
+
 function toggleSearch() {
   const bar = document.getElementById('search-bar');
   const btn = document.getElementById('search-toggle');
@@ -1754,10 +2290,15 @@ function toggleAll(cb) {
 
 function syncHeaderCheck() {
   const cb = document.getElementById('check-all');
+  if (!cb) return;
   const visible = _getVisibleFiles();
   const visibleSelected = visible.filter(f => selected.has(f.id)).length;
   cb.checked = visibleSelected === visible.length && visible.length > 0;
   cb.indeterminate = visibleSelected > 0 && visibleSelected < visible.length;
+  // O rótulo do checkbox tri-state precisa dizer o que o clique VAI fazer.
+  cb.setAttribute('aria-label', cb.checked
+    ? `Desmarcar as ${visible.length} linhas visíveis`
+    : `Selecionar todas as ${visible.length} linhas visíveis`);
 }
 
 // Returns only the selected IDs that are currently visible under the active
@@ -1863,13 +2404,54 @@ document.addEventListener('scroll', e => {
   closeAllDDs();
 }, true);
 window.addEventListener('resize', () => closeAllDDs());
+// ESC fecha UMA camada por pressionamento, da mais interna para a mais
+// externa, devolvendo o foco ao gatilho correspondente (regra 393).
+// Antes fechava tudo de uma vez, o que destruía o contexto do usuário.
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') {
-    // If a dialog is open, cancel it and stop — we don't want ESC to also
-    // close the modal/viewer/etc stacked behind it.
-    const dialog = document.getElementById('dialog-overlay');
-    if (dialog && dialog.classList.contains('open')) { _dialogCancel(); return; }
-    closeAllDDs(); closeModal(); closeViewer(); closeFolderPicker(); closeSidebar(); closeSettings();
+  if (e.key !== 'Escape') return;
+
+  const isOpen = id => {
+    const el = document.getElementById(id);
+    return el && el.classList.contains('open');
+  };
+
+  // 1. Menus/dropdowns e custom selects são sempre a camada mais interna.
+  const openCs = document.querySelector('.cs.cs-open');
+  if (openCs) { openCs._csClose && openCs._csClose(); return; }
+  if (document.querySelector('.dropdown.open')) { closeAllDDs(true); return; }
+  // 2. Diálogos empilhados sobre um modal.
+  if (isOpen('dialog-overlay'))        { _dialogCancel();      return; }
+  if (isOpen('folder-picker-overlay')) { closeFolderPicker();  return; }
+  // 3. Modais.
+  if (isOpen('settings-overlay'))      { closeSettings();      return; }
+  if (isOpen('viewer-overlay'))        { closeViewer();        return; }
+  if (isOpen('overlay'))               { closeModal();         return; }
+  // 4. Drawer da sidebar no mobile.
+  closeSidebar();
+});
+
+// Cmd/Ctrl+A no escopo da lista seleciona todas as linhas VISÍVEIS (não o
+// banco inteiro), e ESC limpa a seleção quando não há overlay aberto.
+// Regra 327. Atalho desativado enquanto o foco está em campo de texto.
+document.addEventListener('keydown', e => {
+  const el = document.activeElement;
+  const typing = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'
+                        || el.tagName === 'SELECT' || el.isContentEditable);
+  if (typing) return;
+  if (document.querySelector('.overlay.open')) return;
+
+  if ((e.metaKey || e.ctrlKey) && (e.key === 'a' || e.key === 'A')) {
+    const visible = _getVisibleFiles();
+    if (!visible.length) return;
+    e.preventDefault();
+    visible.forEach(f => selected.add(f.id));
+    renderFiles(); syncBulkBar(); syncHeaderCheck();
+    showToast(`${visible.length} selecionado${visible.length !== 1 ? 's' : ''}`, '');
+    return;
+  }
+  if (e.key === 'Escape' && selected.size) {
+    selected.clear();
+    renderFiles(); syncBulkBar(); syncHeaderCheck();
   }
 });
 
@@ -1912,6 +2494,10 @@ function viewError(id) {
   switchViewerTab('text');
   document.getElementById('viewer-overlay').classList.add('open');
   document.body.style.overflow = 'hidden';
+  // Mesmo tratamento de foco do viewer normal: sem isto o Tab continuava
+  // percorrendo a página por trás do overlay e o foco nunca voltava.
+  attachFocusTrap('viewer-overlay');
+  setTimeout(() => document.querySelector('#viewer-overlay .modal-close')?.focus(), 50);
 }
 
 // Download the original audio/video file tied to a transcription.
@@ -2362,14 +2948,20 @@ function switchTab(tab) {
 // Roving-tabindex keyboard handler for tablists (ArrowLeft/Right/Home/End).
 // Group = 'main' for the page tabs, 'modal' for the upload modal tabs.
 const _TABLIST_GROUPS = {
-  main:  ['main-tab-transcriptions', 'main-tab-media', 'main-tab-social', 'main-tab-advanced'],
+  main:  ['main-tab-transcriptions', 'main-tab-public', 'main-tab-media',
+          'main-tab-social', 'main-tab-advanced'],
   modal: ['tab-file', 'tab-url', 'tab-batch'],
   'adv-type':    ['adv-type-video', 'adv-type-audio'],
   'adv-urlmode': ['adv-urlmode-single', 'adv-urlmode-batch'],
 };
 function onTablistKey(e, group) {
-  const ids = _TABLIST_GROUPS[group];
-  if (!ids) return;
+  // Abas escondidas (ex.: "Transcrições Públicas" para um funcionário) saem da
+  // rotação — as setas nunca param num botão invisível.
+  const ids = (_TABLIST_GROUPS[group] || []).filter(id => {
+    const el = document.getElementById(id);
+    return el && el.offsetParent !== null;
+  });
+  if (!ids.length) return;
   const idx = ids.indexOf(e.currentTarget.id);
   let next = -1;
   if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (idx + 1) % ids.length;
@@ -2385,18 +2977,38 @@ function onTablistKey(e, group) {
 
 const _MAIN_TAB_TITLES = {
   transcriptions: 'Transcrições',
+  public:         'Transcrições Públicas',
   media:          'Biblioteca de Mídia',
   social:         'Redes Sociais',
   advanced:       'Download Avançado',
 };
 
+// "public" não tem card próprio: é a MESMA tabela de transcrições com o escopo
+// trocado. Reusar em vez de duplicar mantém as duas abas com exatamente as
+// mesmas funções (filtros, lote, renomear, respiros, ZIP...) para sempre.
+const _MAIN_TAB_CARDS = {
+  transcriptions: 'card-transcriptions',
+  public:         'card-transcriptions',
+  media:          'card-media',
+  social:         'card-social',
+  advanced:       'card-advanced',
+};
+
+// Abas restritas ao admin. A equipe não tem o botão, mas quem chama
+// switchMainTab por outro caminho cai aqui e volta para a aba inicial.
+const _ADMIN_ONLY_TABS = new Set(['public', 'social']);
+
 function switchMainTab(tab) {
-  ['transcriptions', 'media', 'social', 'advanced'].forEach(t => {
+  if (_ADMIN_ONLY_TABS.has(tab) && !_me.is_admin) tab = 'transcriptions';
+  const activeCard = _MAIN_TAB_CARDS[tab] || 'card-transcriptions';
+  ['transcriptions', 'public', 'media', 'social', 'advanced'].forEach(t => {
     const pressed = t === tab;
     const btn = document.getElementById('main-tab-' + t);
-    btn.setAttribute('aria-selected', pressed);
-    btn.setAttribute('aria-pressed', pressed); // legacy — kept for any callers reading it
-    btn.tabIndex = pressed ? 0 : -1;
+    if (btn) {
+      btn.setAttribute('aria-selected', pressed);
+      btn.setAttribute('aria-pressed', pressed); // legacy — kept for any callers reading it
+      btn.tabIndex = pressed ? 0 : -1;
+    }
     // Título do header acompanha a seção ativa
     if (pressed) {
       const title = document.getElementById('page-title');
@@ -2405,8 +3017,23 @@ function switchMainTab(tab) {
     // Use '' to clear the inline style so the element falls back to its CSS
     // rule. #card-transcriptions is .card-with-sidebar (display:grid on desktop,
     // block on mobile via media query); forcing 'block' would break the grid.
-    document.getElementById('card-' + t).style.display = pressed ? '' : 'none';
+    const card = document.getElementById(_MAIN_TAB_CARDS[t]);
+    if (card) card.style.display = (_MAIN_TAB_CARDS[t] === activeCard) ? '' : 'none';
   });
+
+  // Troca o escopo e repinta. Um funcionário fica sempre em 'all' — o servidor
+  // já mandou apenas o acervo público para ele.
+  if (_me.is_admin && (tab === 'transcriptions' || tab === 'public')) {
+    _view.visibility = (tab === 'public') ? 'public' : 'all';
+    selected.clear();          // seleção de uma aba não vaza para a outra
+    _syncPublicBanner(tab === 'public' ? 'admin-public' : 'none');
+    renderFiles();
+    syncBulkBar();
+    _renderStatusFilterCounts();
+    renderFolderTree();
+    loadStats();
+  }
+
   if (tab === 'media') {
     loadMedia();
   } else {
@@ -2417,7 +3044,10 @@ function switchMainTab(tab) {
       _mediaRefreshIntervals.clear();
     }
   }
-  if (tab === 'social' && typeof initSocialTab === 'function') initSocialTab();
+  // Redes Sociais é só do admin (o botão está escondido para a equipe, mas o
+  // guard aqui evita que uma navegação por teclado ou um link antigo dispare as
+  // chamadas — que o servidor recusaria com 403 e sujariam a tela de erro).
+  if (tab === 'social' && _me.is_admin && typeof initSocialTab === 'function') initSocialTab();
 }
 
 function formatBytes(bytes, decimals = 1) {
@@ -3428,18 +4058,74 @@ const TOAST_ICONS = {
   '':      `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`,
 };
 
+const TOAST_MAX        = 3;      // no máximo 3 simultâneos (regra 224)
+const TOAST_MS         = 4500;   // piso de 4s
+const TOAST_MS_ERROR   = 9000;   // erro precisa de tempo para ler e agir
+
+function _dismissToast(t) {
+  if (!t || t.dataset.leaving) return;
+  t.dataset.leaving = '1';
+  t.classList.add('leaving');
+  // 300ms cobre a animação de saída; o fallback garante a remoção mesmo
+  // sob prefers-reduced-motion (onde animationend dispara em ~1ms).
+  t.addEventListener('animationend', () => t.remove(), { once: true });
+  setTimeout(() => t.remove(), 400);
+}
+
 function showToast(msg, type = '') {
   const area = document.getElementById('toast-area');
-  const t    = document.createElement('div');
+  if (!area) return;
+
+  // Fila: nunca mais de 3 na tela — o mais antigo sai para o novo entrar.
+  const live = Array.from(area.children).filter(el => !el.dataset.leaving);
+  for (const old of live.slice(0, Math.max(0, live.length - (TOAST_MAX - 1)))) {
+    _dismissToast(old);
+  }
+
+  const t = document.createElement('div');
   t.className = 'toast' + (type ? ' ' + type : '');
-  t.setAttribute('role', 'alert');
+  // Sem role="alert" aqui: #toast-area já é aria-live="polite". Aninhar
+  // role="alert" dentro dela faz o leitor de tela anunciar duas vezes.
   // Icon is trusted static HTML; msg may contain user/backend strings, so use textContent.
   t.innerHTML = TOAST_ICONS[type] || TOAST_ICONS[''];
   const span = document.createElement('span');
   span.textContent = msg;
   t.appendChild(span);
+
+  // Fechar explícito: mensagem que desaparece sozinha não é caminho único.
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'toast-close';
+  close.setAttribute('aria-label', 'Fechar notificação');
+  close.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" '
+    + 'stroke="currentColor" stroke-width="2.5" stroke-linecap="round" '
+    + 'aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/>'
+    + '<line x1="6" y1="6" x2="18" y2="18"/></svg>';
+  close.onclick = () => _dismissToast(t);
+  t.appendChild(close);
+
   area.appendChild(t);
-  setTimeout(() => t.remove(), 4500);
+
+  // Timer pausável: hover e foco congelam a contagem (regra 223) — sem isso
+  // o usuário perde a mensagem justo quando tenta lê-la.
+  const total = type === 'error' ? TOAST_MS_ERROR : TOAST_MS;
+  let remaining = total, startedAt = Date.now(), timer = null;
+  const resume = () => {
+    if (t.dataset.leaving) return;
+    startedAt = Date.now();
+    timer = setTimeout(() => _dismissToast(t), remaining);
+  };
+  const pause = () => {
+    if (timer === null) return;
+    clearTimeout(timer); timer = null;
+    remaining = Math.max(600, remaining - (Date.now() - startedAt));
+  };
+  t.addEventListener('mouseenter', pause);
+  t.addEventListener('mouseleave', resume);
+  t.addEventListener('focusin',  pause);
+  t.addEventListener('focusout', resume);
+  resume();
+  return t;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -3992,6 +4678,15 @@ enhanceSelects();
                   Baixar Original para o PC
                 </div>
                 <div class="dd-sep"></div>` : ''}
+                ${_me.is_admin ? (f.visibility === 'public' ? `
+                <div class="dd-item" role="menuitem" tabindex="-1" onclick="setMediaVisibility('${jsAttr(f.file)}', false)">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                  Tornar privado
+                </div>` : `
+                <div class="dd-item" role="menuitem" tabindex="-1" onclick="setMediaVisibility('${jsAttr(f.file)}', true)">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                  Publicar na Área Pública
+                </div>`) + '<div class="dd-sep"></div>' : ''}
                 <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="deleteMediaFile('${jsAttr(f.file)}')">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
                   Excluir Mídia Hospedada
@@ -4004,10 +4699,12 @@ enhanceSelects();
               ${f.on_disk ? _fileTypeIconHtml(f.file) : ''}
               <div class="file-name">${esc(f.name)}</div>
             </div>
+            ${(f.visibility === 'public' && _me.is_admin) ? `
+            <div class="file-tags"><span class="ftag ftag-public" title="Visível para os funcionários na Área Pública"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>Pública</span></div>` : ''}
           </td>
-          <td class="col-date"><div class="file-date">${esc(f.date)}</div></td>
-          <td class="col-dur"><div class="file-dur">${formatBytes(f.size_bytes)}</div></td>
-          <td class="col-status">${renderStatus(f.status, null)}</td>
+          <td class="col-date" data-label="Enviado"><div class="file-date">${esc(f.date)}</div></td>
+          <td class="col-dur" data-label="Duração"><div class="file-dur">${formatBytes(f.size_bytes)}</div></td>
+          <td class="col-status" data-label="Status">${renderStatus(f.status, null)}</td>
           <td class="col-actions">
             <div class="action-wrap">
               <button type="button" class="dots-btn" aria-label="Ações" aria-haspopup="menu" aria-expanded="false" onclick="toggleDD('media-${jsAttr(f.id)}',this,event)">
@@ -4149,6 +4846,52 @@ enhanceSelects();
           'success');
       } catch {
         showToast('Erro ao excluir.', 'error');
+      }
+    }
+
+    // ── Publicar/despublicar mídia (Biblioteca de Mídia) ──
+    // Um vídeo baixado que nunca foi transcrito só existe em media.json, então
+    // precisa de um caminho próprio para entrar na Área Pública. O endpoint é o
+    // mesmo e atualiza os dois catálogos.
+    async function setMediaVisibility(filename, makePublic) {
+      closeAllDDs();
+      const f = _mediaFiles.find(m => m.file === filename);
+      if (makePublic) {
+        const ok = await showConfirm({
+          title: 'Publicar para os funcionários',
+          message: `"${f?.name || filename}" passa a aparecer na Área Pública — quem tem a `
+                 + 'senha de acesso vai poder assistir e baixar este arquivo.',
+          confirmText: 'Publicar',
+        });
+        if (!ok) return;
+      }
+      try {
+        await _applyVisibility([filename], makePublic);
+        await loadMedia();
+        showToast(makePublic ? 'Publicado na Área Pública.' : 'Mídia voltou a ser privada.', 'success');
+      } catch (e) {
+        showToast(e.message, 'error');
+      }
+    }
+
+    async function publishSelectedMedia(makePublic) {
+      const ids = _selectedVisibleMediaIds();
+      if (!ids.length) { showToast('Selecione ao menos um arquivo.', 'error'); return; }
+      const ok = await showConfirm({
+        title: makePublic ? 'Publicar para os funcionários' : 'Tornar privado',
+        message: makePublic
+          ? `${ids.length} arquivo(s) passam a ficar disponíveis para quem tem a senha de acesso.`
+          : `${ids.length} arquivo(s) saem da Área Pública e voltam a ser visíveis só para você.`,
+        confirmText: makePublic ? 'Publicar' : 'Tornar privado',
+      });
+      if (!ok) return;
+      try {
+        const res = await _applyVisibility(ids, makePublic);
+        _mediaSelected.clear();
+        await loadMedia();
+        showToast(`${res.changed} ${res.changed === 1 ? 'item atualizado' : 'itens atualizados'}.`, 'success');
+      } catch (e) {
+        showToast(e.message, 'error');
       }
     }
 
@@ -4296,6 +5039,24 @@ let _socialProfile = {};       // perfil da coleta (avatar, seguidores…)
 let _socialSel = new Set();    // códigos selecionados (clique / Cmd / Shift)
 let _socialLastIdx = null;     // último índice clicado (para range com Shift)
 let _socialMode = 'profile';
+let _socialNetwork = 'instagram';
+
+const _SOCIAL_NET_UI = {
+  instagram: { label: 'Perfil do Instagram', ph: '@perfil', period: true },
+  tiktok:    { label: 'Perfil do TikTok',    ph: '@perfil', period: false },
+  youtube:   { label: 'Canal do YouTube',    ph: '@canal ou URL do canal', period: false },
+  facebook:  { label: 'Página do Facebook',  ph: 'nome da página ou URL', period: false },
+};
+function setSocialNetwork(net) {
+  _socialNetwork = net;
+  const ui = _SOCIAL_NET_UI[net] || _SOCIAL_NET_UI.instagram;
+  const lbl = document.getElementById('social-username-label');
+  const inp = document.getElementById('social-username');
+  const period = document.getElementById('social-period-field');
+  if (lbl) lbl.textContent = ui.label;
+  if (inp) inp.placeholder = ui.ph;
+  if (period) period.style.display = ui.period ? '' : 'none';   // período só no Instagram
+}
 let _socialDatasetId = null;
 let _socialInited = false;
 
@@ -4328,7 +5089,7 @@ function renderSocialHeader() {
       <div class="social-prof-stats">${stats}</div>
     </div>
     <div class="social-prof-actions">
-      <button type="button" class="btn" id="social-export-btn" onclick="socialExport()">${sic('dl')} Exportar Excel</button>
+      <button type="button" class="btn btn-soft" id="social-export-btn" onclick="socialExport()">${sic('dl')} Exportar Excel</button>
     </div>`;
 }
 
@@ -4440,6 +5201,7 @@ async function startSocialCollect() {
     fd.append('username', username);
     fd.append('max_posts', document.getElementById('social-max').value || '60');
     fd.append('since_days', document.getElementById('social-period').value || '');
+    fd.append('platform', (document.getElementById('social-network') || {}).value || 'instagram');
     url = '/api/social/collect';
   } else {
     const urls = document.getElementById('social-urls').value.trim();
@@ -4550,9 +5312,12 @@ function renderSocialGrid() {
   const rows = socialFilteredRows();
   grid.innerHTML = rows.length ? rows.map(r => {
     const isSel = _socialSel.has(r.code);
+    const plat = r.platform || 'Instagram';
     const thumb = r.thumb_url ? socialThumbUrl(r.thumb_url) : '';
     const vid = (r.media_urls || []).find(m => m.type === 'video');
+    const canPreview = vid && plat === 'Instagram';   // só o IG entrega URL de CDN direta p/ o proxy
     const typeLabel = r.type === 'Reel/Vídeo' ? 'Reel' : r.type;
+    const platBadge = plat !== 'Instagram' ? `<span class="social-badge social-plat">${esc(plat)}</span>` : '';
     const typeBadge = `<span class="social-badge">${sic(_SOCIAL_TYPE_ICON[r.type] || 'image')} ${esc(typeLabel)}</span>`;
     const durBadge = r.duration_s ? `<span class="social-dur">${sic('play')} ${socialFmtDur(r.duration_s)}</span>` : '';
     const erBadge = (r.er !== null && r.er !== undefined)
@@ -4563,15 +5328,15 @@ function renderSocialGrid() {
          tabindex="0" onclick="socialCardClick('${cd}', event)"
          onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();socialCardClick('${cd}',event)}">
       <span class="social-check" aria-hidden="true">${sic('check')}</span>
-      <div class="social-thumb" ${vid ? `data-video="${esc(socialMediaUrl(vid.url))}"` : ''} onmouseenter="socialHover(this,true)" onmouseleave="socialHover(this,false)">
-        ${thumb ? `<img loading="lazy" src="${thumb}" alt="">` : '<div class="social-noimg">sem capa</div>'}
-        <div class="social-badges">${typeBadge}</div>
+      <div class="social-thumb" ${canPreview ? `data-video="${esc(socialMediaUrl(vid.url))}"` : ''} onmouseenter="socialHover(this,true)" onmouseleave="socialHover(this,false)">
+        ${thumb ? `<img loading="lazy" src="${thumb}" alt="" onerror="this.style.display='none'">` : '<div class="social-noimg">sem capa</div>'}
+        <div class="social-badges">${platBadge}${typeBadge}</div>
         ${erBadge}
         ${durBadge}
         <div class="social-thumb-actions">
           <button type="button" class="social-iconbtn" title="Baixar mídia" aria-label="Baixar mídia" onclick="event.stopPropagation();socialQuickDownload('${cd}', this)">${sic('dl')}</button>
           <button type="button" class="social-iconbtn" title="Baixar métricas (CSV)" aria-label="Baixar métricas" onclick="event.stopPropagation();socialDownloadMetrics('${cd}')">${sic('chart')}</button>
-          <a class="social-iconbtn" href="${esc(r.url)}" target="_blank" rel="noopener" title="Abrir no Instagram" aria-label="Abrir no Instagram" onclick="event.stopPropagation()">${sic('ext')}</a>
+          <a class="social-iconbtn" href="${esc(r.url)}" target="_blank" rel="noopener" title="Abrir na rede" aria-label="Abrir na rede" onclick="event.stopPropagation()">${sic('ext')}</a>
         </div>
       </div>
       <div class="social-meta">
@@ -4625,6 +5390,9 @@ function socialClearSel() {
 function updateSocialActionbar() {
   const n = _socialSel.size;
   document.getElementById('social-actionbar').style.display = n ? '' : 'none';
+  // A barra é position:fixed — sem reservar espaço no fim do mosaico ela cobre
+  // a última fileira de cards (e a linha com foco de teclado). Regras 340/573.
+  document.getElementById('social-analytics')?.classList.toggle('com-actionbar', !!n);
   const byCode = new Map(_socialRows.map(r => [r.code, r]));
   let vids = 0;
   _socialSel.forEach(c => { const r = byCode.get(c); if (r && r.is_video) vids++; });
@@ -4853,3 +5621,29 @@ async function socialExport() {
     btn.disabled = false; btn.textContent = old;
   }
 }
+
+// ═══ Tema claro/escuro (padrão claro; escolha salva no localStorage) ═══
+const _THEME_ICONS = {
+  // Em tema CLARO mostramos a lua (clique = ir pro escuro)
+  light: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>',
+  // Em tema ESCURO mostramos o sol (clique = voltar pro claro)
+  dark: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>',
+};
+function _currentTheme() {
+  return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+}
+function _updateThemeIcon() {
+  const icon = document.getElementById('theme-icon');
+  if (icon) icon.innerHTML = _THEME_ICONS[_currentTheme()];
+  const btn = document.getElementById('theme-toggle');
+  if (btn) btn.title = _currentTheme() === 'dark' ? 'Mudar para tema claro' : 'Mudar para tema escuro';
+}
+function toggleTheme() {
+  const next = _currentTheme() === 'dark' ? 'light' : 'dark';
+  if (next === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+  else document.documentElement.removeAttribute('data-theme');   // sem atributo = claro (padrão)
+  try { localStorage.setItem('whisper-theme', next); } catch (e) {}
+  _updateThemeIcon();
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _updateThemeIcon);
+else _updateThemeIcon();
