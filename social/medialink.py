@@ -240,12 +240,22 @@ def download(url, dest=None, audio_only=False, cookies_browser=None,
         opts["postprocessors"] = [{"key": "FFmpegExtractAudio",
                                    "preferredcodec": "mp3"}]
     opts["ignoreerrors"] = False        # queremos ver a falha p/ cair no plano B
+    # TikTok em particular quebra de forma intermitente ("Unable to extract
+    # universal data for rehydration" — yt-dlp/yt-dlp#17332, em aberto): a
+    # mesma URL falha numa tentativa e baixa normalmente na próxima, sem
+    # nenhuma mudança de nossa parte. Repetir algumas vezes antes de cair
+    # pro plano B (navegador) resolve a maioria desses casos.
+    import time
     info = None
-    try:
-        with _ydl(opts, cookies_browser) as ydl:
-            info = ydl.extract_info(url, download=True)
-    except Exception:
-        info = None
+    for attempt in range(3):
+        try:
+            with _ydl(opts, cookies_browser) as ydl:
+                info = ydl.extract_info(url, download=True)
+            break
+        except Exception:
+            info = None
+            if attempt < 2:
+                time.sleep(2 * (attempt + 1))
 
     # o arquivo final pode ser o mesclado (vídeo+áudio), com nome diferente
     final = None
