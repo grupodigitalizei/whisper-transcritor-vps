@@ -40,10 +40,17 @@ try:
         SOCIAL_MULTI_OK = True
     except Exception:
         SOCIAL_MULTI_OK = False
+    # Coleta de comentários de um post (mesma interceptação da coleta de feed).
+    try:
+        from social import comments as social_comments
+        SOCIAL_COMMENTS_OK = True
+    except Exception:
+        SOCIAL_COMMENTS_OK = False
 except Exception:
     SOCIAL_OK = False
     SOCIAL_EXCEL_OK = False
     SOCIAL_MULTI_OK = False
+    SOCIAL_COMMENTS_OK = False
 import auth
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form, BackgroundTasks, Request
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, StreamingResponse, \
@@ -1708,6 +1715,60 @@ async def api_social_export(ds_id: str = Form(...), sort: str = Form("er")):
             "csv": os.path.basename(res.get("csv", "")) if res.get("csv") else None,
             "thumbs": social_excel.thumbs_supported()}
 
+@app.post("/api/social/comments")
+async def api_social_comments(
+    ds_id:        str = Form(...),
+    codes:        str = Form(...),      # JSON com os códigos selecionados
+    max_comments: int = Form(300),      # teto por post
+):
+    """Baixa os comentários dos posts selecionados (roda em background).
+
+    Abre cada post no ego lite e lê as respostas de comentário que a própria
+    rede busca — mesma técnica da coleta de feed. Gera um CSV (+ JSON) em
+    EXPORT_DIR, baixável por /api/social/export-file/."""
+    _require_social()
+    if not SOCIAL_COMMENTS_OK:
+        raise HTTPException(500, "Coleta de comentários indisponível (falha ao importar social/comments.py).")
+    if not social_collector.ego_available():
+        raise HTTPException(400, "ego lite não encontrado — instale-o para coletar comentários.")
+    try:
+        code_list = [str(c) for c in (json.loads(codes) or [])]
+    except (json.JSONDecodeError, ValueError):
+        raise HTTPException(400, "lista de seleção inválida")
+    if not code_list:
+        raise HTTPException(400, "Nenhum post selecionado.")
+    if len(code_list) > 25:
+        raise HTTPException(400, "Selecione no máximo 25 posts por vez (cada post abre o navegador).")
+    max_comments = max(10, min(int(max_comments), 5000))
+
+    try:
+        ds = social_core.load_dataset(social_core.dataset_path(ds_id))
+    except FileNotFoundError:
+        raise HTTPException(404, "coleta não encontrada")
+    by_code = {r["code"]: r for r in ds["rows"] if r.get("code")}
+    posts = [by_code[c] for c in code_list if c in by_code]
+    if not posts:
+        raise HTTPException(400, "Os posts selecionados não estão nesta coleta.")
+
+    def _task(job, log):
+        def on_post(i, total, code):
+            job["progress"] = {"done": i - 1, "target": total}
+            log(f"Lendo comentários de {code} ({i}/{total})…")
+
+        def on_progress(n, msg=None):
+            if n is not None:
+                job["progress"] = dict(job.get("progress") or {}, comments=n)
+            elif msg:
+                log(msg)
+
+        res = social_comments.collect_for_posts(
+            posts, max_comments=max_comments, on_progress=on_progress,
+            on_post=on_post, log=log)
+        log(f"{res['count']} comentário(s) de {res['posts']} post(s).")
+        return res
+
+    return {"job_id": social_jobs.start("comments", _task)}
+
 @app.get("/api/social/export-file/{name}")
 async def api_social_export_file(name: str):
     """Baixa uma planilha já gerada (só arquivos dentro de EXPORT_DIR)."""
@@ -1716,7 +1777,9 @@ async def api_social_export_file(name: str):
     path = os.path.join(social_core.EXPORT_DIR, safe)
     if not os.path.isfile(path):
         raise HTTPException(404, "arquivo não encontrado")
-    media = "text/csv" if safe.lower().endswith(".csv") else \
+    low = safe.lower()
+    media = "text/csv" if low.endswith(".csv") else \
+            "application/json" if low.endswith(".json") else \
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     return FileResponse(path, media_type=media, filename=safe)
 

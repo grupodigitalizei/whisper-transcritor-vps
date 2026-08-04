@@ -5346,6 +5346,7 @@ function renderSocialGrid() {
         <div class="social-thumb-actions">
           <button type="button" class="social-iconbtn" title="Baixar mídia" aria-label="Baixar mídia" onclick="event.stopPropagation();socialQuickDownload('${cd}', this)">${sic('dl')}</button>
           <button type="button" class="social-iconbtn" title="Baixar métricas (CSV)" aria-label="Baixar métricas" onclick="event.stopPropagation();socialDownloadMetrics('${cd}')">${sic('chart')}</button>
+          <button type="button" class="social-iconbtn" title="Baixar comentários (CSV)" aria-label="Baixar comentários" onclick="event.stopPropagation();socialFetchComments('${cd}', this)">${sic('comment')}</button>
           <a class="social-iconbtn" href="${esc(r.url)}" target="_blank" rel="noopener" title="Abrir na rede" aria-label="Abrir na rede" onclick="event.stopPropagation()">${sic('ext')}</a>
         </div>
       </div>
@@ -5458,6 +5459,51 @@ function socialDownloadMetrics(code) {
   showToast(`Métricas de ${rows.length} post(s) baixadas (CSV).`, 'success');
 }
 
+// ── Download de COMENTÁRIOS — um post (ícone no card) ou os selecionados ──
+// Cada post é aberto no ego lite e os comentários vêm da própria rede; por isso
+// leva alguns segundos por post e o backend limita a 25 por vez.
+async function socialFetchComments(code, btnEl) {
+  if (!_socialDatasetId) { showToast('Carregue uma coleta primeiro.', 'error'); return; }
+  const codes = code ? [code] : [..._socialSel];
+  if (!codes.length) { showToast('Selecione ao menos um item.', 'error'); return; }
+  if (codes.length > 25) { showToast('Selecione no máximo 25 posts por vez.', 'error'); return; }
+
+  const barBtn = document.getElementById('social-btn-comments');
+  const prog = document.getElementById('social-progress');
+  if (btnEl) btnEl.classList.add('loading');
+  if (!code) { barBtn.disabled = true; barBtn.classList.add('loading'); }
+  prog.style.display = '';
+  prog.textContent = `Lendo comentários de ${codes.length} post(s)… isso abre o navegador, pode demorar.`;
+  const done = () => {
+    if (btnEl) btnEl.classList.remove('loading');
+    barBtn.disabled = false; barBtn.classList.remove('loading');
+    prog.style.display = 'none';
+  };
+
+  const fd = new FormData();
+  fd.append('ds_id', _socialDatasetId);
+  fd.append('codes', JSON.stringify(codes));
+  try {
+    const r = await fetch('/api/social/comments', { method: 'POST', body: fd });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || 'falha');
+    pollSocialJob(j.job_id, (res) => {
+      done();
+      if (!res) return;   // job falhou — toast já mostrado
+      const a = document.createElement('a');
+      a.href = '/api/social/export-file/' + encodeURIComponent(res.csv);
+      a.download = res.csv; document.body.appendChild(a); a.click(); a.remove();
+      const falhas = (res.failures || []).length;
+      showToast(`${res.count} comentário(s) de ${res.posts} post(s) baixados (CSV)` +
+                (falhas ? ` · ${falhas} post(s) sem comentários lidos` : '') + '.',
+                falhas ? 'error' : 'success');
+    });
+  } catch (e) {
+    done();
+    showToast('Erro: ' + e.message, 'error');
+  }
+}
+
 // ── Download rápido de UM post (ícone ⬇ no card), com spinner no botão ──
 async function socialQuickDownload(code, btnEl) {
   if (btnEl) btnEl.classList.add('loading');
@@ -5505,7 +5551,8 @@ async function submitSocialFetch(mode) {
   fd.append('language', document.getElementById('social-language').value);
   const im = document.getElementById('social-include-meta');
   fd.append('include_meta', im && im.checked ? 'true' : 'false');
-  const btns = ['social-btn-metrics', 'social-btn-download', 'social-btn-transcribe'].map(id => document.getElementById(id));
+  const btns = ['social-btn-metrics', 'social-btn-comments', 'social-btn-download',
+                'social-btn-transcribe'].map(id => document.getElementById(id));
   const clicked = document.getElementById(mode === 'transcribe' ? 'social-btn-transcribe' : 'social-btn-download');
   btns.forEach(b => b.disabled = true);
   clicked.classList.add('loading');
