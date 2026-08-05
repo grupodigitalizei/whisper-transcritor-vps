@@ -21,3 +21,6 @@ venv/
 
 # Artefatos de auditoria de UI (screenshots gerados)
 auditoria-render/
+
+# Downloads pontuais (vídeos/áudios baixados manualmente) — nunca vão pro repositório
+downloads/
