@@ -22,8 +22,8 @@ Transcritor de áudio e vídeo **100% local** usando [OpenAI Whisper](https://gi
 ## 🖥️ Requisitos
 
 - macOS (testado) ou Linux
-- Python 3.10+ (o `yt-dlp-ejs`, usado para baixar do YouTube, exige 3.10+)
-- ffmpeg
+- Python 3.10+ (o `yt-dlp-ejs`, usado para baixar do YouTube, exige 3.10+) — `./install.sh` detecta e instala isso automaticamente
+- ffmpeg — `./install.sh` também cuida disso
 - **[ego lite](https://lite.ego.app)** — opcional, necessário **apenas** para a aba **Redes Sociais** (Instagram). Instale e faça login no instagram.com uma vez.
 
 ---
@@ -37,27 +37,55 @@ git clone https://github.com/grupodigitalizei/whisper-transcritor.git
 cd whisper-transcritor
 ```
 
-### 2. Instalar o ffmpeg
+### 2. Rodar o script de instalação
 
-**macOS:**
 ```bash
-brew install ffmpeg
+./install.sh
 ```
 
-**Linux (Ubuntu/Debian):**
+Esse script resolve sozinho as fricções mais comuns de instalar isso num
+ambiente novo (servidor Linux limpo, outro Mac, etc.):
+
+- detecta o Python disponível e **prefere a faixa 3.10–3.12** quando existir
+  mais de uma versão instalada — Python muito recente (3.13+) costuma ficar
+  meses sem build pronto (wheel) de torch/openai-whisper no PyPI, e o
+  `pip install` trava tentando compilar do zero ou falha;
+- instala o **ffmpeg** (via `apt`/`brew`, conforme o sistema) se não estiver presente;
+- em Debian/Ubuntu, instala o pacote **`python3.X-venv`** — o módulo `venv` é
+  separado do Python principal nessas distros, e sem ele `python3 -m venv`
+  cria um ambiente quebrado, sem `pip` (erro "ensurepip is not available");
+- cria o `venv/` (recriando se um anterior estiver quebrado) e instala tudo
+  de `requirements.txt` lá dentro.
+
+É seguro rodar mais de uma vez — pula o que já está instalado.
+
+Se seu sistema tiver mais de um Python instalado e quiser forçar um específico:
 ```bash
+PYTHON_BIN=python3.11 ./install.sh
+```
+
+<details>
+<summary><strong>Instalação manual</strong> (se preferir não usar o script, ou estiver num sistema que ele não cobre)</summary>
+
+**Ffmpeg:**
+```bash
+# macOS
+brew install ffmpeg
+
+# Linux (Ubuntu/Debian)
 sudo apt update && sudo apt install ffmpeg
 ```
 
-### 3. Criar o ambiente virtual e instalar as dependências
-
+**Ambiente virtual e dependências:**
 ```bash
 python3 -m venv venv
 ./venv/bin/python -m pip install -r requirements.txt
 ```
 
 > **Nota:** Na primeira execução, o Whisper vai baixar o modelo escolhido automaticamente. O modelo `turbo` (~800 MB) é o recomendado.
->
+
+</details>
+
 > **Importante:** use sempre `./venv/bin/python`, nunca o `python3` do sistema. O
 > `yt-dlp` (usado para baixar do YouTube) precisa de atualizações frequentes —
 > rodando fora do venv, o botão "Atualizar agora" da tela inicial tenta
@@ -65,7 +93,7 @@ python3 -m venv venv
 > Como rede de segurança, o app **se re-executa automaticamente** no Python do
 > venv se for iniciado com o interpretador errado.
 
-### 4. (Opcional) Miniaturas no Excel da aba Redes Sociais
+### 3. (Opcional) Miniaturas no Excel da aba Redes Sociais
 
 A exportação para Excel funciona sem nada extra (`openpyxl` já está no
 `requirements.txt`). Para incluir as **miniaturas dos posts** dentro do `.xlsx`,
