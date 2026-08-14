@@ -23,6 +23,9 @@ except ImportError:
 # Módulos de redes sociais (coleta via ego-lite + download HD). Portados do
 # sistema IGSorter do usuário — bem mais robustos que o yt-dlp para Instagram.
 import gdrive  # download de arquivos públicos do Google Drive (trata token de confirmação)
+import download_engine  # cascata de motores: se um jeito de baixar falha, tenta o próximo
+import subscriptions    # assinaturas: acompanha canais/perfis e traz o que sai de novo
+import compressor       # compressão de vídeo/áudio via FFmpeg (hardware no Apple Silicon)
 
 try:
     from social import core as social_core, collector as social_collector, \
@@ -280,6 +283,41 @@ def _cleanup_task_files(prefix: str) -> None:
     except OSError:
         pass
 
+def _ydl_download_with_fallback(url: str, ydl_opts: dict, task_id: str,
+                                filename: str, phase_label: str = "download"):
+    """Baixa via yt-dlp passando pela cascata de motores (download_engine).
+
+    O motor 1 é exatamente `ydl_opts` como o chamador montou — o caminho que já
+    funciona hoje não muda. Os seguintes só entram se o anterior levantar. Um
+    cancelamento do usuário (_UserCancelled) sobe na hora, sem virar retry.
+
+    Retorna o `info` do yt-dlp (mesmo contrato de ydl.extract_info) e registra na
+    task qual motor venceu, para a UI e o histórico mostrarem.
+    """
+    def _on_engine(engine, idx, total):
+        if idx == 1:
+            return       # motor padrão: não poluir a UI com "tentativa 1/N"
+        _set_task(task_id, phase=phase_label,
+                  engine=engine.name,
+                  engine_note=f"Plano B: {engine.label} ({idx}/{total})")
+
+    def _on_before_retry():
+        # Remove .part/parciais da tentativa anterior, senão o yt-dlp tentaria
+        # retomar bytes inválidos no motor seguinte.
+        _cleanup_task_files(os.path.splitext(filename)[0])
+
+    info, engine_name = download_engine.run_with_fallback(
+        url, ydl_opts, yt_dlp.YoutubeDL,
+        # Cancelar e pausar são decisões do usuário, não falha de motor: sobem
+        # na hora em vez de disparar a próxima tentativa da cascata.
+        abort_types=(_UserCancelled, _DownloadPaused),
+        on_engine=_on_engine,
+        on_before_retry=_on_before_retry,
+        log=lambda msg: print(f"[download_engine] {msg}"),
+    )
+    _set_task(task_id, engine=engine_name)
+    return info
+
 # ── Model cache ────────────────────────────────────────────────
 _models: dict = {}
 _models_lock  = threading.Lock()
@@ -369,6 +407,15 @@ class _UserCancelled(Exception):
     Distinct exception type so generic try/except blocks don't swallow it
     silently — we want it to propagate to the runner, which marks the task
     as 'cancelled' instead of 'error'."""
+    pass
+
+class _DownloadPaused(Exception):
+    """Irmã de _UserCancelled, para PAUSAR em vez de cancelar.
+
+    A diferença que importa está no tratamento: no cancelamento os arquivos
+    parciais são apagados; na pausa eles são preservados de propósito — são
+    justamente os .part que permitem retomar de onde parou em vez de baixar
+    tudo de novo."""
     pass
 
 _orig_tqdm_init = tqdm.tqdm.__init__
@@ -888,7 +935,14 @@ async def _lifespan(_app: FastAPI):
             print(f"    {label:<28} {pw}")
         print("  Troque quando quiser em Configurações → Área Pública.")
         print("═" * 62 + "\n")
+    # Assinaturas: liga o módulo ao pipeline e sobe o poller de fundo.
+    try:
+        _configure_subscriptions()
+        subscriptions.start_poller()
+    except Exception as exc:   # noqa: BLE001 — nunca impedir o app de subir
+        print(f"[subs] poller não iniciou: {exc}")
     yield
+    subscriptions.stop_poller()
 
 app = FastAPI(title="Whisper Transcritor", lifespan=_lifespan)
 
@@ -2058,6 +2112,55 @@ async def api_progress(task_id: str, request: Request):
     _require_file_access(task.get("filename") or "", request)
     return task
 
+@app.post("/api/transcribe/{task_id}/pause")
+async def api_pause_download(task_id: str, request: Request):
+    """Pausa um download em andamento, preservando o que já baixou.
+
+    Só vale para download: uma transcrição é uma única chamada ao Whisper que
+    não dá para interromper no meio (só cancelar, descartando o resultado).
+    """
+    if not re.fullmatch(r"[0-9a-fA-F-]{8,40}", task_id or ""):
+        raise HTTPException(400, "task_id inválido")
+    task = _get_task(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    _require_file_access(task.get("filename") or "", request)
+    if task.get("status") not in ("queued", "processing"):
+        raise HTTPException(400, "Só dá para pausar um download em andamento.")
+    if task.get("phase") not in ("download", None, ""):
+        raise HTTPException(400, "Esta etapa não pode ser pausada — só o download.")
+    _set_task(task_id, pause_requested=True)
+    return {"ok": True, "message": "Pausando… o download para no próximo trecho."}
+
+@app.post("/api/transcribe/{task_id}/resume")
+async def api_resume_download(task_id: str, request: Request):
+    """Retoma um download pausado, reaproveitando os arquivos parciais."""
+    if not re.fullmatch(r"[0-9a-fA-F-]{8,40}", task_id or ""):
+        raise HTTPException(400, "task_id inválido")
+    task = _get_task(task_id)
+    if not task:
+        # Depois de um restart do servidor a task some da memória (e com ela os
+        # dados do resume). O item continua no acervo: reenviar pela tela de
+        # download recomeça — os .part ainda no disco são reaproveitados.
+        raise HTTPException(404, "Este download não está mais na fila do servidor. "
+                                 "Envie a URL de novo — o que já baixou é reaproveitado.")
+    _require_file_access(task.get("filename") or "", request)
+    if task.get("status") != "paused":
+        raise HTTPException(400, "Este download não está pausado.")
+    args = task.get("resume_args") or {}
+    if not args.get("url"):
+        raise HTTPException(400, "Não há dados suficientes para retomar este download.")
+
+    _set_task(task_id, status="queued", phase="download", pause_requested=False,
+              name="Retomando download…")
+    threading.Thread(target=_run_download_only,
+                     args=(task_id, args["url"], args.get("media_type", "video"),
+                           args.get("quality", "best")),
+                     kwargs={k: v for k, v in args.items()
+                             if k not in ("url", "media_type", "quality")},
+                     daemon=True).start()
+    return {"ok": True, "message": "Retomando de onde parou."}
+
 @app.delete("/api/transcribe/{task_id}")
 async def api_cancel_transcribe(task_id: str, request: Request):
     """Request cancellation of any task (download-only, URL→transcribe, or
@@ -2696,8 +2799,7 @@ def _kickoff_url_transcription(url: str, model: str, language: str, task: str,
     def _run_download_and_transcribe():
         try:
             with _download_sem:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=True)
+                info = _ydl_download_with_fallback(url, ydl_opts, task_id, filename)
             # Swap the URL-slug placeholder for the real media title so the UI
             # shows "Minha Aula" instead of "watch?v=abc123". The original link
             # stays saved in media.json (the `url` field) for re-use.
@@ -2948,9 +3050,16 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str,
                        auto_subs: bool = False, thumbnail: bool = False,
                        metadata: bool = False, audio_lang: str | None = None,
                        existing_filename: str | None = None,
-                       visibility: str = VIS_PRIVATE):
+                       visibility: str = VIS_PRIVATE,
+                       container: str = "auto", audio_format: str = "mp3"):
     is_video = media_type == "video"
-    ext = "mp4" if is_video else "mp3"
+    # Formato de saída escolhido pelo usuário. "auto"/"original" preservam o
+    # comportamento histórico (mp4 para vídeo, mp3 para áudio); os demais
+    # trocam o container do remux. Já chegam validados pelo endpoint.
+    if is_video:
+        ext = "mp4" if container in ("auto", "original") else container
+    else:
+        ext = "mp3" if audio_format in ("auto", "original") else audio_format
     # Retry: reaproveita o MESMO filename — atualiza o item já existente em
     # media.json em vez de criar um novo.
     filename = existing_filename or f"{task_id[:8]}_download.{ext}"
@@ -2964,8 +3073,11 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str,
                   name="Download Media", filename=filename)
 
         def _hook(d):
-            if (_get_task(task_id) or {}).get('cancel_requested'):
+            _t = _get_task(task_id)
+            if _t.get('cancel_requested'):
                 raise _UserCancelled('cancel requested during download')
+            if _t.get('pause_requested'):
+                raise _DownloadPaused('pause requested during download')
             if d['status'] == 'downloading':
                 pct_str = d.get('_percent_str', '')
                 try:
@@ -2988,13 +3100,20 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str,
             height_caps = {'1080p': 1080, '720p': 720, '480p': 480}
             video_sel = f'bestvideo[height<={height_caps[quality]}]' if quality in height_caps else 'bestvideo'
             ydl_opts['format'] = f'{video_sel}+{audio_sel}/best'
-            ydl_opts['merge_output_format'] = 'mp4'
-            ydl_opts['outtmpl'] = upload_path.replace('.mp4', '.%(ext)s')
+            ydl_opts['outtmpl'] = upload_path.replace(f'.{ext}', '.%(ext)s')
+            if container == 'original':
+                # Sem remux: fica no container que o site entregou. Evita uma
+                # recodificação/remux desnecessária quando não faz diferença.
+                ydl_opts['format'] = 'best'
+            else:
+                ydl_opts['merge_output_format'] = ext
         else:
             worst_sel = f'worstaudio[language^={audio_lang}]/worstaudio' if audio_lang else 'worstaudio'
             ydl_opts['format'] = worst_sel if quality == 'worst' else audio_sel
-            ydl_opts['outtmpl'] = upload_path.replace('.mp3', '.%(ext)s')
-            ydl_opts['postprocessors'] = [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3'}]
+            ydl_opts['outtmpl'] = upload_path.replace(f'.{ext}', '.%(ext)s')
+            if audio_format != 'original':
+                ydl_opts['postprocessors'] = [
+                    {'key': 'FFmpegExtractAudio', 'preferredcodec': ext}]
 
         # Extras opcionais (Download Avançado): legendas, thumbnail e metadados
         # embutidos no próprio arquivo — mantém o modelo de "1 arquivo por item"
@@ -3016,10 +3135,10 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str,
                 {'key': 'FFmpegMetadata', 'add_metadata': True, 'add_chapters': True})
 
         with _download_sem:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                title = info.get('title', 'Media Secundária')
-            
+            info = _ydl_download_with_fallback(url, ydl_opts, task_id, filename)
+            title = (info or {}).get('title', 'Media Secundária')
+
+
         actual_path = upload_path if os.path.exists(upload_path) else upload_path.replace(f'.{ext}', '') + f'.{ext}'
         if not os.path.exists(actual_path):
             # Busca pelo stem do FILENAME (não do task_id) — outtmpl foi construído
@@ -3034,6 +3153,19 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str,
         _save_media(filename, f"{title}.{ext}", url=url, is_transcribed=False, status="done")
         _set_task(task_id, status="done", progress=100, phase="done", phase_progress=100,
                   name=f"{title}.{ext}", filename=filename)
+    except _DownloadPaused:
+        # NÃO limpa os parciais: são eles que permitem retomar de onde parou.
+        # Guarda os argumentos para o resume poder recriar o mesmo download.
+        _save_media(filename, "Download pausado", url=url, is_transcribed=False, status="paused")
+        _set_task(task_id, status="paused", phase="paused",
+                  name="Download pausado", filename=filename,
+                  pause_requested=False,
+                  resume_args={"url": url, "media_type": media_type, "quality": quality,
+                               "subtitles": subtitles, "sub_langs": sub_langs,
+                               "auto_subs": auto_subs, "thumbnail": thumbnail,
+                               "metadata": metadata, "audio_lang": audio_lang,
+                               "existing_filename": filename, "visibility": visibility,
+                               "container": container, "audio_format": audio_format})
     except _UserCancelled:
         _cleanup_task_files(os.path.splitext(filename)[0])   # remove partial/.part downloads (finding #5)
         _save_media(filename, "Download cancelado", url=url, is_transcribed=False, status="cancelled")
@@ -3100,6 +3232,19 @@ async def api_yt_download_only(
 # adiciona a expansão de playlist e o repasse das opções extras.
 _ADVANCED_MAX_PLAYLIST_ITEMS = 100
 
+# Formatos de saída oferecidos no Download Avançado. Allowlist explícita: o
+# valor vai para o merge_output_format/preferredcodec do yt-dlp, então não pode
+# ser string livre vinda do formulário.
+_VALID_CONTAINERS    = {"auto", "mp4", "mkv", "webm", "original"}
+_VALID_AUDIO_FORMATS = {"auto", "mp3", "m4a", "wav", "opus", "original"}
+
+def _validate_output_format(container: str, audio_format: str) -> tuple[str, str]:
+    if container not in _VALID_CONTAINERS:
+        raise HTTPException(400, f"Formato de vídeo inválido: {container!r}")
+    if audio_format not in _VALID_AUDIO_FORMATS:
+        raise HTTPException(400, f"Formato de áudio inválido: {audio_format!r}")
+    return container, audio_format
+
 def _resolve_playlist_urls(url: str) -> tuple[list[str], str | None]:
     """extract_flat (sem baixar nada) para listar os vídeos de uma playlist/canal.
     Retorna (urls, playlist_title). Se a URL não for uma playlist, retorna [url]."""
@@ -3157,9 +3302,12 @@ async def api_download_advanced(
     thumbnail:  str = Form("false"),
     metadata:   str = Form("false"),
     audio_lang: str = Form(""),
+    container:    str = Form("auto"),   # mp4/mkv/webm/original — só vídeo
+    audio_format: str = Form("auto"),   # mp3/m4a/wav/opus/original — só áudio
 ):
     if not YT_DLP_OK:
         raise HTTPException(400, "yt-dlp não instalado.")
+    container, audio_format = _validate_output_format(container, audio_format)
 
     # Junta a URL única (modo normal) e/ou a lista em lote — dedup preservando
     # ordem, pra colagens acidentalmente duplicadas não disparar 2x.
@@ -3204,6 +3352,7 @@ async def api_download_advanced(
         auto_subs=auto_subs == "true", thumbnail=thumbnail == "true",
         metadata=metadata == "true", audio_lang=(audio_lang or "").strip() or None,
         visibility=_visibility_for_new(request),
+        container=container, audio_format=audio_format,
     )
     task_ids: list[str | None] = []
     for u in final_urls:
@@ -3620,6 +3769,313 @@ async def api_rename(filename: str, request: Request, new_name: str = Form(...))
     if not updated:
         raise HTTPException(404, "Arquivo não encontrado em histórico nem mídia")
     return {"ok": True, "name": new_name}
+
+# ── Compressão de mídia ────────────────────────────────────────
+# Vídeo em qualidade máxima come disco rápido — a faxina por idade existe por
+# isso. Comprimir preserva o material: em vez de apagar um vídeo de 2 GB, ele
+# vira 300 MB e continua assistível. No Apple Silicon a codificação roda no
+# chip de mídia (videotoolbox), então é rápida e não briga com o Whisper pela CPU.
+
+def _compress_update_catalogs(old_file: str, new_file: str, new_size: int) -> None:
+    """Reflete nos catálogos o arquivo que acabou de ser comprimido.
+
+    Compressão pode trocar o container (.mkv → .mp4), e aí o nome do arquivo
+    muda. Sem atualizar media.json/history.json, o item apontaria para um
+    arquivo que não existe mais.
+    """
+    if old_file == new_file:
+        with _media_lock:
+            media = _load_media()
+            for m in media:
+                if m.get("file") == old_file:
+                    m["size_bytes"] = new_size
+            _atomic_write_json(MEDIA_FILE, media)
+        return
+
+    with _media_lock:
+        media = _load_media()
+        for m in media:
+            if m.get("file") == old_file:
+                m["file"] = new_file
+                m["size_bytes"] = new_size
+                stem, ext = os.path.splitext(m.get("name") or "")
+                if stem:
+                    m["name"] = stem + os.path.splitext(new_file)[1]
+        _atomic_write_json(MEDIA_FILE, media)
+    with _history_lock:
+        history = _load_history()
+        touched = False
+        for h in history:
+            if h.get("file") == old_file:
+                h["file"] = new_file
+                touched = True
+        if touched:
+            _atomic_write_json(HISTORY_FILE, history)
+
+def _run_compression(task_id: str, filename: str, preset: str,
+                     replace: bool, prefer_hevc: bool) -> None:
+    path = os.path.join(UPLOAD_DIR, filename)
+    try:
+        _set_task(task_id, status="processing", progress=0, phase="compress",
+                  phase_progress=0, name=f"Comprimindo {filename}", filename=filename)
+
+        result = compressor.compress(
+            path, preset, replace=replace, prefer_hevc=prefer_hevc,
+            on_progress=lambda pct: _set_task(task_id, progress=pct,
+                                              phase="compress", phase_progress=pct),
+            is_cancelled=lambda: bool(_get_task(task_id).get("cancel_requested")),
+        )
+
+        if result.get("skipped"):
+            # Não é erro: o arquivo simplesmente não valia a pena comprimir.
+            _set_task(task_id, status="done", progress=100, phase="done",
+                      phase_progress=100, filename=filename,
+                      skipped=True, message=result.get("reason") or "nada a fazer")
+            return
+
+        new_file = result["file"]
+        _compress_update_catalogs(filename, new_file, result["new_bytes"])
+        _set_task(task_id, status="done", progress=100, phase="done",
+                  phase_progress=100, filename=new_file,
+                  saved_bytes=result["saved_bytes"], saved_pct=result["saved_pct"],
+                  old_bytes=result["old_bytes"], new_bytes=result["new_bytes"],
+                  message=f"{result['saved_pct']}% menor")
+    except compressor.CompressCancelled:
+        _set_task(task_id, status="cancelled", progress=0, phase="cancelled",
+                  filename=filename, name="Compressão cancelada")
+    except Exception as e:   # noqa: BLE001
+        _set_task(task_id, status="error", progress=0, phase="error",
+                  filename=filename, error=str(e))
+
+@app.get("/api/compress/capabilities")
+async def api_compress_capabilities(request: Request):
+    _role_of(request)
+    caps = compressor.capabilities()
+    return {**caps,
+            "presets": [{"id": p, "label": compressor.PRESET_LABEL[p]}
+                        for p in compressor.PRESETS]}
+
+@app.get("/api/compress/plan/{filename}")
+async def api_compress_plan(filename: str, request: Request, preset: str = "medio"):
+    """Estimativa: quanto o arquivo encolheria, sem comprimir nada."""
+    filename = _safe_filename(filename)
+    _require_file_access(filename, request)
+    if preset not in compressor.PRESETS:
+        raise HTTPException(400, "Preset inválido")
+    path = os.path.join(UPLOAD_DIR, filename)
+    if not os.path.exists(path):
+        raise HTTPException(404, "Arquivo não encontrado")
+    try:
+        return compressor.plan(path, preset)
+    except compressor.CompressError as e:
+        raise HTTPException(400, str(e))
+
+@app.post("/api/compress")
+async def api_compress(request: Request, files: str = Form(...),
+                       preset: str = Form("medio"),
+                       replace: str = Form("true"),
+                       prefer_hevc: str = Form("false")):
+    """Comprime um ou mais arquivos (lista separada por vírgula).
+
+    Admin-only: reescreve arquivos do acervo — inclusive itens privados — e é
+    irreversível para quem só tinha aquela cópia.
+    """
+    _require_admin(request)
+    if not compressor.capabilities()["available"]:
+        raise HTTPException(400, "FFmpeg não está instalado nesta máquina.")
+    if preset not in compressor.PRESETS:
+        raise HTTPException(400, "Preset inválido")
+
+    requested = [_safe_filename(f.strip()) for f in (files or "").split(",") if f.strip()]
+    if not requested:
+        raise HTTPException(400, "Nenhum arquivo informado")
+
+    started = []
+    for filename in requested:
+        path = os.path.join(UPLOAD_DIR, filename)
+        if not os.path.exists(path) or compressor.media_kind(path) == "other":
+            continue
+        task_id = str(uuid.uuid4())
+        _set_task(task_id, status="queued", progress=0, phase="compress",
+                  name=f"Comprimindo {filename}", filename=filename)
+        threading.Thread(
+            target=_run_compression,
+            args=(task_id, filename, preset, replace == "true", prefer_hevc == "true"),
+            daemon=True).start()
+        started.append({"file": filename, "task_id": task_id})
+
+    if not started:
+        raise HTTPException(400, "Nenhum arquivo compatível para compressão")
+    return {"ok": True, "started": started, "count": len(started)}
+
+# ── Assinaturas (acompanhar canais/perfis) ─────────────────────
+# Assina um canal/perfil e o poller traz o que sai de novo, já mandando para o
+# mesmo pipeline de download/transcrição do app. A lógica de agendamento e o
+# store vivem em subscriptions.py; aqui ficam só os "descobridores" (que sabem
+# listar o conteúdo de cada rede) e as rotas.
+
+def _discover_youtube(target: str, limit: int) -> list:
+    """Lista os vídeos mais recentes de um canal/playlist do YouTube.
+
+    Usa o yt-dlp em modo raso (extract_flat): não baixa nada, só lê a listagem —
+    é barato e aceita qualquer forma de URL (@handle, /channel/, /c/, playlist).
+    """
+    if not YT_DLP_OK:
+        raise RuntimeError("yt-dlp não está instalado")
+    url = target
+    # Numa URL de canal, a raiz devolve as abas (vídeos, shorts, lives) como
+    # playlists aninhadas. Apontar direto para /videos dá a lista limpa.
+    if re.search(r"youtube\.com/(@[\w.-]+|c/[\w.-]+|channel/[\w-]+|user/[\w.-]+)/?$", url):
+        url = url.rstrip("/") + "/videos"
+    opts = {
+        "quiet": True, "nocolor": True, "skip_download": True,
+        "extract_flat": "in_playlist", "playlistend": max(1, int(limit)),
+    }
+    if _host_allows_cookies(url):
+        opts["cookiesfrombrowser"] = ("chrome",)
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+    out = []
+    for e in (info or {}).get("entries") or []:
+        if not isinstance(e, dict):
+            continue
+        vid = e.get("id")
+        if not vid:
+            continue
+        out.append({
+            "id": f"youtube:{vid}",
+            "url": e.get("url") or f"https://www.youtube.com/watch?v={vid}",
+            "title": e.get("title") or vid,
+        })
+    return out
+
+def _make_social_discover(platform: str):
+    """Descobridor para IG/TikTok/Facebook: reusa a interceptação do ego-lite,
+    que é o que já funciona para essas redes (o yt-dlp não dá conta)."""
+    def _discover(target: str, limit: int) -> list:
+        if not (SOCIAL_OK and SOCIAL_MULTI_OK):
+            raise RuntimeError("módulo de redes sociais indisponível")
+        res = social_intercept.collect(platform, target, max_items=max(1, int(limit)))
+        ds = social_core.load_dataset(res["path"])
+        out = []
+        for r in ds.get("rows") or []:
+            code, link = r.get("code"), r.get("url")
+            if not code or not link:
+                continue
+            out.append({"id": f"{platform}:{code}", "url": link,
+                        "title": (r.get("caption") or "")[:80] or code})
+        return out
+    return _discover
+
+def _subs_kickoff_transcribe(url: str, model: str, language: str, folder: str) -> None:
+    """Ponte para o pipeline de transcrição (o poller não conhece as rotas)."""
+    url = _validate_media_url(url)
+    _validate_transcribe_params(model, "transcribe")
+    _kickoff_url_transcription(url, model, language, "transcribe", False, folder,
+                               visibility=VIS_PRIVATE)
+
+def _subs_kickoff_download(url: str, folder: str) -> None:
+    url = _validate_media_url(url)
+    _kickoff_download_only(url, "video", "best", visibility=VIS_PRIVATE)
+
+def _configure_subscriptions() -> None:
+    subscriptions.configure(
+        discover={
+            "youtube":   _discover_youtube,
+            "instagram": _make_social_discover("instagram"),
+            "tiktok":    _make_social_discover("tiktok"),
+            "facebook":  _make_social_discover("facebook"),
+        },
+        kickoff_transcribe=_subs_kickoff_transcribe,
+        kickoff_download=_subs_kickoff_download,
+        log=lambda msg: print(msg),
+    )
+
+@app.get("/api/subscriptions")
+async def api_subscriptions(request: Request):
+    """Assinaturas são ferramenta de administração: baixam sozinhas para o
+    acervo e usam a sessão logada do ego-lite. Só o admin."""
+    _require_admin(request)
+    return {"subscriptions": subscriptions.list_subscriptions(),
+            "platforms": list(subscriptions.PLATFORMS),
+            "poller_running": True}
+
+@app.post("/api/subscriptions")
+async def api_subscriptions_add(request: Request,
+                                platform: str = Form(...),
+                                target: str = Form(...),
+                                label: str = Form(""),
+                                auto_transcribe: str = Form("true"),
+                                model: str = Form("turbo"),
+                                language: str = Form("pt"),
+                                folder: str = Form(""),
+                                interval_hours: float = Form(6.0),
+                                max_per_check: int = Form(5),
+                                initial_import: int = Form(0)):
+    _require_admin(request)
+    if auto_transcribe == "true":
+        _validate_transcribe_params(model, "transcribe")
+    folder = _validate_folder_name(folder) if folder else ""
+    _ensure_folder_tree(folder)
+    try:
+        return subscriptions.add_subscription(
+            platform, target, label=label,
+            auto_transcribe=(auto_transcribe == "true"),
+            model=model, language=language, folder=folder,
+            interval_hours=interval_hours, max_per_check=max_per_check,
+            initial_import=initial_import)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+@app.post("/api/subscriptions/{sub_id}")
+async def api_subscriptions_update(request: Request, sub_id: str,
+                                   label: str = Form(None),
+                                   auto_transcribe: str = Form(None),
+                                   model: str = Form(None),
+                                   language: str = Form(None),
+                                   folder: str = Form(None),
+                                   interval_hours: str = Form(None),
+                                   max_per_check: str = Form(None),
+                                   paused: str = Form(None)):
+    _require_admin(request)
+    changes: dict = {}
+    if label is not None:           changes["label"] = label
+    if auto_transcribe is not None: changes["auto_transcribe"] = auto_transcribe == "true"
+    if model is not None:
+        _validate_transcribe_params(model, "transcribe")
+        changes["model"] = model
+    if language is not None:        changes["language"] = language
+    if folder is not None:
+        changes["folder"] = _validate_folder_name(folder) if folder else ""
+        _ensure_folder_tree(changes["folder"])
+    if interval_hours is not None:  changes["interval_hours"] = float(interval_hours)
+    if max_per_check is not None:   changes["max_per_check"] = int(max_per_check)
+    if paused is not None:          changes["paused"] = paused == "true"
+    try:
+        return subscriptions.update_subscription(sub_id, **changes)
+    except KeyError:
+        raise HTTPException(404, "Assinatura não encontrada")
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, str(e))
+
+@app.delete("/api/subscriptions/{sub_id}")
+async def api_subscriptions_delete(request: Request, sub_id: str):
+    _require_admin(request)
+    if not subscriptions.remove_subscription(sub_id):
+        raise HTTPException(404, "Assinatura não encontrada")
+    return {"ok": True}
+
+@app.post("/api/subscriptions/{sub_id}/check")
+async def api_subscriptions_check(request: Request, sub_id: str):
+    """Checa agora, sem esperar o intervalo. Roda em thread: a coleta pode
+    demorar (abre o navegador nas redes sociais) e não pode travar o request."""
+    _require_admin(request)
+    if not subscriptions._get(sub_id):
+        raise HTTPException(404, "Assinatura não encontrada")
+    threading.Thread(
+        target=lambda: subscriptions.check_subscription(sub_id, force=True),
+        daemon=True).start()
+    return {"ok": True, "message": "Checagem iniciada — o resultado aparece aqui em instantes."}
 
 # ── Entry point ────────────────────────────────────────────────
 def _reexec_into_venv_if_needed() -> None:

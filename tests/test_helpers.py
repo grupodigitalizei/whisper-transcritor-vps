@@ -181,3 +181,41 @@ def test_version_tuple_orders_correctly():
     assert app._version_tuple("2026.6.9") < app._version_tuple("2026.7.4")
     assert app._version_tuple("2026.7.4") < app._version_tuple("2027.1.1")
     assert not (app._version_tuple("2026.7.4") < app._version_tuple("2026.7.4"))
+
+
+# ── formatos de saída do Download Avançado ────────────────────────────────────
+@pytest.mark.parametrize("container,audio", [
+    ("auto", "auto"), ("mp4", "auto"), ("mkv", "auto"),
+    ("webm", "auto"), ("original", "original"), ("auto", "wav"),
+])
+def test_output_format_accepts_known_values(container, audio):
+    assert app._validate_output_format(container, audio) == (container, audio)
+
+
+@pytest.mark.parametrize("container,audio", [
+    ("exe", "auto"),            # container inventado
+    ("auto", "flac; rm -rf /"), # tentativa de injeção
+    ("../../etc", "auto"),
+    ("", "auto"),
+])
+def test_output_format_rejects_unknown_values(container, audio):
+    with pytest.raises(HTTPException):
+        app._validate_output_format(container, audio)
+
+
+# ── allowlist de modelo/tarefa da transcrição ────────────────────────────────
+def test_transcribe_params_accept_ui_models():
+    """Todo modelo oferecido na interface precisa passar na allowlist."""
+    for model in ("turbo", "large", "large-v3", "medium", "small", "base", "tiny"):
+        app._validate_transcribe_params(model, "transcribe")
+    app._validate_transcribe_params("turbo", "translate")
+
+
+@pytest.mark.parametrize("model,task", [
+    ("../../etc/passwd", "transcribe"),
+    ("modelo-que-nao-existe", "transcribe"),
+    ("turbo", "apagar-tudo"),
+])
+def test_transcribe_params_reject_junk(model, task):
+    with pytest.raises(HTTPException):
+        app._validate_transcribe_params(model, task)

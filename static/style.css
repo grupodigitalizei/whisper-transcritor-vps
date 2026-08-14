@@ -1980,3 +1980,36 @@
     /* Badge de plataforma no mosaico multi-rede (TikTok/YouTube/Facebook) */
     .social-badge.social-plat { background:rgba(255,255,255,.94); color:var(--slate-900);
       font-weight:800; letter-spacing:.01em; }
+
+/* ── Assinaturas ─────────────────────────────────────────────── */
+.subs-list { margin-top: 18px; display: flex; flex-direction: column; gap: 10px; }
+
+.subs-item {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 14px; padding: 14px 16px;
+  border: 1px solid var(--border); border-radius: 12px;
+  background: var(--surface);
+}
+.subs-item.is-paused { opacity: .62; }
+
+.subs-item-main  { min-width: 0; flex: 1; }
+.subs-item-title {
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  font-weight: 650; font-size: 14px; color: var(--text);
+}
+.subs-item-sub {
+  margin-top: 4px; font-size: 12px; color: var(--slate-500);
+  word-break: break-word;
+}
+.subs-item-status { margin-top: 6px; font-size: 12px; color: var(--slate-500); }
+.subs-item-status.success { color: var(--green, #16a34a); }
+.subs-item-status.error   { color: var(--red, #dc2626); }
+
+.subs-item-actions { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; }
+
+/* No celular a linha vira bloco: os botões não cabem ao lado do texto. */
+@media (max-width: 720px) {
+  .subs-item { flex-direction: column; }
+  .subs-item-actions { width: 100%; }
+  .subs-item-actions .btn { flex: 1; }
+}

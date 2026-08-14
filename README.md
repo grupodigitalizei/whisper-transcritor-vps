@@ -16,6 +16,41 @@ Transcritor de áudio e vídeo **100% local** usando [OpenAI Whisper](https://gi
 - 🔇 Filtro de vícios de linguagem ("né", "hmm", "ã...", etc.)
 - 🔗 Download por URL (YouTube, Vimeo, TikTok…) e **Google Drive** — cole o link de um arquivo público (`Qualquer pessoa com o link`) para baixar ou transcrever
 - 📱 **Aba Redes Sociais** — coleta reels/posts de perfis do Instagram via [ego lite](https://lite.ego.app) (sua sessão logada), mostra um mosaico 9:16 com métricas ricas (views, likes, comentários, **ER**), e deixa você selecionar o que **baixar** e **transcrever** em lote
+- 📡 **Assinaturas** — acompanhe um canal do YouTube ou perfil de Instagram/TikTok/Facebook: quando sair conteúdo novo, o sistema baixa e transcreve sozinho
+- 🗜️ **Compressão de vídeo/áudio** — reduz o tamanho dos arquivos do acervo mantendo o vídeo assistível (no Apple Silicon usa o chip de mídia: rápido e sem brigar com o Whisper pela CPU)
+- 🔁 **Fallback de download** — se um jeito de baixar falha, o sistema tenta outros automaticamente (resolve a maior parte das quebras do YouTube)
+- ⏸️ **Pausar e retomar** downloads longos, sem perder o que já baixou
+- 🎛️ **Formatos de saída** — MP4/MKV/WebM para vídeo, MP3/M4A/WAV/Opus para áudio
+
+---
+
+## 📡 Assinaturas
+
+Cadastre um canal/perfil na aba **Assinaturas** e o sistema passa a acompanhá-lo.
+
+Duas travas evitam surpresa desagradável:
+
+1. **A primeira checagem não baixa nada** por padrão. Assinar um canal com 800
+   vídeos e ver 800 downloads entrarem na fila seria desastroso — o que já
+   existe é apenas marcado como visto. Trazer os N mais recentes é uma escolha
+   explícita no cadastro.
+2. **Teto por checagem**: uma rajada de uploads não vira uma avalanche. O que
+   passar do teto fica para a checagem seguinte (nada se perde).
+
+O YouTube é consultado via yt-dlp (sem baixar nada, só a listagem); Instagram,
+TikTok e Facebook usam o ego lite — que precisa estar aberto e logado.
+
+---
+
+## 🗜️ Compressão
+
+Na **Biblioteca de Mídia**, selecione arquivos e clique em **Comprimir**. Três
+níveis (leve/médio/forte); o diálogo mostra a estimativa real antes de confirmar.
+
+- O original só é substituído **no fim**, e apenas se o resultado ficou menor.
+- Se o arquivo **já está compacto**, o sistema recusa — recodificar pioraria a
+  qualidade sem ganho de espaço.
+- Requer **ffmpeg** (o `./install.sh` já instala).
 
 ---
 

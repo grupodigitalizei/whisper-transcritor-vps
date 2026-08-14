@@ -1606,6 +1606,7 @@ const STATUS_MAP = {
   queued:     { label:'Aguardando',  cls:'queued'      },
   error:      { label:'Erro',        cls:'error'       },
   cancelled:  { label:'Cancelado',   cls:'queued'      },
+  paused:     { label:'Pausado',     cls:'queued'      },
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -1882,6 +1883,7 @@ const _PHASE_LABEL = {
   download:   'Baixando',
   transcribe: 'Transcrevendo',
   saving:     'Salvando',
+  compress:   'Comprimindo',
 };
 
 function renderStatus(status, f) {
@@ -1916,9 +1918,14 @@ function renderStatus(status, f) {
       eta = `<div class="row-eta">finalizando…</div>`;
     }
   }
+  // Plano B do download: avisa que o motor padrão falhou e outro está tentando,
+  // senão o usuário só veria o progresso voltar a zero sem explicação.
+  const engineNote = (f && status === 'processing' && f._engineNote)
+    ? `<div class="row-eta">${esc(f._engineNote)}</div>` : '';
+
   return `<span class="status-badge ${s.cls}" role="img" aria-label="${label}"${extra}>
     <span class="status-dot"></span>${label}${pctLabel}
-  </span>${eta}`;
+  </span>${eta}${engineNote}`;
 }
 
 // Signature used to decide whether a given row needs DOM work
@@ -1969,9 +1976,22 @@ function _buildRowInner(f) {
           </button>
           <div class="dropdown" id="dd-${esc(f.id)}" role="menu">
             ${(f.status === 'queued' || f.status === 'processing') ? `
+            ${(f._phase === 'download' && f.task_id) ? `
+            <div class="dd-item" role="menuitem" tabindex="-1" onclick="pauseDownload('${jsAttr(f.task_id)}')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+              Pausar download
+            </div>` : ''}
             <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="cancelTranscriptionById('${jsAttr(f.task_id || '')}')">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
               Cancelar transcrição
+            </div>` : f.status === 'paused' ? `
+            <div class="dd-item" role="menuitem" tabindex="-1" onclick="resumeDownload('${jsAttr(f.task_id || '')}', '${jsAttr(f.file)}')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              Retomar download
+            </div>
+            <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="deleteFile('${jsAttr(f.id)}')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+              Excluir
             </div>` : (f.status === 'error' || f.status === 'cancelled') ? `
             ${f.status === 'error' ? `
             <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="viewError('${jsAttr(f.id)}')">
@@ -2959,7 +2979,7 @@ function switchTab(tab) {
 // Group = 'main' for the page tabs, 'modal' for the upload modal tabs.
 const _TABLIST_GROUPS = {
   main:  ['main-tab-transcriptions', 'main-tab-public', 'main-tab-media',
-          'main-tab-social', 'main-tab-advanced'],
+          'main-tab-social', 'main-tab-subs', 'main-tab-advanced'],
   modal: ['tab-file', 'tab-url', 'tab-batch'],
   'adv-type':    ['adv-type-video', 'adv-type-audio'],
   'adv-urlmode': ['adv-urlmode-single', 'adv-urlmode-batch'],
@@ -2990,6 +3010,7 @@ const _MAIN_TAB_TITLES = {
   public:         'Transcrições Públicas',
   media:          'Biblioteca de Mídia',
   social:         'Redes Sociais',
+  subs:           'Assinaturas',
   advanced:       'Download Avançado',
 };
 
@@ -3001,12 +3022,13 @@ const _MAIN_TAB_CARDS = {
   public:         'card-transcriptions',
   media:          'card-media',
   social:         'card-social',
+  subs:           'card-subs',
   advanced:       'card-advanced',
 };
 
 // Abas restritas ao admin. A equipe não tem o botão, mas quem chama
 // switchMainTab por outro caminho cai aqui e volta para a aba inicial.
-const _ADMIN_ONLY_TABS = new Set(['public', 'social']);
+const _ADMIN_ONLY_TABS = new Set(['public', 'social', 'subs']);
 
 function switchMainTab(tab) {
   if (_ADMIN_ONLY_TABS.has(tab) && !_me.is_admin) tab = 'transcriptions';
@@ -3058,6 +3080,9 @@ function switchMainTab(tab) {
   // guard aqui evita que uma navegação por teclado ou um link antigo dispare as
   // chamadas — que o servidor recusaria com 403 e sujariam a tela de erro).
   if (tab === 'social' && _me.is_admin && typeof initSocialTab === 'function') initSocialTab();
+  // Assinaturas: idem — o botão está escondido para a equipe, e o guard evita
+  // disparar chamadas que o servidor recusaria com 403.
+  if (tab === 'subs' && _me.is_admin && typeof loadSubscriptions === 'function') loadSubscriptions();
 }
 
 function formatBytes(bytes, decimals = 1) {
@@ -3536,6 +3561,13 @@ function setAdvType(type) {
       : `<option value="best">Melhor Original</option>
          <option value="worst">Menor Espaço</option>`;
   }
+  // Formato de saída: cada tipo mostra só o seu seletor (container de vídeo
+  // não significa nada para áudio, e vice-versa).
+  const contWrap  = document.getElementById('adv-container-wrap');
+  const audioWrap = document.getElementById('adv-audioformat-wrap');
+  if (contWrap)  contWrap.style.display  = type === 'video' ? '' : 'none';
+  if (audioWrap) audioWrap.style.display = type === 'audio' ? '' : 'none';
+
   // Legendas só existem embutidas em vídeo — em áudio não há onde colocá-las,
   // então desliga e trava o toggle pra não gerar um .srt órfão no disco.
   const subsToggle = document.getElementById('adv-subs-toggle');
@@ -3668,6 +3700,12 @@ async function submitAdvancedDownload() {
     fd.append('metadata', metadata ? 'true' : 'false');
     fd.append('thumbnail', thumbnail ? 'true' : 'false');
     fd.append('audio_lang', audioLang);
+    // Formato de saída — só o relevante para o tipo escolhido; o outro segue
+    // em 'auto' e o backend ignora.
+    fd.append('container',
+      mediaType === 'video' ? (document.getElementById('adv-container')?.value || 'auto') : 'auto');
+    fd.append('audio_format',
+      mediaType === 'audio' ? (document.getElementById('adv-audio-format')?.value || 'auto') : 'auto');
     const res = await fetch('/api/download-advanced', { method: 'POST', body: fd });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { showToast(data.detail || 'Erro ao iniciar download.', 'error'); return; }
@@ -3847,7 +3885,7 @@ function pollProgressForRow(task_id, filename) {
       // Push phase + phase_progress + overall progress to the row state, so the
       // badge can show "Baixando 35%" → "Transcrevendo 67%" → "Salvando…".
       _updateRowStatus(filename, data.status, data.progress || 0,
-                       data.phase, data.phase_progress);
+                       data.phase, data.phase_progress, data.engine_note);
 
       if (data.status === 'done') {
         _stopPoll(task_id);
@@ -3876,6 +3914,13 @@ function pollProgressForRow(task_id, filename) {
         hideProgress();
         await loadHistory();
         if (typeof loadMedia === 'function') loadMedia();
+      } else if (data.status === 'paused') {
+        // Pausado não é terminal, mas continuar consultando seria desperdício:
+        // o polling volta quando o usuário clicar em Retomar.
+        _stopPoll(task_id);
+        hideProgress();
+        showToast('Download pausado. Ele continua de onde parou quando você retomar.', '');
+        if (typeof loadMedia === 'function') loadMedia();
       }
     } catch { /* ignore network blip */ }
   }, 800);
@@ -3888,7 +3933,7 @@ function _stopPoll(task_id) {
   }
 }
 
-function _updateRowStatus(filename, status, pct, phase, phasePct) {
+function _updateRowStatus(filename, status, pct, phase, phasePct, engineNote) {
   // Persist live progress + phase on the in-memory entry so EVERY render path
   // (this poll, the 5s ETA tick, and full re-renders) produces identical output —
   // the % and ETA stay visible the whole time instead of flickering.
@@ -3898,17 +3943,19 @@ function _updateRowStatus(filename, status, pct, phase, phasePct) {
     f._progress = pct;
     if (phase) f._phase = phase;
     if (typeof phasePct === 'number') f._phaseProgress = phasePct;
+    // Só aparece quando o download caiu num motor alternativo (plano B).
+    f._engineNote = engineNote || null;
   }
   const tr = document.querySelector(`#files-tbody tr[data-id="${CSS.escape(filename)}"]`);
   if (tr) {
     const cell = tr.querySelector('.col-status');
-    if (cell) cell.innerHTML = renderStatus(status, f || { _progress: pct, _phase: phase, _phaseProgress: phasePct });
+    if (cell) cell.innerHTML = renderStatus(status, f || { _progress: pct, _phase: phase, _phaseProgress: phasePct, _engineNote: engineNote });
   }
   // Mirror to the media library tab — download-only tasks live there.
   const mediaTr = document.querySelector(`#media-tbody tr[data-id="${CSS.escape(filename)}"]`);
   if (mediaTr) {
     const mcell = mediaTr.querySelector('.col-status');
-    if (mcell) mcell.innerHTML = renderStatus(status, f || { _progress: pct, _phase: phase, _phaseProgress: phasePct });
+    if (mcell) mcell.innerHTML = renderStatus(status, f || { _progress: pct, _phase: phase, _phaseProgress: phasePct, _engineNote: engineNote });
   }
 }
 
@@ -5704,3 +5751,311 @@ function toggleTheme() {
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _updateThemeIcon);
 else _updateThemeIcon();
+
+// ═══════════════════════════════════════════════════════════════
+//  ASSINATURAS — acompanha canais/perfis e traz o que sai de novo
+// ═══════════════════════════════════════════════════════════════
+// Toda esta seção é admin-only: o botão da aba tem .admin-only, switchMainTab
+// bloqueia por _ADMIN_ONLY_TABS e o servidor recusa com 403. Três camadas.
+let _subs = [];
+
+const _SUBS_PLATFORM_LABEL = {
+  youtube: 'YouTube', instagram: 'Instagram',
+  tiktok: 'TikTok',   facebook: 'Facebook',
+};
+
+function _subsMsg(text, kind) {
+  const el = document.getElementById('subs-msg');
+  if (!el) return;
+  el.textContent = text || '';
+  el.className = 'pub-msg' + (text ? ' is-' + kind : '');
+}
+
+function _subsFmtWhen(ts) {
+  if (!ts) return 'nunca';
+  const diff = (Date.now() / 1000) - ts;
+  if (diff < 60)    return 'agora há pouco';
+  if (diff < 3600)  return `há ${Math.floor(diff / 60)} min`;
+  if (diff < 86400) return `há ${Math.floor(diff / 3600)} h`;
+  return `há ${Math.floor(diff / 86400)} d`;
+}
+
+async function loadSubscriptions() {
+  try {
+    const r = await fetch('/api/subscriptions');
+    if (!r.ok) { _subsMsg('Não foi possível carregar as assinaturas.', 'error'); return; }
+    const d = await r.json();
+    _subs = d.subscriptions || [];
+    renderSubscriptions();
+  } catch {
+    _subsMsg('Erro de rede ao carregar as assinaturas.', 'error');
+  }
+}
+
+function renderSubscriptions() {
+  const box = document.getElementById('subs-list');
+  if (!box) return;
+  if (!_subs.length) {
+    box.innerHTML = `<p class="adv-dl-intro" style="margin-top:18px">
+      Nenhuma assinatura ainda. Cadastre um canal acima para o sistema
+      acompanhar sozinho.</p>`;
+    return;
+  }
+  box.innerHTML = _subs.map(s => {
+    const statusCls = s.last_status === 'erro' ? 'error'
+                    : s.paused ? '' : 'success';
+    return `
+    <div class="subs-item${s.paused ? ' is-paused' : ''}">
+      <div class="subs-item-main">
+        <div class="subs-item-title">
+          ${esc(s.label)}
+          <span class="social-badge">${esc(_SUBS_PLATFORM_LABEL[s.platform] || s.platform)}</span>
+          ${s.paused ? '<span class="social-badge">pausada</span>' : ''}
+          ${s.auto_transcribe ? '<span class="social-badge">transcreve</span>'
+                              : '<span class="social-badge">só baixa</span>'}
+        </div>
+        <div class="subs-item-sub">
+          ${esc(s.target)} · a cada ${esc(String(s.interval_hours))}h ·
+          até ${esc(String(s.max_per_check))} por checagem
+          ${s.folder ? ` · pasta ${esc(s.folder)}` : ''}
+        </div>
+        <div class="subs-item-status ${statusCls}">
+          Última checagem: ${esc(_subsFmtWhen(s.last_check_at))} — ${esc(s.last_message || '—')}
+          ${s.total_fetched ? ` · ${esc(String(s.total_fetched))} baixados no total` : ''}
+        </div>
+      </div>
+      <div class="subs-item-actions">
+        <button type="button" class="btn" onclick="checkSubscriptionNow('${jsAttr(s.id)}')"
+                title="Checar agora, sem esperar o intervalo">Checar agora</button>
+        <button type="button" class="btn" onclick="toggleSubscription('${jsAttr(s.id)}', ${s.paused ? 'false' : 'true'})">
+          ${s.paused ? 'Retomar' : 'Pausar'}
+        </button>
+        <button type="button" class="btn btn-danger" onclick="deleteSubscription('${jsAttr(s.id)}')"
+                aria-label="Excluir assinatura ${esc(s.label)}">Excluir</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function addSubscription() {
+  const platform = document.getElementById('subs-platform')?.value || 'youtube';
+  const target   = (document.getElementById('subs-target')?.value || '').trim();
+  if (!target) {
+    _subsMsg('Informe o canal ou perfil que você quer acompanhar.', 'error');
+    document.getElementById('subs-target')?.focus();
+    return;
+  }
+  const fd = new FormData();
+  fd.append('platform', platform);
+  fd.append('target', target);
+  fd.append('label',  document.getElementById('subs-label')?.value || '');
+  fd.append('folder', document.getElementById('subs-folder')?.value || '');
+  fd.append('model',    document.getElementById('subs-model')?.value || 'turbo');
+  fd.append('language', document.getElementById('subs-language')?.value || 'pt');
+  fd.append('interval_hours', document.getElementById('subs-interval')?.value || '6');
+  fd.append('max_per_check',  document.getElementById('subs-max')?.value || '5');
+  fd.append('initial_import', document.getElementById('subs-initial')?.value || '0');
+  fd.append('auto_transcribe', document.getElementById('subs-auto')?.value || 'true');
+
+  try {
+    const r = await fetch('/api/subscriptions', { method: 'POST', body: fd });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { _subsMsg(d.detail || 'Não foi possível assinar.', 'error'); return; }
+    document.getElementById('subs-target').value = '';
+    document.getElementById('subs-label').value  = '';
+    _subsMsg(`Assinatura criada. A primeira checagem acontece em instantes.`, 'ok');
+    showToast('Assinatura criada.', 'success');
+    await loadSubscriptions();
+  } catch {
+    _subsMsg('Erro de rede ao criar a assinatura.', 'error');
+  }
+}
+
+async function toggleSubscription(id, paused) {
+  const fd = new FormData();
+  fd.append('paused', paused ? 'true' : 'false');
+  try {
+    const r = await fetch(`/api/subscriptions/${encodeURIComponent(id)}`, { method: 'POST', body: fd });
+    if (!r.ok) { _subsMsg('Não foi possível alterar a assinatura.', 'error'); return; }
+    await loadSubscriptions();
+  } catch {
+    _subsMsg('Erro de rede.', 'error');
+  }
+}
+
+async function deleteSubscription(id) {
+  const sub = _subs.find(s => s.id === id);
+  const ok = await showConfirm({
+    title: 'Excluir assinatura',
+    message: `Parar de acompanhar "${sub?.label || id}"? O que já foi baixado continua no acervo.`,
+    confirmText: 'Excluir',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/api/subscriptions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!r.ok) { _subsMsg('Não foi possível excluir.', 'error'); return; }
+    showToast('Assinatura removida.', 'success');
+    await loadSubscriptions();
+  } catch {
+    _subsMsg('Erro de rede.', 'error');
+  }
+}
+
+async function checkSubscriptionNow(id) {
+  _subsMsg('Checando… nas redes sociais isso abre o ego lite e pode demorar um pouco.', 'ok');
+  try {
+    const r = await fetch(`/api/subscriptions/${encodeURIComponent(id)}/check`, { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { _subsMsg(d.detail || 'Não foi possível checar.', 'error'); return; }
+    // A checagem roda em thread no servidor: recarrega em alguns segundos para
+    // mostrar o resultado sem obrigar o usuário a atualizar a página.
+    setTimeout(loadSubscriptions, 4000);
+    setTimeout(loadSubscriptions, 12000);
+  } catch {
+    _subsMsg('Erro de rede.', 'error');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  COMPRESSÃO DE MÍDIA — reduz o tamanho sem perder o arquivo
+// ═══════════════════════════════════════════════════════════════
+// Admin-only: reescreve arquivos do acervo (inclusive privados) e, com
+// "substituir", é irreversível para quem só tinha aquela cópia.
+const _COMPRESS_PRESET_KEY = 'wt:compress-preset';
+
+async function compressSelectedMedia() {
+  const files = Array.from(_mediaSelected);
+  if (!files.length) return;
+
+  // Só faz sentido para áudio/vídeo — nunca some com a seleção em silêncio.
+  const alvos = files.filter(f => {
+    const t = _fileTypeFor(f);
+    return t === 'video' || t === 'audio';
+  });
+  if (!alvos.length) {
+    showToast('Nenhum arquivo de áudio ou vídeo na seleção.', 'error');
+    return;
+  }
+
+  let caps;
+  try {
+    caps = await (await fetch('/api/compress/capabilities')).json();
+  } catch {
+    showToast('Não foi possível falar com o servidor.', 'error');
+    return;
+  }
+  if (!caps.available) {
+    await showAlert({
+      title: 'FFmpeg não encontrado',
+      message: 'A compressão precisa do FFmpeg instalado nesta máquina. '
+             + 'Instale com "brew install ffmpeg" e tente de novo.',
+    });
+    return;
+  }
+
+  // Estimativa real do primeiro arquivo — dá ao usuário uma noção concreta do
+  // ganho antes de ele confirmar uma operação que reescreve arquivos.
+  let previa = '';
+  try {
+    const saved = localStorage.getItem(_COMPRESS_PRESET_KEY) || 'medio';
+    const r = await fetch(`/api/compress/plan/${encodeURIComponent(alvos[0])}?preset=${encodeURIComponent(saved)}`);
+    if (r.ok) {
+      const p = await r.json();
+      previa = p.worth_it
+        ? `\n\nExemplo (${alvos[0]}): ${_formatBytes(p.size_bytes)} → cerca de `
+          + `${_formatBytes(p.estimated_bytes)} (~${p.estimated_saving_pct}% menor).`
+        : `\n\nObservação: "${alvos[0]}" já está compacto e será mantido como está.`;
+    }
+  } catch { /* estimativa é um extra — segue sem ela */ }
+
+  const preset = await showChoice({
+    title: `Comprimir ${alvos.length} ${alvos.length === 1 ? 'arquivo' : 'arquivos'}`,
+    message: 'Escolha o nível. O arquivo original é substituído pelo comprimido — '
+           + 'quem já tinha baixado não é afetado, mas no servidor fica só a versão nova.'
+           + (caps.hw_h264 ? ' Este Mac comprime por hardware, então costuma ser rápido.' : '')
+           + previa,
+    choices: (caps.presets || []).map(p => ({
+      value: p.id,
+      label: p.label,
+      danger: p.id === 'forte',
+    })),
+  });
+  if (!preset) return;
+
+  try { localStorage.setItem(_COMPRESS_PRESET_KEY, preset); } catch {}
+
+  const fd = new FormData();
+  fd.append('files', alvos.join(','));
+  fd.append('preset', preset);
+  fd.append('replace', 'true');
+  try {
+    const r = await fetch('/api/compress', { method: 'POST', body: fd });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { showToast(d.detail || 'Não foi possível comprimir.', 'error'); return; }
+    showToast(`Comprimindo ${d.count} ${d.count === 1 ? 'arquivo' : 'arquivos'}…`, 'success');
+    // Cada arquivo tem sua própria task — acompanha todas.
+    (d.started || []).forEach(s => pollCompression(s.task_id, s.file));
+  } catch {
+    showToast('Erro de rede ao iniciar a compressão.', 'error');
+  }
+}
+
+function pollCompression(taskId, filename) {
+  if (_activePolls[taskId]) return;
+  _activePolls[taskId] = setInterval(async () => {
+    try {
+      const res = await fetch(`/api/progress/${taskId}`);
+      if (!res.ok) { _stopPoll(taskId); return; }
+      const d = await res.json();
+      _updateRowStatus(filename, d.status, d.progress || 0, d.phase, d.phase_progress);
+
+      if (d.status === 'done') {
+        _stopPoll(taskId);
+        if (d.skipped) {
+          showToast(`"${filename}": ${d.message || 'mantido como estava'}.`, '');
+        } else {
+          showToast(`"${filename}" comprimido — ${_formatBytes(d.saved_bytes || 0)} liberados `
+                  + `(${d.saved_pct}% menor).`, 'success');
+        }
+        if (typeof loadMedia === 'function') loadMedia();
+        loadStats();
+      } else if (d.status === 'error') {
+        _stopPoll(taskId);
+        showToast(`Falha ao comprimir "${filename}": ${d.error || 'erro'}`, 'error');
+        if (typeof loadMedia === 'function') loadMedia();
+      } else if (d.status === 'cancelled') {
+        _stopPoll(taskId);
+        if (typeof loadMedia === 'function') loadMedia();
+      }
+    } catch { /* blip de rede */ }
+  }, 900);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PAUSAR / RETOMAR DOWNLOAD
+// ═══════════════════════════════════════════════════════════════
+// Vale só para download: uma transcrição é uma única chamada ao Whisper que
+// não dá para interromper no meio — para ela existe o cancelar.
+async function pauseDownload(taskId) {
+  try {
+    const r = await fetch(`/api/transcribe/${encodeURIComponent(taskId)}/pause`, { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { showToast(d.detail || 'Não foi possível pausar.', 'error'); return; }
+    showToast(d.message || 'Pausando…', '');
+  } catch {
+    showToast('Erro de rede ao pausar.', 'error');
+  }
+}
+
+async function resumeDownload(taskId, filename) {
+  try {
+    const r = await fetch(`/api/transcribe/${encodeURIComponent(taskId)}/resume`, { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { showToast(d.detail || 'Não foi possível retomar.', 'error'); return; }
+    showToast(d.message || 'Retomando…', 'success');
+    if (filename) pollProgressForRow(taskId, filename);
+  } catch {
+    showToast('Erro de rede ao retomar.', 'error');
+  }
+}
