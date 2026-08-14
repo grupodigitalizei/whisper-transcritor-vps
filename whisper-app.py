@@ -308,7 +308,9 @@ def _ydl_download_with_fallback(url: str, ydl_opts: dict, task_id: str,
 
     info, engine_name = download_engine.run_with_fallback(
         url, ydl_opts, yt_dlp.YoutubeDL,
-        abort_types=(_UserCancelled,),
+        # Cancelar e pausar são decisões do usuário, não falha de motor: sobem
+        # na hora em vez de disparar a próxima tentativa da cascata.
+        abort_types=(_UserCancelled, _DownloadPaused),
         on_engine=_on_engine,
         on_before_retry=_on_before_retry,
         log=lambda msg: print(f"[download_engine] {msg}"),
@@ -405,6 +407,15 @@ class _UserCancelled(Exception):
     Distinct exception type so generic try/except blocks don't swallow it
     silently — we want it to propagate to the runner, which marks the task
     as 'cancelled' instead of 'error'."""
+    pass
+
+class _DownloadPaused(Exception):
+    """Irmã de _UserCancelled, para PAUSAR em vez de cancelar.
+
+    A diferença que importa está no tratamento: no cancelamento os arquivos
+    parciais são apagados; na pausa eles são preservados de propósito — são
+    justamente os .part que permitem retomar de onde parou em vez de baixar
+    tudo de novo."""
     pass
 
 _orig_tqdm_init = tqdm.tqdm.__init__
@@ -2101,6 +2112,55 @@ async def api_progress(task_id: str, request: Request):
     _require_file_access(task.get("filename") or "", request)
     return task
 
+@app.post("/api/transcribe/{task_id}/pause")
+async def api_pause_download(task_id: str, request: Request):
+    """Pausa um download em andamento, preservando o que já baixou.
+
+    Só vale para download: uma transcrição é uma única chamada ao Whisper que
+    não dá para interromper no meio (só cancelar, descartando o resultado).
+    """
+    if not re.fullmatch(r"[0-9a-fA-F-]{8,40}", task_id or ""):
+        raise HTTPException(400, "task_id inválido")
+    task = _get_task(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    _require_file_access(task.get("filename") or "", request)
+    if task.get("status") not in ("queued", "processing"):
+        raise HTTPException(400, "Só dá para pausar um download em andamento.")
+    if task.get("phase") not in ("download", None, ""):
+        raise HTTPException(400, "Esta etapa não pode ser pausada — só o download.")
+    _set_task(task_id, pause_requested=True)
+    return {"ok": True, "message": "Pausando… o download para no próximo trecho."}
+
+@app.post("/api/transcribe/{task_id}/resume")
+async def api_resume_download(task_id: str, request: Request):
+    """Retoma um download pausado, reaproveitando os arquivos parciais."""
+    if not re.fullmatch(r"[0-9a-fA-F-]{8,40}", task_id or ""):
+        raise HTTPException(400, "task_id inválido")
+    task = _get_task(task_id)
+    if not task:
+        # Depois de um restart do servidor a task some da memória (e com ela os
+        # dados do resume). O item continua no acervo: reenviar pela tela de
+        # download recomeça — os .part ainda no disco são reaproveitados.
+        raise HTTPException(404, "Este download não está mais na fila do servidor. "
+                                 "Envie a URL de novo — o que já baixou é reaproveitado.")
+    _require_file_access(task.get("filename") or "", request)
+    if task.get("status") != "paused":
+        raise HTTPException(400, "Este download não está pausado.")
+    args = task.get("resume_args") or {}
+    if not args.get("url"):
+        raise HTTPException(400, "Não há dados suficientes para retomar este download.")
+
+    _set_task(task_id, status="queued", phase="download", pause_requested=False,
+              name="Retomando download…")
+    threading.Thread(target=_run_download_only,
+                     args=(task_id, args["url"], args.get("media_type", "video"),
+                           args.get("quality", "best")),
+                     kwargs={k: v for k, v in args.items()
+                             if k not in ("url", "media_type", "quality")},
+                     daemon=True).start()
+    return {"ok": True, "message": "Retomando de onde parou."}
+
 @app.delete("/api/transcribe/{task_id}")
 async def api_cancel_transcribe(task_id: str, request: Request):
     """Request cancellation of any task (download-only, URL→transcribe, or
@@ -3013,8 +3073,11 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str,
                   name="Download Media", filename=filename)
 
         def _hook(d):
-            if (_get_task(task_id) or {}).get('cancel_requested'):
+            _t = _get_task(task_id)
+            if _t.get('cancel_requested'):
                 raise _UserCancelled('cancel requested during download')
+            if _t.get('pause_requested'):
+                raise _DownloadPaused('pause requested during download')
             if d['status'] == 'downloading':
                 pct_str = d.get('_percent_str', '')
                 try:
@@ -3090,6 +3153,19 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str,
         _save_media(filename, f"{title}.{ext}", url=url, is_transcribed=False, status="done")
         _set_task(task_id, status="done", progress=100, phase="done", phase_progress=100,
                   name=f"{title}.{ext}", filename=filename)
+    except _DownloadPaused:
+        # NÃO limpa os parciais: são eles que permitem retomar de onde parou.
+        # Guarda os argumentos para o resume poder recriar o mesmo download.
+        _save_media(filename, "Download pausado", url=url, is_transcribed=False, status="paused")
+        _set_task(task_id, status="paused", phase="paused",
+                  name="Download pausado", filename=filename,
+                  pause_requested=False,
+                  resume_args={"url": url, "media_type": media_type, "quality": quality,
+                               "subtitles": subtitles, "sub_langs": sub_langs,
+                               "auto_subs": auto_subs, "thumbnail": thumbnail,
+                               "metadata": metadata, "audio_lang": audio_lang,
+                               "existing_filename": filename, "visibility": visibility,
+                               "container": container, "audio_format": audio_format})
     except _UserCancelled:
         _cleanup_task_files(os.path.splitext(filename)[0])   # remove partial/.part downloads (finding #5)
         _save_media(filename, "Download cancelado", url=url, is_transcribed=False, status="cancelled")

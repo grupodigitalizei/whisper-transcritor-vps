@@ -1606,6 +1606,7 @@ const STATUS_MAP = {
   queued:     { label:'Aguardando',  cls:'queued'      },
   error:      { label:'Erro',        cls:'error'       },
   cancelled:  { label:'Cancelado',   cls:'queued'      },
+  paused:     { label:'Pausado',     cls:'queued'      },
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -1975,9 +1976,22 @@ function _buildRowInner(f) {
           </button>
           <div class="dropdown" id="dd-${esc(f.id)}" role="menu">
             ${(f.status === 'queued' || f.status === 'processing') ? `
+            ${(f._phase === 'download' && f.task_id) ? `
+            <div class="dd-item" role="menuitem" tabindex="-1" onclick="pauseDownload('${jsAttr(f.task_id)}')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+              Pausar download
+            </div>` : ''}
             <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="cancelTranscriptionById('${jsAttr(f.task_id || '')}')">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
               Cancelar transcrição
+            </div>` : f.status === 'paused' ? `
+            <div class="dd-item" role="menuitem" tabindex="-1" onclick="resumeDownload('${jsAttr(f.task_id || '')}', '${jsAttr(f.file)}')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              Retomar download
+            </div>
+            <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="deleteFile('${jsAttr(f.id)}')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+              Excluir
             </div>` : (f.status === 'error' || f.status === 'cancelled') ? `
             ${f.status === 'error' ? `
             <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="viewError('${jsAttr(f.id)}')">
@@ -3899,6 +3913,13 @@ function pollProgressForRow(task_id, filename) {
         _stopPoll(task_id);
         hideProgress();
         await loadHistory();
+        if (typeof loadMedia === 'function') loadMedia();
+      } else if (data.status === 'paused') {
+        // Pausado não é terminal, mas continuar consultando seria desperdício:
+        // o polling volta quando o usuário clicar em Retomar.
+        _stopPoll(task_id);
+        hideProgress();
+        showToast('Download pausado. Ele continua de onde parou quando você retomar.', '');
         if (typeof loadMedia === 'function') loadMedia();
       }
     } catch { /* ignore network blip */ }
@@ -6009,4 +6030,32 @@ function pollCompression(taskId, filename) {
       }
     } catch { /* blip de rede */ }
   }, 900);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PAUSAR / RETOMAR DOWNLOAD
+// ═══════════════════════════════════════════════════════════════
+// Vale só para download: uma transcrição é uma única chamada ao Whisper que
+// não dá para interromper no meio — para ela existe o cancelar.
+async function pauseDownload(taskId) {
+  try {
+    const r = await fetch(`/api/transcribe/${encodeURIComponent(taskId)}/pause`, { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { showToast(d.detail || 'Não foi possível pausar.', 'error'); return; }
+    showToast(d.message || 'Pausando…', '');
+  } catch {
+    showToast('Erro de rede ao pausar.', 'error');
+  }
+}
+
+async function resumeDownload(taskId, filename) {
+  try {
+    const r = await fetch(`/api/transcribe/${encodeURIComponent(taskId)}/resume`, { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { showToast(d.detail || 'Não foi possível retomar.', 'error'); return; }
+    showToast(d.message || 'Retomando…', 'success');
+    if (filename) pollProgressForRow(taskId, filename);
+  } catch {
+    showToast('Erro de rede ao retomar.', 'error');
+  }
 }

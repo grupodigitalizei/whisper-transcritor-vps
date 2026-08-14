@@ -163,3 +163,31 @@ def test_degraded_format_keeps_audio_intent():
 def test_degraded_format_for_video():
     out = de._degraded_format({"format": "bestvideo+bestaudio"}, YT)
     assert out["format"] == "best"
+
+
+# ── pausa: precisa abortar como o cancelamento, sem virar retry ───────────────
+def test_pause_aborts_immediately_like_cancel():
+    """Pausar não é falha de motor: se a cascata tentasse o próximo motor, o
+    download continuaria depois de o usuário mandar parar."""
+    class Paused(Exception):
+        pass
+    class Cancelled(Exception):
+        pass
+    seen = []
+    with pytest.raises(Paused):
+        de.run_with_fallback(YT, BASE, _factory([Paused("pause")], seen),
+                             abort_types=(Cancelled, Paused))
+    assert len(seen) == 1
+
+
+def test_cleanup_not_called_when_aborted():
+    """A limpeza entre tentativas apagaria os .part — e são justamente eles que
+    permitem retomar. Num aborto ela não pode rodar."""
+    class Paused(Exception):
+        pass
+    seen, cleanups = [], []
+    with pytest.raises(Paused):
+        de.run_with_fallback(YT, BASE, _factory([Paused("x")], seen),
+                             abort_types=(Paused,),
+                             on_before_retry=lambda: cleanups.append(1))
+    assert cleanups == []
