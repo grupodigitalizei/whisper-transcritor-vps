@@ -2964,7 +2964,7 @@ function switchTab(tab) {
 // Group = 'main' for the page tabs, 'modal' for the upload modal tabs.
 const _TABLIST_GROUPS = {
   main:  ['main-tab-transcriptions', 'main-tab-public', 'main-tab-media',
-          'main-tab-social', 'main-tab-advanced'],
+          'main-tab-social', 'main-tab-subs', 'main-tab-advanced'],
   modal: ['tab-file', 'tab-url', 'tab-batch'],
   'adv-type':    ['adv-type-video', 'adv-type-audio'],
   'adv-urlmode': ['adv-urlmode-single', 'adv-urlmode-batch'],
@@ -2995,6 +2995,7 @@ const _MAIN_TAB_TITLES = {
   public:         'Transcrições Públicas',
   media:          'Biblioteca de Mídia',
   social:         'Redes Sociais',
+  subs:           'Assinaturas',
   advanced:       'Download Avançado',
 };
 
@@ -3006,12 +3007,13 @@ const _MAIN_TAB_CARDS = {
   public:         'card-transcriptions',
   media:          'card-media',
   social:         'card-social',
+  subs:           'card-subs',
   advanced:       'card-advanced',
 };
 
 // Abas restritas ao admin. A equipe não tem o botão, mas quem chama
 // switchMainTab por outro caminho cai aqui e volta para a aba inicial.
-const _ADMIN_ONLY_TABS = new Set(['public', 'social']);
+const _ADMIN_ONLY_TABS = new Set(['public', 'social', 'subs']);
 
 function switchMainTab(tab) {
   if (_ADMIN_ONLY_TABS.has(tab) && !_me.is_admin) tab = 'transcriptions';
@@ -3063,6 +3065,9 @@ function switchMainTab(tab) {
   // guard aqui evita que uma navegação por teclado ou um link antigo dispare as
   // chamadas — que o servidor recusaria com 403 e sujariam a tela de erro).
   if (tab === 'social' && _me.is_admin && typeof initSocialTab === 'function') initSocialTab();
+  // Assinaturas: idem — o botão está escondido para a equipe, e o guard evita
+  // disparar chamadas que o servidor recusaria com 403.
+  if (tab === 'subs' && _me.is_admin && typeof loadSubscriptions === 'function') loadSubscriptions();
 }
 
 function formatBytes(bytes, decimals = 1) {
@@ -5711,3 +5716,168 @@ function toggleTheme() {
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _updateThemeIcon);
 else _updateThemeIcon();
+
+// ═══════════════════════════════════════════════════════════════
+//  ASSINATURAS — acompanha canais/perfis e traz o que sai de novo
+// ═══════════════════════════════════════════════════════════════
+// Toda esta seção é admin-only: o botão da aba tem .admin-only, switchMainTab
+// bloqueia por _ADMIN_ONLY_TABS e o servidor recusa com 403. Três camadas.
+let _subs = [];
+
+const _SUBS_PLATFORM_LABEL = {
+  youtube: 'YouTube', instagram: 'Instagram',
+  tiktok: 'TikTok',   facebook: 'Facebook',
+};
+
+function _subsMsg(text, kind) {
+  const el = document.getElementById('subs-msg');
+  if (!el) return;
+  el.textContent = text || '';
+  el.className = 'pub-msg' + (text ? ' is-' + kind : '');
+}
+
+function _subsFmtWhen(ts) {
+  if (!ts) return 'nunca';
+  const diff = (Date.now() / 1000) - ts;
+  if (diff < 60)    return 'agora há pouco';
+  if (diff < 3600)  return `há ${Math.floor(diff / 60)} min`;
+  if (diff < 86400) return `há ${Math.floor(diff / 3600)} h`;
+  return `há ${Math.floor(diff / 86400)} d`;
+}
+
+async function loadSubscriptions() {
+  try {
+    const r = await fetch('/api/subscriptions');
+    if (!r.ok) { _subsMsg('Não foi possível carregar as assinaturas.', 'error'); return; }
+    const d = await r.json();
+    _subs = d.subscriptions || [];
+    renderSubscriptions();
+  } catch {
+    _subsMsg('Erro de rede ao carregar as assinaturas.', 'error');
+  }
+}
+
+function renderSubscriptions() {
+  const box = document.getElementById('subs-list');
+  if (!box) return;
+  if (!_subs.length) {
+    box.innerHTML = `<p class="adv-dl-intro" style="margin-top:18px">
+      Nenhuma assinatura ainda. Cadastre um canal acima para o sistema
+      acompanhar sozinho.</p>`;
+    return;
+  }
+  box.innerHTML = _subs.map(s => {
+    const statusCls = s.last_status === 'erro' ? 'error'
+                    : s.paused ? '' : 'success';
+    return `
+    <div class="subs-item${s.paused ? ' is-paused' : ''}">
+      <div class="subs-item-main">
+        <div class="subs-item-title">
+          ${esc(s.label)}
+          <span class="social-badge">${esc(_SUBS_PLATFORM_LABEL[s.platform] || s.platform)}</span>
+          ${s.paused ? '<span class="social-badge">pausada</span>' : ''}
+          ${s.auto_transcribe ? '<span class="social-badge">transcreve</span>'
+                              : '<span class="social-badge">só baixa</span>'}
+        </div>
+        <div class="subs-item-sub">
+          ${esc(s.target)} · a cada ${esc(String(s.interval_hours))}h ·
+          até ${esc(String(s.max_per_check))} por checagem
+          ${s.folder ? ` · pasta ${esc(s.folder)}` : ''}
+        </div>
+        <div class="subs-item-status ${statusCls}">
+          Última checagem: ${esc(_subsFmtWhen(s.last_check_at))} — ${esc(s.last_message || '—')}
+          ${s.total_fetched ? ` · ${esc(String(s.total_fetched))} baixados no total` : ''}
+        </div>
+      </div>
+      <div class="subs-item-actions">
+        <button type="button" class="btn" onclick="checkSubscriptionNow('${jsAttr(s.id)}')"
+                title="Checar agora, sem esperar o intervalo">Checar agora</button>
+        <button type="button" class="btn" onclick="toggleSubscription('${jsAttr(s.id)}', ${s.paused ? 'false' : 'true'})">
+          ${s.paused ? 'Retomar' : 'Pausar'}
+        </button>
+        <button type="button" class="btn btn-danger" onclick="deleteSubscription('${jsAttr(s.id)}')"
+                aria-label="Excluir assinatura ${esc(s.label)}">Excluir</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function addSubscription() {
+  const platform = document.getElementById('subs-platform')?.value || 'youtube';
+  const target   = (document.getElementById('subs-target')?.value || '').trim();
+  if (!target) {
+    _subsMsg('Informe o canal ou perfil que você quer acompanhar.', 'error');
+    document.getElementById('subs-target')?.focus();
+    return;
+  }
+  const fd = new FormData();
+  fd.append('platform', platform);
+  fd.append('target', target);
+  fd.append('label',  document.getElementById('subs-label')?.value || '');
+  fd.append('folder', document.getElementById('subs-folder')?.value || '');
+  fd.append('model',    document.getElementById('subs-model')?.value || 'turbo');
+  fd.append('language', document.getElementById('subs-language')?.value || 'pt');
+  fd.append('interval_hours', document.getElementById('subs-interval')?.value || '6');
+  fd.append('max_per_check',  document.getElementById('subs-max')?.value || '5');
+  fd.append('initial_import', document.getElementById('subs-initial')?.value || '0');
+  fd.append('auto_transcribe', document.getElementById('subs-auto')?.value || 'true');
+
+  try {
+    const r = await fetch('/api/subscriptions', { method: 'POST', body: fd });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { _subsMsg(d.detail || 'Não foi possível assinar.', 'error'); return; }
+    document.getElementById('subs-target').value = '';
+    document.getElementById('subs-label').value  = '';
+    _subsMsg(`Assinatura criada. A primeira checagem acontece em instantes.`, 'ok');
+    showToast('Assinatura criada.', 'success');
+    await loadSubscriptions();
+  } catch {
+    _subsMsg('Erro de rede ao criar a assinatura.', 'error');
+  }
+}
+
+async function toggleSubscription(id, paused) {
+  const fd = new FormData();
+  fd.append('paused', paused ? 'true' : 'false');
+  try {
+    const r = await fetch(`/api/subscriptions/${encodeURIComponent(id)}`, { method: 'POST', body: fd });
+    if (!r.ok) { _subsMsg('Não foi possível alterar a assinatura.', 'error'); return; }
+    await loadSubscriptions();
+  } catch {
+    _subsMsg('Erro de rede.', 'error');
+  }
+}
+
+async function deleteSubscription(id) {
+  const sub = _subs.find(s => s.id === id);
+  const ok = await showConfirm({
+    title: 'Excluir assinatura',
+    message: `Parar de acompanhar "${sub?.label || id}"? O que já foi baixado continua no acervo.`,
+    confirmText: 'Excluir',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/api/subscriptions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!r.ok) { _subsMsg('Não foi possível excluir.', 'error'); return; }
+    showToast('Assinatura removida.', 'success');
+    await loadSubscriptions();
+  } catch {
+    _subsMsg('Erro de rede.', 'error');
+  }
+}
+
+async function checkSubscriptionNow(id) {
+  _subsMsg('Checando… nas redes sociais isso abre o ego lite e pode demorar um pouco.', 'ok');
+  try {
+    const r = await fetch(`/api/subscriptions/${encodeURIComponent(id)}/check`, { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { _subsMsg(d.detail || 'Não foi possível checar.', 'error'); return; }
+    // A checagem roda em thread no servidor: recarrega em alguns segundos para
+    // mostrar o resultado sem obrigar o usuário a atualizar a página.
+    setTimeout(loadSubscriptions, 4000);
+    setTimeout(loadSubscriptions, 12000);
+  } catch {
+    _subsMsg('Erro de rede.', 'error');
+  }
+}

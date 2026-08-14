@@ -49,6 +49,10 @@
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1"/></svg>
         Redes Sociais
       </button>
+      <button type="button" id="main-tab-subs" class="app-nav-item admin-only" role="tab" aria-selected="false" aria-controls="card-subs" tabindex="-1" onclick="switchMainTab('subs')" onkeydown="onTablistKey(event, 'main')">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1.5"/></svg>
+        Assinaturas
+      </button>
       <button type="button" id="main-tab-advanced" class="app-nav-item" role="tab" aria-selected="false" aria-controls="card-advanced" tabindex="-1" onclick="switchMainTab('advanced')" onkeydown="onTablistKey(event, 'main')">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/><circle cx="18.5" cy="17.5" r="3.2"/><path d="M18.5 16.3v2.4M17.3 17.5h2.4"/></svg>
         Download Avançado
@@ -595,6 +599,113 @@
       </div>
     </div>
   </div><!-- /#card-social -->
+
+    <!-- Assinaturas: acompanha canais/perfis e traz o que sai de novo -->
+    <div class="card" id="card-subs" style="display:none;" role="tabpanel" aria-labelledby="main-tab-subs">
+      <div class="card-header">
+        <div class="card-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1.5"/></svg>
+          Assinaturas
+        </div>
+      </div>
+
+      <div class="adv-dl-body">
+        <p class="adv-dl-intro">
+          Acompanhe um canal ou perfil: quando sair conteúdo novo, o sistema baixa
+          e já transcreve sozinho. Ao cadastrar, o que <em>já existe</em> é apenas
+          marcado como visto — só o que for publicado dali em diante entra na fila
+          (a menos que você peça os mais recentes agora).
+        </p>
+
+        <div class="pub-msg" id="subs-msg"></div>
+
+        <div class="adv-dl-grid">
+          <div class="field">
+            <label for="subs-platform">Rede</label>
+            <select id="subs-platform" class="select">
+              <option value="youtube" selected>YouTube (canal)</option>
+              <option value="instagram">Instagram (perfil)</option>
+              <option value="tiktok">TikTok (perfil)</option>
+              <option value="facebook">Facebook (página)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="subs-target">Canal ou perfil</label>
+            <input type="text" id="subs-target" class="input"
+                   placeholder="youtube.com/@canal  ou  @perfil" spellcheck="false" />
+          </div>
+          <div class="field">
+            <label for="subs-label">Nome (opcional)</label>
+            <input type="text" id="subs-label" class="input" placeholder="como aparece na lista" />
+          </div>
+          <div class="field">
+            <label for="subs-folder">Pasta de destino</label>
+            <input type="text" id="subs-folder" class="input" placeholder="(raiz)" spellcheck="false" />
+          </div>
+          <div class="field">
+            <label for="subs-model">Modelo</label>
+            <select id="subs-model" class="select">
+              <option value="turbo" selected>Turbo</option>
+              <option value="large">Large (preciso)</option>
+              <option value="medium">Medium</option>
+              <option value="small">Small</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="subs-language">Idioma</label>
+            <select id="subs-language" class="select">
+              <option value="pt" selected>Português</option>
+              <option value="en">Inglês</option>
+              <option value="es">Espanhol</option>
+              <option value="auto">Detectar</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="subs-interval">Checar a cada</label>
+            <select id="subs-interval" class="select">
+              <option value="1">1 hora</option>
+              <option value="3">3 horas</option>
+              <option value="6" selected>6 horas</option>
+              <option value="12">12 horas</option>
+              <option value="24">1 vez por dia</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="subs-max">Máximo por checagem</label>
+            <select id="subs-max" class="select">
+              <option value="1">1 item</option>
+              <option value="3">3 itens</option>
+              <option value="5" selected>5 itens</option>
+              <option value="10">10 itens</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="subs-initial">Trazer agora os mais recentes</label>
+            <select id="subs-initial" class="select">
+              <option value="0" selected>Nenhum (só o que sair de novo)</option>
+              <option value="1">1 mais recente</option>
+              <option value="3">3 mais recentes</option>
+              <option value="5">5 mais recentes</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="subs-auto">O que fazer</label>
+            <select id="subs-auto" class="select">
+              <option value="true" selected>Baixar e transcrever</option>
+              <option value="false">Só baixar</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="adv-dl-actions">
+          <button type="button" class="btn btn-primary" onclick="addSubscription()">Assinar</button>
+        </div>
+
+        <div id="subs-list" class="subs-list" aria-live="polite">
+          <!-- populado por renderSubscriptions() -->
+        </div>
+      </div>
+    </div><!-- /#card-subs -->
 
     <!-- Advanced Download Card -->
     <div class="card" id="card-advanced" style="display:none;" role="tabpanel" aria-labelledby="main-tab-advanced">

@@ -24,6 +24,7 @@ except ImportError:
 # sistema IGSorter do usuário — bem mais robustos que o yt-dlp para Instagram.
 import gdrive  # download de arquivos públicos do Google Drive (trata token de confirmação)
 import download_engine  # cascata de motores: se um jeito de baixar falha, tenta o próximo
+import subscriptions    # assinaturas: acompanha canais/perfis e traz o que sai de novo
 
 try:
     from social import core as social_core, collector as social_collector, \
@@ -922,7 +923,14 @@ async def _lifespan(_app: FastAPI):
             print(f"    {label:<28} {pw}")
         print("  Troque quando quiser em Configurações → Área Pública.")
         print("═" * 62 + "\n")
+    # Assinaturas: liga o módulo ao pipeline e sobe o poller de fundo.
+    try:
+        _configure_subscriptions()
+        subscriptions.start_poller()
+    except Exception as exc:   # noqa: BLE001 — nunca impedir o app de subir
+        print(f"[subs] poller não iniciou: {exc}")
     yield
+    subscriptions.stop_poller()
 
 app = FastAPI(title="Whisper Transcritor", lifespan=_lifespan)
 
@@ -3653,6 +3661,175 @@ async def api_rename(filename: str, request: Request, new_name: str = Form(...))
     if not updated:
         raise HTTPException(404, "Arquivo não encontrado em histórico nem mídia")
     return {"ok": True, "name": new_name}
+
+# ── Assinaturas (acompanhar canais/perfis) ─────────────────────
+# Assina um canal/perfil e o poller traz o que sai de novo, já mandando para o
+# mesmo pipeline de download/transcrição do app. A lógica de agendamento e o
+# store vivem em subscriptions.py; aqui ficam só os "descobridores" (que sabem
+# listar o conteúdo de cada rede) e as rotas.
+
+def _discover_youtube(target: str, limit: int) -> list:
+    """Lista os vídeos mais recentes de um canal/playlist do YouTube.
+
+    Usa o yt-dlp em modo raso (extract_flat): não baixa nada, só lê a listagem —
+    é barato e aceita qualquer forma de URL (@handle, /channel/, /c/, playlist).
+    """
+    if not YT_DLP_OK:
+        raise RuntimeError("yt-dlp não está instalado")
+    url = target
+    # Numa URL de canal, a raiz devolve as abas (vídeos, shorts, lives) como
+    # playlists aninhadas. Apontar direto para /videos dá a lista limpa.
+    if re.search(r"youtube\.com/(@[\w.-]+|c/[\w.-]+|channel/[\w-]+|user/[\w.-]+)/?$", url):
+        url = url.rstrip("/") + "/videos"
+    opts = {
+        "quiet": True, "nocolor": True, "skip_download": True,
+        "extract_flat": "in_playlist", "playlistend": max(1, int(limit)),
+    }
+    if _host_allows_cookies(url):
+        opts["cookiesfrombrowser"] = ("chrome",)
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+    out = []
+    for e in (info or {}).get("entries") or []:
+        if not isinstance(e, dict):
+            continue
+        vid = e.get("id")
+        if not vid:
+            continue
+        out.append({
+            "id": f"youtube:{vid}",
+            "url": e.get("url") or f"https://www.youtube.com/watch?v={vid}",
+            "title": e.get("title") or vid,
+        })
+    return out
+
+def _make_social_discover(platform: str):
+    """Descobridor para IG/TikTok/Facebook: reusa a interceptação do ego-lite,
+    que é o que já funciona para essas redes (o yt-dlp não dá conta)."""
+    def _discover(target: str, limit: int) -> list:
+        if not (SOCIAL_OK and SOCIAL_MULTI_OK):
+            raise RuntimeError("módulo de redes sociais indisponível")
+        res = social_intercept.collect(platform, target, max_items=max(1, int(limit)))
+        ds = social_core.load_dataset(res["path"])
+        out = []
+        for r in ds.get("rows") or []:
+            code, link = r.get("code"), r.get("url")
+            if not code or not link:
+                continue
+            out.append({"id": f"{platform}:{code}", "url": link,
+                        "title": (r.get("caption") or "")[:80] or code})
+        return out
+    return _discover
+
+def _subs_kickoff_transcribe(url: str, model: str, language: str, folder: str) -> None:
+    """Ponte para o pipeline de transcrição (o poller não conhece as rotas)."""
+    url = _validate_media_url(url)
+    _validate_transcribe_params(model, "transcribe")
+    _kickoff_url_transcription(url, model, language, "transcribe", False, folder,
+                               visibility=VIS_PRIVATE)
+
+def _subs_kickoff_download(url: str, folder: str) -> None:
+    url = _validate_media_url(url)
+    _kickoff_download_only(url, "video", "best", visibility=VIS_PRIVATE)
+
+def _configure_subscriptions() -> None:
+    subscriptions.configure(
+        discover={
+            "youtube":   _discover_youtube,
+            "instagram": _make_social_discover("instagram"),
+            "tiktok":    _make_social_discover("tiktok"),
+            "facebook":  _make_social_discover("facebook"),
+        },
+        kickoff_transcribe=_subs_kickoff_transcribe,
+        kickoff_download=_subs_kickoff_download,
+        log=lambda msg: print(msg),
+    )
+
+@app.get("/api/subscriptions")
+async def api_subscriptions(request: Request):
+    """Assinaturas são ferramenta de administração: baixam sozinhas para o
+    acervo e usam a sessão logada do ego-lite. Só o admin."""
+    _require_admin(request)
+    return {"subscriptions": subscriptions.list_subscriptions(),
+            "platforms": list(subscriptions.PLATFORMS),
+            "poller_running": True}
+
+@app.post("/api/subscriptions")
+async def api_subscriptions_add(request: Request,
+                                platform: str = Form(...),
+                                target: str = Form(...),
+                                label: str = Form(""),
+                                auto_transcribe: str = Form("true"),
+                                model: str = Form("turbo"),
+                                language: str = Form("pt"),
+                                folder: str = Form(""),
+                                interval_hours: float = Form(6.0),
+                                max_per_check: int = Form(5),
+                                initial_import: int = Form(0)):
+    _require_admin(request)
+    if auto_transcribe == "true":
+        _validate_transcribe_params(model, "transcribe")
+    folder = _validate_folder_name(folder) if folder else ""
+    _ensure_folder_tree(folder)
+    try:
+        return subscriptions.add_subscription(
+            platform, target, label=label,
+            auto_transcribe=(auto_transcribe == "true"),
+            model=model, language=language, folder=folder,
+            interval_hours=interval_hours, max_per_check=max_per_check,
+            initial_import=initial_import)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+@app.post("/api/subscriptions/{sub_id}")
+async def api_subscriptions_update(request: Request, sub_id: str,
+                                   label: str = Form(None),
+                                   auto_transcribe: str = Form(None),
+                                   model: str = Form(None),
+                                   language: str = Form(None),
+                                   folder: str = Form(None),
+                                   interval_hours: str = Form(None),
+                                   max_per_check: str = Form(None),
+                                   paused: str = Form(None)):
+    _require_admin(request)
+    changes: dict = {}
+    if label is not None:           changes["label"] = label
+    if auto_transcribe is not None: changes["auto_transcribe"] = auto_transcribe == "true"
+    if model is not None:
+        _validate_transcribe_params(model, "transcribe")
+        changes["model"] = model
+    if language is not None:        changes["language"] = language
+    if folder is not None:
+        changes["folder"] = _validate_folder_name(folder) if folder else ""
+        _ensure_folder_tree(changes["folder"])
+    if interval_hours is not None:  changes["interval_hours"] = float(interval_hours)
+    if max_per_check is not None:   changes["max_per_check"] = int(max_per_check)
+    if paused is not None:          changes["paused"] = paused == "true"
+    try:
+        return subscriptions.update_subscription(sub_id, **changes)
+    except KeyError:
+        raise HTTPException(404, "Assinatura não encontrada")
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, str(e))
+
+@app.delete("/api/subscriptions/{sub_id}")
+async def api_subscriptions_delete(request: Request, sub_id: str):
+    _require_admin(request)
+    if not subscriptions.remove_subscription(sub_id):
+        raise HTTPException(404, "Assinatura não encontrada")
+    return {"ok": True}
+
+@app.post("/api/subscriptions/{sub_id}/check")
+async def api_subscriptions_check(request: Request, sub_id: str):
+    """Checa agora, sem esperar o intervalo. Roda em thread: a coleta pode
+    demorar (abre o navegador nas redes sociais) e não pode travar o request."""
+    _require_admin(request)
+    if not subscriptions._get(sub_id):
+        raise HTTPException(404, "Assinatura não encontrada")
+    threading.Thread(
+        target=lambda: subscriptions.check_subscription(sub_id, force=True),
+        daemon=True).start()
+    return {"ok": True, "message": "Checagem iniciada — o resultado aparece aqui em instantes."}
 
 # ── Entry point ────────────────────────────────────────────────
 def _reexec_into_venv_if_needed() -> None:
