@@ -3547,6 +3547,13 @@ function setAdvType(type) {
       : `<option value="best">Melhor Original</option>
          <option value="worst">Menor Espaço</option>`;
   }
+  // Formato de saída: cada tipo mostra só o seu seletor (container de vídeo
+  // não significa nada para áudio, e vice-versa).
+  const contWrap  = document.getElementById('adv-container-wrap');
+  const audioWrap = document.getElementById('adv-audioformat-wrap');
+  if (contWrap)  contWrap.style.display  = type === 'video' ? '' : 'none';
+  if (audioWrap) audioWrap.style.display = type === 'audio' ? '' : 'none';
+
   // Legendas só existem embutidas em vídeo — em áudio não há onde colocá-las,
   // então desliga e trava o toggle pra não gerar um .srt órfão no disco.
   const subsToggle = document.getElementById('adv-subs-toggle');
@@ -3679,6 +3686,12 @@ async function submitAdvancedDownload() {
     fd.append('metadata', metadata ? 'true' : 'false');
     fd.append('thumbnail', thumbnail ? 'true' : 'false');
     fd.append('audio_lang', audioLang);
+    // Formato de saída — só o relevante para o tipo escolhido; o outro segue
+    // em 'auto' e o backend ignora.
+    fd.append('container',
+      mediaType === 'video' ? (document.getElementById('adv-container')?.value || 'auto') : 'auto');
+    fd.append('audio_format',
+      mediaType === 'audio' ? (document.getElementById('adv-audio-format')?.value || 'auto') : 'auto');
     const res = await fetch('/api/download-advanced', { method: 'POST', body: fd });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { showToast(data.detail || 'Erro ao iniciar download.', 'error'); return; }

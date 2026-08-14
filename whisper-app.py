@@ -2990,9 +2990,16 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str,
                        auto_subs: bool = False, thumbnail: bool = False,
                        metadata: bool = False, audio_lang: str | None = None,
                        existing_filename: str | None = None,
-                       visibility: str = VIS_PRIVATE):
+                       visibility: str = VIS_PRIVATE,
+                       container: str = "auto", audio_format: str = "mp3"):
     is_video = media_type == "video"
-    ext = "mp4" if is_video else "mp3"
+    # Formato de saída escolhido pelo usuário. "auto"/"original" preservam o
+    # comportamento histórico (mp4 para vídeo, mp3 para áudio); os demais
+    # trocam o container do remux. Já chegam validados pelo endpoint.
+    if is_video:
+        ext = "mp4" if container in ("auto", "original") else container
+    else:
+        ext = "mp3" if audio_format in ("auto", "original") else audio_format
     # Retry: reaproveita o MESMO filename — atualiza o item já existente em
     # media.json em vez de criar um novo.
     filename = existing_filename or f"{task_id[:8]}_download.{ext}"
@@ -3030,13 +3037,20 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str,
             height_caps = {'1080p': 1080, '720p': 720, '480p': 480}
             video_sel = f'bestvideo[height<={height_caps[quality]}]' if quality in height_caps else 'bestvideo'
             ydl_opts['format'] = f'{video_sel}+{audio_sel}/best'
-            ydl_opts['merge_output_format'] = 'mp4'
-            ydl_opts['outtmpl'] = upload_path.replace('.mp4', '.%(ext)s')
+            ydl_opts['outtmpl'] = upload_path.replace(f'.{ext}', '.%(ext)s')
+            if container == 'original':
+                # Sem remux: fica no container que o site entregou. Evita uma
+                # recodificação/remux desnecessária quando não faz diferença.
+                ydl_opts['format'] = 'best'
+            else:
+                ydl_opts['merge_output_format'] = ext
         else:
             worst_sel = f'worstaudio[language^={audio_lang}]/worstaudio' if audio_lang else 'worstaudio'
             ydl_opts['format'] = worst_sel if quality == 'worst' else audio_sel
-            ydl_opts['outtmpl'] = upload_path.replace('.mp3', '.%(ext)s')
-            ydl_opts['postprocessors'] = [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3'}]
+            ydl_opts['outtmpl'] = upload_path.replace(f'.{ext}', '.%(ext)s')
+            if audio_format != 'original':
+                ydl_opts['postprocessors'] = [
+                    {'key': 'FFmpegExtractAudio', 'preferredcodec': ext}]
 
         # Extras opcionais (Download Avançado): legendas, thumbnail e metadados
         # embutidos no próprio arquivo — mantém o modelo de "1 arquivo por item"
@@ -3142,6 +3156,19 @@ async def api_yt_download_only(
 # adiciona a expansão de playlist e o repasse das opções extras.
 _ADVANCED_MAX_PLAYLIST_ITEMS = 100
 
+# Formatos de saída oferecidos no Download Avançado. Allowlist explícita: o
+# valor vai para o merge_output_format/preferredcodec do yt-dlp, então não pode
+# ser string livre vinda do formulário.
+_VALID_CONTAINERS    = {"auto", "mp4", "mkv", "webm", "original"}
+_VALID_AUDIO_FORMATS = {"auto", "mp3", "m4a", "wav", "opus", "original"}
+
+def _validate_output_format(container: str, audio_format: str) -> tuple[str, str]:
+    if container not in _VALID_CONTAINERS:
+        raise HTTPException(400, f"Formato de vídeo inválido: {container!r}")
+    if audio_format not in _VALID_AUDIO_FORMATS:
+        raise HTTPException(400, f"Formato de áudio inválido: {audio_format!r}")
+    return container, audio_format
+
 def _resolve_playlist_urls(url: str) -> tuple[list[str], str | None]:
     """extract_flat (sem baixar nada) para listar os vídeos de uma playlist/canal.
     Retorna (urls, playlist_title). Se a URL não for uma playlist, retorna [url]."""
@@ -3199,9 +3226,12 @@ async def api_download_advanced(
     thumbnail:  str = Form("false"),
     metadata:   str = Form("false"),
     audio_lang: str = Form(""),
+    container:    str = Form("auto"),   # mp4/mkv/webm/original — só vídeo
+    audio_format: str = Form("auto"),   # mp3/m4a/wav/opus/original — só áudio
 ):
     if not YT_DLP_OK:
         raise HTTPException(400, "yt-dlp não instalado.")
+    container, audio_format = _validate_output_format(container, audio_format)
 
     # Junta a URL única (modo normal) e/ou a lista em lote — dedup preservando
     # ordem, pra colagens acidentalmente duplicadas não disparar 2x.
@@ -3246,6 +3276,7 @@ async def api_download_advanced(
         auto_subs=auto_subs == "true", thumbnail=thumbnail == "true",
         metadata=metadata == "true", audio_lang=(audio_lang or "").strip() or None,
         visibility=_visibility_for_new(request),
+        container=container, audio_format=audio_format,
     )
     task_ids: list[str | None] = []
     for u in final_urls:
