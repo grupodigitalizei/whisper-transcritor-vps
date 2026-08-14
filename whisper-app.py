@@ -23,6 +23,7 @@ except ImportError:
 # Módulos de redes sociais (coleta via ego-lite + download HD). Portados do
 # sistema IGSorter do usuário — bem mais robustos que o yt-dlp para Instagram.
 import gdrive  # download de arquivos públicos do Google Drive (trata token de confirmação)
+import download_engine  # cascata de motores: se um jeito de baixar falha, tenta o próximo
 
 try:
     from social import core as social_core, collector as social_collector, \
@@ -279,6 +280,39 @@ def _cleanup_task_files(prefix: str) -> None:
                 except OSError: pass
     except OSError:
         pass
+
+def _ydl_download_with_fallback(url: str, ydl_opts: dict, task_id: str,
+                                filename: str, phase_label: str = "download"):
+    """Baixa via yt-dlp passando pela cascata de motores (download_engine).
+
+    O motor 1 é exatamente `ydl_opts` como o chamador montou — o caminho que já
+    funciona hoje não muda. Os seguintes só entram se o anterior levantar. Um
+    cancelamento do usuário (_UserCancelled) sobe na hora, sem virar retry.
+
+    Retorna o `info` do yt-dlp (mesmo contrato de ydl.extract_info) e registra na
+    task qual motor venceu, para a UI e o histórico mostrarem.
+    """
+    def _on_engine(engine, idx, total):
+        if idx == 1:
+            return       # motor padrão: não poluir a UI com "tentativa 1/N"
+        _set_task(task_id, phase=phase_label,
+                  engine=engine.name,
+                  engine_note=f"Plano B: {engine.label} ({idx}/{total})")
+
+    def _on_before_retry():
+        # Remove .part/parciais da tentativa anterior, senão o yt-dlp tentaria
+        # retomar bytes inválidos no motor seguinte.
+        _cleanup_task_files(os.path.splitext(filename)[0])
+
+    info, engine_name = download_engine.run_with_fallback(
+        url, ydl_opts, yt_dlp.YoutubeDL,
+        abort_types=(_UserCancelled,),
+        on_engine=_on_engine,
+        on_before_retry=_on_before_retry,
+        log=lambda msg: print(f"[download_engine] {msg}"),
+    )
+    _set_task(task_id, engine=engine_name)
+    return info
 
 # ── Model cache ────────────────────────────────────────────────
 _models: dict = {}
@@ -2696,8 +2730,7 @@ def _kickoff_url_transcription(url: str, model: str, language: str, task: str,
     def _run_download_and_transcribe():
         try:
             with _download_sem:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=True)
+                info = _ydl_download_with_fallback(url, ydl_opts, task_id, filename)
             # Swap the URL-slug placeholder for the real media title so the UI
             # shows "Minha Aula" instead of "watch?v=abc123". The original link
             # stays saved in media.json (the `url` field) for re-use.
@@ -3016,10 +3049,10 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str,
                 {'key': 'FFmpegMetadata', 'add_metadata': True, 'add_chapters': True})
 
         with _download_sem:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                title = info.get('title', 'Media Secundária')
-            
+            info = _ydl_download_with_fallback(url, ydl_opts, task_id, filename)
+            title = (info or {}).get('title', 'Media Secundária')
+
+
         actual_path = upload_path if os.path.exists(upload_path) else upload_path.replace(f'.{ext}', '') + f'.{ext}'
         if not os.path.exists(actual_path):
             # Busca pelo stem do FILENAME (não do task_id) — outtmpl foi construído

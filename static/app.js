@@ -1916,9 +1916,14 @@ function renderStatus(status, f) {
       eta = `<div class="row-eta">finalizando…</div>`;
     }
   }
+  // Plano B do download: avisa que o motor padrão falhou e outro está tentando,
+  // senão o usuário só veria o progresso voltar a zero sem explicação.
+  const engineNote = (f && status === 'processing' && f._engineNote)
+    ? `<div class="row-eta">${esc(f._engineNote)}</div>` : '';
+
   return `<span class="status-badge ${s.cls}" role="img" aria-label="${label}"${extra}>
     <span class="status-dot"></span>${label}${pctLabel}
-  </span>${eta}`;
+  </span>${eta}${engineNote}`;
 }
 
 // Signature used to decide whether a given row needs DOM work
@@ -3847,7 +3852,7 @@ function pollProgressForRow(task_id, filename) {
       // Push phase + phase_progress + overall progress to the row state, so the
       // badge can show "Baixando 35%" → "Transcrevendo 67%" → "Salvando…".
       _updateRowStatus(filename, data.status, data.progress || 0,
-                       data.phase, data.phase_progress);
+                       data.phase, data.phase_progress, data.engine_note);
 
       if (data.status === 'done') {
         _stopPoll(task_id);
@@ -3888,7 +3893,7 @@ function _stopPoll(task_id) {
   }
 }
 
-function _updateRowStatus(filename, status, pct, phase, phasePct) {
+function _updateRowStatus(filename, status, pct, phase, phasePct, engineNote) {
   // Persist live progress + phase on the in-memory entry so EVERY render path
   // (this poll, the 5s ETA tick, and full re-renders) produces identical output —
   // the % and ETA stay visible the whole time instead of flickering.
@@ -3898,17 +3903,19 @@ function _updateRowStatus(filename, status, pct, phase, phasePct) {
     f._progress = pct;
     if (phase) f._phase = phase;
     if (typeof phasePct === 'number') f._phaseProgress = phasePct;
+    // Só aparece quando o download caiu num motor alternativo (plano B).
+    f._engineNote = engineNote || null;
   }
   const tr = document.querySelector(`#files-tbody tr[data-id="${CSS.escape(filename)}"]`);
   if (tr) {
     const cell = tr.querySelector('.col-status');
-    if (cell) cell.innerHTML = renderStatus(status, f || { _progress: pct, _phase: phase, _phaseProgress: phasePct });
+    if (cell) cell.innerHTML = renderStatus(status, f || { _progress: pct, _phase: phase, _phaseProgress: phasePct, _engineNote: engineNote });
   }
   // Mirror to the media library tab — download-only tasks live there.
   const mediaTr = document.querySelector(`#media-tbody tr[data-id="${CSS.escape(filename)}"]`);
   if (mediaTr) {
     const mcell = mediaTr.querySelector('.col-status');
-    if (mcell) mcell.innerHTML = renderStatus(status, f || { _progress: pct, _phase: phase, _phaseProgress: phasePct });
+    if (mcell) mcell.innerHTML = renderStatus(status, f || { _progress: pct, _phase: phase, _phaseProgress: phasePct, _engineNote: engineNote });
   }
 }
 
