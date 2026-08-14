@@ -1,5 +1,16 @@
 # Dados locais (transcrições, uploads — não vão pro repositório)
-.whisper_data/
+# Sem a barra final de propósito: hoje estes nomes são SYMLINKS, e um padrão
+# terminado em "/" só casa com diretório de verdade — o symlink apareceria
+# como arquivo novo no git status.
+.whisper_data
+
+# O projeto vive dentro de ~/Documents, que o iCloud sincroniza. O sufixo
+# .nosync faz o iCloud ignorar a pasta (e um symlink com o nome original
+# mantém tudo funcionando). Sem isso, o iCloud tentava subir os ~43 mil
+# arquivos do venv + as mídias, e cada leitura de arquivo passava a ser
+# materializada sob demanda — o import de uma lib chegava a levar minutos.
+.whisper_data.nosync
+venv.nosync
 
 # macOS
 .DS_Store
@@ -11,7 +22,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
-venv/
+venv
 .venv/
 
 # Editor
