@@ -1882,6 +1882,7 @@ const _PHASE_LABEL = {
   download:   'Baixando',
   transcribe: 'Transcrevendo',
   saving:     'Salvando',
+  compress:   'Comprimindo',
 };
 
 function renderStatus(status, f) {
@@ -5880,4 +5881,119 @@ async function checkSubscriptionNow(id) {
   } catch {
     _subsMsg('Erro de rede.', 'error');
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  COMPRESSÃO DE MÍDIA — reduz o tamanho sem perder o arquivo
+// ═══════════════════════════════════════════════════════════════
+// Admin-only: reescreve arquivos do acervo (inclusive privados) e, com
+// "substituir", é irreversível para quem só tinha aquela cópia.
+const _COMPRESS_PRESET_KEY = 'wt:compress-preset';
+
+async function compressSelectedMedia() {
+  const files = Array.from(_mediaSelected);
+  if (!files.length) return;
+
+  // Só faz sentido para áudio/vídeo — nunca some com a seleção em silêncio.
+  const alvos = files.filter(f => {
+    const t = _fileTypeFor(f);
+    return t === 'video' || t === 'audio';
+  });
+  if (!alvos.length) {
+    showToast('Nenhum arquivo de áudio ou vídeo na seleção.', 'error');
+    return;
+  }
+
+  let caps;
+  try {
+    caps = await (await fetch('/api/compress/capabilities')).json();
+  } catch {
+    showToast('Não foi possível falar com o servidor.', 'error');
+    return;
+  }
+  if (!caps.available) {
+    await showAlert({
+      title: 'FFmpeg não encontrado',
+      message: 'A compressão precisa do FFmpeg instalado nesta máquina. '
+             + 'Instale com "brew install ffmpeg" e tente de novo.',
+    });
+    return;
+  }
+
+  // Estimativa real do primeiro arquivo — dá ao usuário uma noção concreta do
+  // ganho antes de ele confirmar uma operação que reescreve arquivos.
+  let previa = '';
+  try {
+    const saved = localStorage.getItem(_COMPRESS_PRESET_KEY) || 'medio';
+    const r = await fetch(`/api/compress/plan/${encodeURIComponent(alvos[0])}?preset=${encodeURIComponent(saved)}`);
+    if (r.ok) {
+      const p = await r.json();
+      previa = p.worth_it
+        ? `\n\nExemplo (${alvos[0]}): ${_formatBytes(p.size_bytes)} → cerca de `
+          + `${_formatBytes(p.estimated_bytes)} (~${p.estimated_saving_pct}% menor).`
+        : `\n\nObservação: "${alvos[0]}" já está compacto e será mantido como está.`;
+    }
+  } catch { /* estimativa é um extra — segue sem ela */ }
+
+  const preset = await showChoice({
+    title: `Comprimir ${alvos.length} ${alvos.length === 1 ? 'arquivo' : 'arquivos'}`,
+    message: 'Escolha o nível. O arquivo original é substituído pelo comprimido — '
+           + 'quem já tinha baixado não é afetado, mas no servidor fica só a versão nova.'
+           + (caps.hw_h264 ? ' Este Mac comprime por hardware, então costuma ser rápido.' : '')
+           + previa,
+    choices: (caps.presets || []).map(p => ({
+      value: p.id,
+      label: p.label,
+      danger: p.id === 'forte',
+    })),
+  });
+  if (!preset) return;
+
+  try { localStorage.setItem(_COMPRESS_PRESET_KEY, preset); } catch {}
+
+  const fd = new FormData();
+  fd.append('files', alvos.join(','));
+  fd.append('preset', preset);
+  fd.append('replace', 'true');
+  try {
+    const r = await fetch('/api/compress', { method: 'POST', body: fd });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { showToast(d.detail || 'Não foi possível comprimir.', 'error'); return; }
+    showToast(`Comprimindo ${d.count} ${d.count === 1 ? 'arquivo' : 'arquivos'}…`, 'success');
+    // Cada arquivo tem sua própria task — acompanha todas.
+    (d.started || []).forEach(s => pollCompression(s.task_id, s.file));
+  } catch {
+    showToast('Erro de rede ao iniciar a compressão.', 'error');
+  }
+}
+
+function pollCompression(taskId, filename) {
+  if (_activePolls[taskId]) return;
+  _activePolls[taskId] = setInterval(async () => {
+    try {
+      const res = await fetch(`/api/progress/${taskId}`);
+      if (!res.ok) { _stopPoll(taskId); return; }
+      const d = await res.json();
+      _updateRowStatus(filename, d.status, d.progress || 0, d.phase, d.phase_progress);
+
+      if (d.status === 'done') {
+        _stopPoll(taskId);
+        if (d.skipped) {
+          showToast(`"${filename}": ${d.message || 'mantido como estava'}.`, '');
+        } else {
+          showToast(`"${filename}" comprimido — ${_formatBytes(d.saved_bytes || 0)} liberados `
+                  + `(${d.saved_pct}% menor).`, 'success');
+        }
+        if (typeof loadMedia === 'function') loadMedia();
+        loadStats();
+      } else if (d.status === 'error') {
+        _stopPoll(taskId);
+        showToast(`Falha ao comprimir "${filename}": ${d.error || 'erro'}`, 'error');
+        if (typeof loadMedia === 'function') loadMedia();
+      } else if (d.status === 'cancelled') {
+        _stopPoll(taskId);
+        if (typeof loadMedia === 'function') loadMedia();
+      }
+    } catch { /* blip de rede */ }
+  }, 900);
 }

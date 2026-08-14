@@ -25,6 +25,7 @@ except ImportError:
 import gdrive  # download de arquivos públicos do Google Drive (trata token de confirmação)
 import download_engine  # cascata de motores: se um jeito de baixar falha, tenta o próximo
 import subscriptions    # assinaturas: acompanha canais/perfis e traz o que sai de novo
+import compressor       # compressão de vídeo/áudio via FFmpeg (hardware no Apple Silicon)
 
 try:
     from social import core as social_core, collector as social_collector, \
@@ -3661,6 +3662,144 @@ async def api_rename(filename: str, request: Request, new_name: str = Form(...))
     if not updated:
         raise HTTPException(404, "Arquivo não encontrado em histórico nem mídia")
     return {"ok": True, "name": new_name}
+
+# ── Compressão de mídia ────────────────────────────────────────
+# Vídeo em qualidade máxima come disco rápido — a faxina por idade existe por
+# isso. Comprimir preserva o material: em vez de apagar um vídeo de 2 GB, ele
+# vira 300 MB e continua assistível. No Apple Silicon a codificação roda no
+# chip de mídia (videotoolbox), então é rápida e não briga com o Whisper pela CPU.
+
+def _compress_update_catalogs(old_file: str, new_file: str, new_size: int) -> None:
+    """Reflete nos catálogos o arquivo que acabou de ser comprimido.
+
+    Compressão pode trocar o container (.mkv → .mp4), e aí o nome do arquivo
+    muda. Sem atualizar media.json/history.json, o item apontaria para um
+    arquivo que não existe mais.
+    """
+    if old_file == new_file:
+        with _media_lock:
+            media = _load_media()
+            for m in media:
+                if m.get("file") == old_file:
+                    m["size_bytes"] = new_size
+            _atomic_write_json(MEDIA_FILE, media)
+        return
+
+    with _media_lock:
+        media = _load_media()
+        for m in media:
+            if m.get("file") == old_file:
+                m["file"] = new_file
+                m["size_bytes"] = new_size
+                stem, ext = os.path.splitext(m.get("name") or "")
+                if stem:
+                    m["name"] = stem + os.path.splitext(new_file)[1]
+        _atomic_write_json(MEDIA_FILE, media)
+    with _history_lock:
+        history = _load_history()
+        touched = False
+        for h in history:
+            if h.get("file") == old_file:
+                h["file"] = new_file
+                touched = True
+        if touched:
+            _atomic_write_json(HISTORY_FILE, history)
+
+def _run_compression(task_id: str, filename: str, preset: str,
+                     replace: bool, prefer_hevc: bool) -> None:
+    path = os.path.join(UPLOAD_DIR, filename)
+    try:
+        _set_task(task_id, status="processing", progress=0, phase="compress",
+                  phase_progress=0, name=f"Comprimindo {filename}", filename=filename)
+
+        result = compressor.compress(
+            path, preset, replace=replace, prefer_hevc=prefer_hevc,
+            on_progress=lambda pct: _set_task(task_id, progress=pct,
+                                              phase="compress", phase_progress=pct),
+            is_cancelled=lambda: bool(_get_task(task_id).get("cancel_requested")),
+        )
+
+        if result.get("skipped"):
+            # Não é erro: o arquivo simplesmente não valia a pena comprimir.
+            _set_task(task_id, status="done", progress=100, phase="done",
+                      phase_progress=100, filename=filename,
+                      skipped=True, message=result.get("reason") or "nada a fazer")
+            return
+
+        new_file = result["file"]
+        _compress_update_catalogs(filename, new_file, result["new_bytes"])
+        _set_task(task_id, status="done", progress=100, phase="done",
+                  phase_progress=100, filename=new_file,
+                  saved_bytes=result["saved_bytes"], saved_pct=result["saved_pct"],
+                  old_bytes=result["old_bytes"], new_bytes=result["new_bytes"],
+                  message=f"{result['saved_pct']}% menor")
+    except compressor.CompressCancelled:
+        _set_task(task_id, status="cancelled", progress=0, phase="cancelled",
+                  filename=filename, name="Compressão cancelada")
+    except Exception as e:   # noqa: BLE001
+        _set_task(task_id, status="error", progress=0, phase="error",
+                  filename=filename, error=str(e))
+
+@app.get("/api/compress/capabilities")
+async def api_compress_capabilities(request: Request):
+    _role_of(request)
+    caps = compressor.capabilities()
+    return {**caps,
+            "presets": [{"id": p, "label": compressor.PRESET_LABEL[p]}
+                        for p in compressor.PRESETS]}
+
+@app.get("/api/compress/plan/{filename}")
+async def api_compress_plan(filename: str, request: Request, preset: str = "medio"):
+    """Estimativa: quanto o arquivo encolheria, sem comprimir nada."""
+    filename = _safe_filename(filename)
+    _require_file_access(filename, request)
+    if preset not in compressor.PRESETS:
+        raise HTTPException(400, "Preset inválido")
+    path = os.path.join(UPLOAD_DIR, filename)
+    if not os.path.exists(path):
+        raise HTTPException(404, "Arquivo não encontrado")
+    try:
+        return compressor.plan(path, preset)
+    except compressor.CompressError as e:
+        raise HTTPException(400, str(e))
+
+@app.post("/api/compress")
+async def api_compress(request: Request, files: str = Form(...),
+                       preset: str = Form("medio"),
+                       replace: str = Form("true"),
+                       prefer_hevc: str = Form("false")):
+    """Comprime um ou mais arquivos (lista separada por vírgula).
+
+    Admin-only: reescreve arquivos do acervo — inclusive itens privados — e é
+    irreversível para quem só tinha aquela cópia.
+    """
+    _require_admin(request)
+    if not compressor.capabilities()["available"]:
+        raise HTTPException(400, "FFmpeg não está instalado nesta máquina.")
+    if preset not in compressor.PRESETS:
+        raise HTTPException(400, "Preset inválido")
+
+    requested = [_safe_filename(f.strip()) for f in (files or "").split(",") if f.strip()]
+    if not requested:
+        raise HTTPException(400, "Nenhum arquivo informado")
+
+    started = []
+    for filename in requested:
+        path = os.path.join(UPLOAD_DIR, filename)
+        if not os.path.exists(path) or compressor.media_kind(path) == "other":
+            continue
+        task_id = str(uuid.uuid4())
+        _set_task(task_id, status="queued", progress=0, phase="compress",
+                  name=f"Comprimindo {filename}", filename=filename)
+        threading.Thread(
+            target=_run_compression,
+            args=(task_id, filename, preset, replace == "true", prefer_hevc == "true"),
+            daemon=True).start()
+        started.append({"file": filename, "task_id": task_id})
+
+    if not started:
+        raise HTTPException(400, "Nenhum arquivo compatível para compressão")
+    return {"ok": True, "started": started, "count": len(started)}
 
 # ── Assinaturas (acompanhar canais/perfis) ─────────────────────
 # Assina um canal/perfil e o poller traz o que sai de novo, já mandando para o
