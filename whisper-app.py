@@ -833,6 +833,23 @@ def _set_task(task_id: str, **kw):
         if kw.get("status") in _TERMINAL_STATES:
             _prune_tasks_locked()
 
+_ACTIVE_STATES = ("queued", "processing", "paused")
+
+def _active_task_for(filename: str) -> str | None:
+    """task_id de uma tarefa viva para este arquivo, ou None.
+
+    Serve de trava para operações destrutivas: apagar, comprimir ou re-enfileirar
+    um arquivo que uma thread ainda está usando corrompe o resultado — a thread
+    não sabe que o arquivo sumiu e segue gravando com o nome antigo.
+    """
+    if not filename:
+        return None
+    with _tasks_lock:
+        for tid, t in _tasks.items():
+            if t.get("filename") == filename and t.get("status") in _ACTIVE_STATES:
+                return tid
+    return None
+
 def _get_task(task_id: str) -> dict:
     # Sempre retorna um dict (vazio se a task não existe) — nunca None. O código
     # a jusante depende disso para poder chamar .get() sem checar antes.
@@ -1937,6 +1954,9 @@ def _cleanup_social_sidecars(filename: str) -> None:
 async def api_delete_media(filename: str, request: Request):
     filename = _safe_filename(filename)
     _require_file_access(filename, request)
+    if _active_task_for(filename):
+        raise HTTPException(409, "Este arquivo está em uso agora. "
+                                 "Cancele a tarefa antes de excluir.")
     path = os.path.join(UPLOAD_DIR, filename)
     if os.path.exists(path):
         try:
@@ -1973,6 +1993,11 @@ def _audit_old_media(min_age_days: float = 7.0) -> dict:
         path = os.path.join(UPLOAD_DIR, filename)
         if not os.path.exists(path):
             continue  # file already gone (no point listing it for cleanup)
+        # Nunca listar arquivo em uso. `queued_at` é PRESERVADO num retry, então
+        # um arquivo antigo re-enfileirado hoje continua parecendo velho aqui —
+        # e a faxina apagava o original no meio do model.transcribe().
+        if entry.get("status") in _ACTIVE_STATES or _active_task_for(filename):
+            continue
         # Prefer queued_at (when first ingested); fall back to file mtime.
         ts = entry.get("queued_at") or os.path.getmtime(path)
         age = now - ts
@@ -2020,7 +2045,13 @@ async def api_media_cleanup(request: Request, files: str = Form(...)):
     deleted = 0
     freed_bytes = 0
     failed: list[str] = []
+    skipped_active: list[str] = []
     for filename in requested:
+        # Segunda linha de defesa (a primeira é _audit_old_media não listar):
+        # a exclusão em lote da Biblioteca chega aqui direto, sem passar por lá.
+        if _active_task_for(filename):
+            skipped_active.append(filename)
+            continue
         path = os.path.join(UPLOAD_DIR, filename)
         # Path-traversal guard: ensure final path is still inside UPLOAD_DIR
         if os.path.commonpath([os.path.realpath(path), os.path.realpath(UPLOAD_DIR)]) != os.path.realpath(UPLOAD_DIR):
@@ -2033,12 +2064,17 @@ async def api_media_cleanup(request: Request, files: str = Form(...)):
             except OSError:
                 failed.append(filename)
 
-    # Drop those entries from media.json (transcriptions stay in history.json untouched)
+    # Drop those entries from media.json (transcriptions stay in history.json untouched).
+    # Os pulados por estarem em uso ficam FORA desta remoção: tirar a entrada do
+    # catálogo sem apagar o arquivo deixaria o item invisível na tela e o disco
+    # ocupado do mesmo jeito.
+    removidos = set(requested) - set(skipped_active)
     with _media_lock:
-        media = [m for m in _load_media() if m.get("file") not in set(requested)]
+        media = [m for m in _load_media() if m.get("file") not in removidos]
         _atomic_write_json(MEDIA_FILE, media)
 
-    return {"deleted": deleted, "freed_bytes": freed_bytes, "failed": failed}
+    return {"deleted": deleted, "freed_bytes": freed_bytes, "failed": failed,
+            "skipped_active": skipped_active}
 
 
 # -- Transcription
@@ -2472,6 +2508,15 @@ async def api_delete(filename: str, request: Request, scope: str = "both"):
     _require_file_access(filename, request)
     if scope not in ("both", "transcription", "media"):
         scope = "both"
+
+    # Excluir um item que uma thread ainda está processando não funcionava: a
+    # thread seguia até o fim e _save_to_history RECRIAVA a entrada (ela sempre
+    # remove e reinsere), junto com a pasta de resultados. Da tela, o item sumia
+    # e reaparecia sozinho segundos depois — a exclusão era desfeita em silêncio.
+    active = _active_task_for(filename)
+    if active:
+        raise HTTPException(409, "Este item ainda está sendo processado. "
+                                 "Cancele a tarefa antes de excluir.")
 
     if scope in ("both", "transcription"):
         with _history_lock:
@@ -2969,6 +3014,12 @@ _AUDIO_EXT_SET = {".mp3", ".m4a", ".aac", ".wav", ".ogg", ".opus", ".wma", ".fla
 
 def _retry_item(filename: str) -> dict:
     filename = _safe_filename(filename)
+    # Dois retries no mesmo arquivo lançavam DUAS threads gravando no mesmo
+    # destino: _save_result_files usa open(...,"w") sem lock, então o resultado
+    # saía misturado (o .txt de uma execução com o .json de outra) e a última a
+    # terminar sobrescrevia o status da outra.
+    if _active_task_for(filename):
+        raise HTTPException(409, "Este item já está sendo processado.")
     hist_entry  = next((h for h in _load_history() if h.get("file") == filename), None)
     media_entry = next((m for m in _load_media()   if m.get("file") == filename), None)
 
@@ -3914,9 +3965,18 @@ async def api_compress(request: Request, files: str = Form(...),
         raise HTTPException(400, "Nenhum arquivo informado")
 
     started = []
+    ocupados = []
     for filename in requested:
         path = os.path.join(UPLOAD_DIR, filename)
         if not os.path.exists(path) or compressor.media_kind(path) == "other":
+            continue
+        # Comprimir durante uma transcrição desalinhava tudo: a compressão pode
+        # trocar o container (.mkv → .mp4) e renomear o arquivo, enquanto a
+        # thread da transcrição segue com o nome ANTIGO capturado no início.
+        # _save_media não achava mais aquele nome, criava uma entrada fantasma, e
+        # o item real ficava presO em "processando" para sempre.
+        if _active_task_for(filename):
+            ocupados.append(filename)
             continue
         task_id = str(uuid.uuid4())
         _set_task(task_id, status="queued", progress=0, phase="compress",
@@ -3928,8 +3988,12 @@ async def api_compress(request: Request, files: str = Form(...),
         started.append({"file": filename, "task_id": task_id})
 
     if not started:
+        if ocupados:
+            raise HTTPException(409, "Os arquivos selecionados estão em uso agora "
+                                     "(baixando ou transcrevendo). Tente quando terminarem.")
         raise HTTPException(400, "Nenhum arquivo compatível para compressão")
-    return {"ok": True, "started": started, "count": len(started)}
+    return {"ok": True, "started": started, "count": len(started),
+            "skipped_active": ocupados}
 
 # ── Assinaturas (acompanhar canais/perfis) ─────────────────────
 # Assina um canal/perfil e o poller traz o que sai de novo, já mandando para o

@@ -53,6 +53,9 @@ DEFAULT_MAX_PER_CHECK = 5
 HARD_MAX_PER_CHECK = 25
 
 _lock = threading.Lock()
+# Assinaturas com checagem em curso — impede que o poller e o "Checar agora"
+# processem o mesmo perfil ao mesmo tempo e baixem tudo duas vezes.
+_em_checagem: set = set()
 
 # Injetados por configure() — ver docstring do módulo.
 _discover = {}          # platform -> fn(target, limit) -> [{id, url, title}]
@@ -276,7 +279,27 @@ def check_subscription(sub_id: str, *, force: bool = False) -> dict:
     Retorna um resumo {status, message, started}. Nunca levanta por falha de
     rede/coletor — o erro vira `last_status='erro'` e a próxima checagem tenta
     de novo (um perfil offline não pode derrubar o poller inteiro).
+
+    Duas execuções simultâneas da MESMA assinatura são recusadas: elas leriam o
+    mesmo `seen_ids` (nenhuma gravou ainda), calculariam a mesma lista e
+    baixariam tudo em dobro. Acontecia ao clicar "Checar agora" enquanto o
+    poller já estava checando aquele perfil — provável, já que uma coleta em
+    rede social demora.
     """
+    with _lock:
+        if sub_id in _em_checagem:
+            return {"status": "ocupada",
+                    "message": "esta assinatura já está sendo checada agora",
+                    "started": 0}
+        _em_checagem.add(sub_id)
+    try:
+        return _check_subscription_locked(sub_id, force=force)
+    finally:
+        with _lock:
+            _em_checagem.discard(sub_id)
+
+
+def _check_subscription_locked(sub_id: str, *, force: bool = False) -> dict:
     sub = _get(sub_id)
     if not sub:
         raise KeyError("assinatura não encontrada")
@@ -316,13 +339,19 @@ def check_subscription(sub_id: str, *, force: bool = False) -> dict:
     # que um canal já publicou entupiria a fila — ver docstring do módulo.
     if first_run:
         take = fresh[:int(sub.get("initial_import") or 0)]
-        rest_ids = [it["id"] for it in fresh if it not in take]
-        started = _start_items(sub, take)
+        started_ids = _start_items(sub, take)
+        started = len(started_ids)
+        # No bootstrap o passado inteiro é marcado como visto de propósito (é o
+        # que evita baixar o acervo de um canal antigo). A exceção são os itens
+        # do initial_import que FALHARAM ao iniciar: esses ficam pendentes para
+        # a próxima checagem em vez de se perderem.
+        falhos = {it["id"] for it in take} - set(started_ids)
+        vistos = [it["id"] for it in fresh if it["id"] not in falhos]
         _mark_result(sub_id,
                      status="ok",
-                     message=(f"assinatura iniciada — {len(rest_ids)} itens marcados como "
-                              f"já vistos" + (f", {started} baixando" if started else "")),
-                     new_ids=[it["id"] for it in fresh],
+                     message=(f"assinatura iniciada — {len(vistos) - started} itens marcados "
+                              f"como já vistos" + (f", {started} baixando" if started else "")),
+                     new_ids=vistos,
                      fetched=started,
                      bootstrapped=True)
         return {"status": "ok", "message": "assinatura iniciada", "started": started}
@@ -332,21 +361,31 @@ def check_subscription(sub_id: str, *, force: bool = False) -> dict:
         return {"status": "ok", "message": "nada novo", "started": 0}
 
     take = fresh[:int(sub.get("max_per_check") or DEFAULT_MAX_PER_CHECK)]
-    started = _start_items(sub, take)
+    started_ids = _start_items(sub, take)
+    started = len(started_ids)
     skipped = len(fresh) - len(take)
+    falhos = len(take) - started
     msg = f"{started} novo(s) em processamento"
     if skipped > 0:
         # Não some com o resto em silêncio: os que passaram do teto ficam para a
         # próxima checagem (não entram em seen_ids).
         msg += f"; {skipped} além do limite ficaram para a próxima"
+    if falhos > 0:
+        msg += f"; {falhos} falharam ao iniciar e serão tentados de novo"
+    # Só o que REALMENTE começou vira "visto".
     _mark_result(sub_id, status="ok", message=msg,
-                 new_ids=[it["id"] for it in take], fetched=started)
+                 new_ids=started_ids, fetched=started)
     return {"status": "ok", "message": msg, "started": started}
 
 
-def _start_items(sub: dict, items: list) -> int:
-    """Manda cada item para o pipeline. Falha de um não impede os outros."""
-    started = 0
+def _start_items(sub: dict, items: list) -> list:
+    """Manda cada item para o pipeline. Falha de um não impede os outros.
+
+    Devolve os ids que REALMENTE começaram. Marcar como visto um item que falhou
+    ao iniciar (rede instável, disco cheio) o condenava: ele nunca seria baixado
+    e nunca mais seria tentado.
+    """
+    started_ids = []
     for it in items:
         url = it.get("url")
         if not url:
@@ -360,10 +399,10 @@ def _start_items(sub: dict, items: list) -> int:
                 _kickoff_download(url=url, folder=sub.get("folder") or "")
             else:
                 continue
-            started += 1
+            started_ids.append(it.get("id"))
         except Exception as exc:  # noqa: BLE001
             _log(f"[subs] {sub.get('label')}: falha ao iniciar {url}: {exc}")
-    return started
+    return [i for i in started_ids if i]
 
 
 def due_subscriptions(now: float | None = None) -> list:
