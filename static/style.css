@@ -2213,3 +2213,34 @@ body[data-role="public"] .nav-group-label.group-empty-for-public { display: none
 @media (min-width: 900px) {
   .adv-dl-grid { grid-template-columns: 1fr 1fr; gap: 16px 20px; }
 }
+
+/* ── Modal de Configurações em duas colunas ──────────────────────
+   Em coluna única o conteúdo dava 1110px contra 679px de área visível:
+   metade das opções (toda a Área Pública) só aparecia rolando. Em duas
+   colunas cabe inteiro numa tela de notebook. */
+.settings-modal { max-width: 880px; width: 100%; }
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 32px;                 /* respiro maior ENTRE as colunas que dentro */
+  align-items: start;
+}
+.settings-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+/* A divisória deixa claro que são dois assuntos e dispensa borda no bloco. */
+.settings-col + .settings-col {
+  border-left: 1px solid var(--border);
+  padding-left: 32px;
+}
+.settings-col .pub-section { border: 0; padding: 0; margin: 0; }
+
+/* Abaixo de 900px volta a uma coluna: duas colunas espremidas seriam
+   piores que a rolagem. */
+@media (max-width: 900px) {
+  .settings-grid { grid-template-columns: 1fr; gap: 18px; }
+  .settings-col + .settings-col {
+    border-left: 0; border-top: 1px solid var(--border);
+    padding-left: 0; padding-top: 18px;
+  }
+}
