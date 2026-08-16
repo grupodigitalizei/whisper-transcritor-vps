@@ -25,6 +25,7 @@ except ImportError:
 import gdrive  # download de arquivos públicos do Google Drive (trata token de confirmação)
 import download_engine  # cascata de motores: se um jeito de baixar falha, tenta o próximo
 import subscriptions    # assinaturas: acompanha canais/perfis e traz o que sai de novo
+import storage         # inventário de disco: o que ocupa espaço e como limpar
 import compressor       # compressão de vídeo/áudio via FFmpeg (hardware no Apple Silicon)
 
 try:
@@ -993,6 +994,7 @@ async def _lifespan(_app: FastAPI):
     try:
         _configure_subscriptions()
         subscriptions.start_poller()
+        storage.configure(em_uso=_active_task_for)
     except Exception as exc:   # noqa: BLE001 — nunca impedir o app de subir
         print(f"[subs] poller não iniciou: {exc}")
     yield
@@ -4129,6 +4131,83 @@ async def api_compress(request: Request, files: str = Form(...),
         raise HTTPException(400, "Nenhum arquivo compatível para compressão")
     return {"ok": True, "started": started, "count": len(started),
             "skipped_active": ocupados}
+
+# ── Armazenamento (o que ocupa disco e como limpar) ────────────
+def _storage_sincronizar_catalogos(cat_id: str, ids: list) -> None:
+    """Depois de apagar arquivos, tira do catálogo o que ficou órfão.
+
+    Sem isto a tela continuaria listando transcrições cujo conteúdo já não
+    existe — o item viraria uma linha que não abre.
+    """
+    if cat_id == "uploads":
+        alvos = set(ids)
+        with _media_lock:
+            media = [m for m in _load_media() if m.get("file") not in alvos]
+            _atomic_write_json(MEDIA_FILE, media)
+        # A transcrição continua válida; só perde o original. É o mesmo
+        # comportamento da faxina por idade.
+        with _history_lock:
+            history = _load_history()
+            mexeu = False
+            for h in history:
+                if h.get("file") in alvos and h.get("has_original") is not False:
+                    h["has_original"] = False
+                    mexeu = True
+            if mexeu:
+                _atomic_write_json(HISTORY_FILE, history)
+    elif cat_id == "results":
+        # Em results/ o item é a PASTA, cujo nome é o filename sem extensão.
+        bases = set(ids)
+        with _history_lock:
+            history = [h for h in _load_history()
+                       if _result_base(h.get("file") or "") not in bases]
+            _atomic_write_json(HISTORY_FILE, history)
+
+@app.get("/api/storage")
+async def api_storage(request: Request):
+    """Quanto cada tipo de dado ocupa. Admin-only: enxerga o acervo inteiro."""
+    _require_admin(request)
+    resumo = storage.overview()
+    resumo["sobras"] = storage.sobras()
+    return resumo
+
+@app.get("/api/storage/{cat_id}")
+async def api_storage_itens(request: Request, cat_id: str):
+    _require_admin(request)
+    try:
+        return storage.listar_itens(cat_id)
+    except KeyError:
+        raise HTTPException(404, "Categoria desconhecida")
+
+@app.post("/api/storage/{cat_id}/delete")
+async def api_storage_delete(request: Request, cat_id: str, ids: str = Form(...)):
+    """Apaga itens escolhidos. `ids` vem separado por \\n (nome de arquivo
+    pode conter vírgula)."""
+    _require_admin(request)
+    lista = [i for i in (ids or "").split("\n") if i.strip()]
+    if not lista:
+        raise HTTPException(400, "Nenhum item informado")
+    try:
+        if cat_id == "sobras":
+            res = storage.apagar_sobras(lista)
+        else:
+            res = storage.apagar(cat_id, lista)
+            _storage_sincronizar_catalogos(cat_id, lista)
+    except KeyError:
+        raise HTTPException(404, "Categoria desconhecida")
+    return res
+
+@app.post("/api/storage/{cat_id}/clear")
+async def api_storage_clear(request: Request, cat_id: str):
+    """Esvazia uma categoria inteira — oferecido só para as regeneráveis."""
+    _require_admin(request)
+    cfg = storage.CATEGORIAS.get(cat_id)
+    if not cfg:
+        raise HTTPException(404, "Categoria desconhecida")
+    if not cfg["regeneravel"]:
+        raise HTTPException(400, "Esta categoria guarda conteúdo seu — "
+                                 "apague item por item.")
+    return storage.limpar_categoria(cat_id)
 
 # ── Assinaturas (acompanhar canais/perfis) ─────────────────────
 # Assina um canal/perfil e o poller traz o que sai de novo, já mandando para o

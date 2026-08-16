@@ -2969,7 +2969,7 @@ function switchTab(tab) {
 // Group = 'main' for the page tabs, 'modal' for the upload modal tabs.
 const _TABLIST_GROUPS = {
   main:  ['main-tab-transcriptions', 'main-tab-public', 'main-tab-media',
-          'main-tab-social', 'main-tab-compress', 'main-tab-subs', 'main-tab-advanced'],
+          'main-tab-social', 'main-tab-compress', 'main-tab-storage', 'main-tab-subs', 'main-tab-advanced'],
   modal: ['tab-file', 'tab-url', 'tab-batch'],
   'adv-type':    ['adv-type-video', 'adv-type-audio'],
   'adv-urlmode': ['adv-urlmode-single', 'adv-urlmode-batch'],
@@ -3001,6 +3001,7 @@ const _MAIN_TAB_TITLES = {
   media:          'Biblioteca de Mídia',
   social:         'Redes Sociais',
   compress:       'Comprimir Vídeo',
+  storage:        'Armazenamento',
   subs:           'Assinaturas',
   advanced:       'Download Avançado',
 };
@@ -3014,18 +3015,19 @@ const _MAIN_TAB_CARDS = {
   media:          'card-media',
   social:         'card-social',
   compress:       'card-compress',
+  storage:        'card-storage',
   subs:           'card-subs',
   advanced:       'card-advanced',
 };
 
 // Abas restritas ao admin. A equipe não tem o botão, mas quem chama
 // switchMainTab por outro caminho cai aqui e volta para a aba inicial.
-const _ADMIN_ONLY_TABS = new Set(['public', 'social', 'subs', 'compress']);
+const _ADMIN_ONLY_TABS = new Set(['public', 'social', 'subs', 'compress', 'storage']);
 
 function switchMainTab(tab) {
   if (_ADMIN_ONLY_TABS.has(tab) && !_me.is_admin) tab = 'transcriptions';
   const activeCard = _MAIN_TAB_CARDS[tab] || 'card-transcriptions';
-  ['transcriptions', 'public', 'media', 'social', 'compress', 'subs', 'advanced'].forEach(t => {
+  ['transcriptions', 'public', 'media', 'social', 'compress', 'storage', 'subs', 'advanced'].forEach(t => {
     const pressed = t === tab;
     const btn = document.getElementById('main-tab-' + t);
     if (btn) {
@@ -3075,6 +3077,7 @@ function switchMainTab(tab) {
   // Assinaturas: idem — o botão está escondido para a equipe, e o guard evita
   // disparar chamadas que o servidor recusaria com 403.
   if (tab === 'subs' && _me.is_admin && typeof loadSubscriptions === 'function') loadSubscriptions();
+  if (tab === 'storage' && _me.is_admin && typeof loadStorage === 'function') loadStorage();
 }
 
 function formatBytes(bytes, decimals = 1) {
@@ -6392,4 +6395,223 @@ function _acompanharCompressao(taskId) {
       }
     } catch { /* falha de rede pontual — a próxima volta tenta de novo */ }
   }, 1200);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ARMAZENAMENTO — o que ocupa disco e como liberar
+// ═══════════════════════════════════════════════════════════════
+let _storageAberta = null;   // categoria expandida no momento
+
+function _storageMsg(t, k) {
+  const el = document.getElementById('storage-msg');
+  if (!el) return;
+  el.textContent = t || '';
+  el.className = 'pub-msg' + (t ? ' is-' + k : '');
+}
+
+async function loadStorage() {
+  try {
+    const r = await fetch('/api/storage');
+    if (!r.ok) { _storageMsg('Não foi possível ler o armazenamento.', 'error'); return; }
+    const d = await r.json();
+    _renderStorageResumo(d);
+    _renderStorageCats(d.categorias || []);
+    _renderStorageSobras(d.sobras || []);
+  } catch {
+    _storageMsg('Erro de rede.', 'error');
+  }
+}
+
+function _renderStorageResumo(d) {
+  const box = document.getElementById('storage-summary');
+  if (!box) return;
+  box.innerHTML = `
+    <div class="storage-total">
+      <div class="storage-total-num">${esc(formatBytes(d.total_bytes || 0))}</div>
+      <div class="storage-total-lbl">guardados pelo sistema</div>
+    </div>
+    <div class="storage-total">
+      <div class="storage-total-num">${esc(formatBytes(d.livre_bytes || 0))}</div>
+      <div class="storage-total-lbl">livres no disco</div>
+    </div>`;
+}
+
+function _renderStorageCats(cats) {
+  const box = document.getElementById('storage-cats');
+  if (!box) return;
+  const maior = Math.max(1, ...cats.map(c => c.bytes || 0));
+  box.innerHTML = cats.map(c => `
+    <div class="storage-cat" id="stcat-${esc(c.id)}">
+      <div class="storage-cat-head">
+        <div class="storage-cat-info">
+          <div class="storage-cat-title">
+            ${esc(c.titulo)}
+            ${c.regeneravel ? '<span class="social-badge">recriado sozinho</span>' : ''}
+          </div>
+          <div class="storage-cat-sub">${esc(c.descricao)}</div>
+          <div class="storage-bar"><div class="storage-bar-fill" style="width:${Math.round((c.bytes / maior) * 100)}%"></div></div>
+        </div>
+        <div class="storage-cat-right">
+          <div class="storage-cat-size">${esc(formatBytes(c.bytes || 0))}</div>
+          <div class="storage-cat-count">${c.itens} ${c.itens === 1 ? 'item' : 'itens'}</div>
+          <div class="storage-cat-actions">
+            <button type="button" class="btn" onclick="toggleStorageCat('${jsAttr(c.id)}')"
+                    ${c.itens ? '' : 'disabled'}>Ver itens</button>
+            ${c.regeneravel && c.itens ? `
+            <button type="button" class="btn" onclick="limparCategoria('${jsAttr(c.id)}', '${jsAttr(c.titulo)}')">Limpar tudo</button>` : ''}
+          </div>
+        </div>
+      </div>
+      <div class="storage-cat-body" id="stbody-${esc(c.id)}" style="display:none"></div>
+    </div>`).join('');
+}
+
+async function toggleStorageCat(catId) {
+  const body = document.getElementById('stbody-' + catId);
+  if (!body) return;
+  if (_storageAberta === catId) {          // clicou de novo: fecha
+    body.style.display = 'none';
+    _storageAberta = null;
+    return;
+  }
+  document.querySelectorAll('.storage-cat-body').forEach(b => b.style.display = 'none');
+  _storageAberta = catId;
+  body.style.display = 'block';
+  body.innerHTML = '<div class="storage-skeleton">Carregando itens…</div>';
+  try {
+    const r = await fetch(`/api/storage/${encodeURIComponent(catId)}`);
+    if (!r.ok) { body.innerHTML = '<div class="storage-skeleton">Não foi possível listar.</div>'; return; }
+    const d = await r.json();
+    if (!d.itens.length) { body.innerHTML = '<div class="storage-skeleton">Nada guardado aqui.</div>'; return; }
+    body.innerHTML = `
+      <div class="storage-items">
+        ${d.itens.map(i => `
+        <label class="storage-item${i.em_uso ? ' is-busy' : ''}">
+          <input type="checkbox" class="checkbox" value="${jsAttr(i.id)}"
+                 data-cat="${jsAttr(catId)}" ${i.em_uso ? 'disabled' : ''} />
+          <span class="storage-item-name">${esc(i.nome)}${i.detalhe ? ` <span class="storage-item-det">${esc(i.detalhe)}</span>` : ''}</span>
+          <span class="storage-item-size">${esc(formatBytes(i.bytes))}</span>
+          ${i.em_uso ? '<span class="social-badge">em uso agora</span>' : ''}
+        </label>`).join('')}
+      </div>
+      ${d.truncado ? `<p class="storage-sec-hint">Mostrando os ${d.itens.length} maiores de ${d.total}.</p>` : ''}
+      <div class="storage-item-actions">
+        <button type="button" class="btn" onclick="storageMarcarTodos('${jsAttr(catId)}', true)">Selecionar todos</button>
+        <button type="button" class="btn" onclick="storageMarcarTodos('${jsAttr(catId)}', false)">Limpar seleção</button>
+        <button type="button" class="btn btn-danger" onclick="apagarSelecionados('${jsAttr(catId)}', '${jsAttr(d.titulo)}', ${d.regeneravel})">
+          Apagar selecionados
+        </button>
+      </div>`;
+  } catch {
+    body.innerHTML = '<div class="storage-skeleton">Erro de rede.</div>';
+  }
+}
+
+function storageMarcarTodos(catId, marcar) {
+  document.querySelectorAll(`#stbody-${CSS.escape(catId)} input[type=checkbox]:not(:disabled)`)
+    .forEach(c => { c.checked = marcar; });
+}
+
+async function apagarSelecionados(catId, titulo, regeneravel) {
+  const ids = [...document.querySelectorAll(`#stbody-${CSS.escape(catId)} input[type=checkbox]:checked`)]
+    .map(c => c.value);
+  if (!ids.length) { _storageMsg('Selecione o que você quer apagar.', 'error'); return; }
+
+  const total = [...document.querySelectorAll(`#stbody-${CSS.escape(catId)} input[type=checkbox]:checked`)]
+    .map(c => c.closest('.storage-item')?.querySelector('.storage-item-size')?.textContent || '')
+    .filter(Boolean);
+
+  const ok = await showConfirm({
+    title: `Apagar ${ids.length} ${ids.length === 1 ? 'item' : 'itens'} de ${titulo}?`,
+    message: regeneravel
+      ? 'Estes arquivos são recriados pelo sistema quando precisar — pode apagar sem receio.'
+      : 'Isto remove os arquivos do disco e não tem como desfazer. '
+        + (catId === 'uploads'
+            ? 'As transcrições continuam salvas; só o áudio/vídeo original é removido.'
+            : ''),
+    confirmText: `Apagar ${ids.length}`,
+    danger: !regeneravel,
+  });
+  if (!ok) return;
+
+  try {
+    const fd = new FormData();
+    fd.append('ids', ids.join('\n'));
+    const r = await fetch(`/api/storage/${encodeURIComponent(catId)}/delete`, { method: 'POST', body: fd });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { _storageMsg(d.detail || 'Não foi possível apagar.', 'error'); return; }
+    _storageMsg(`${d.apagados} ${d.apagados === 1 ? 'item apagado' : 'itens apagados'} — `
+              + `${formatBytes(d.liberados_bytes || 0)} liberados.`, 'ok');
+    if (d.em_uso && d.em_uso.length) {
+      showToast(`${d.em_uso.length} arquivo(s) não foram apagados porque estão em uso agora.`, '');
+    }
+    _storageAberta = null;
+    await loadStorage();
+  } catch {
+    _storageMsg('Erro de rede ao apagar.', 'error');
+  }
+}
+
+async function limparCategoria(catId, titulo) {
+  const ok = await showConfirm({
+    title: `Limpar ${titulo}?`,
+    message: 'Estes arquivos são recriados pelo sistema quando precisar. '
+           + 'Nada do seu acervo é perdido.',
+    confirmText: 'Limpar',
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/api/storage/${encodeURIComponent(catId)}/clear`, { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { _storageMsg(d.detail || 'Não foi possível limpar.', 'error'); return; }
+    _storageMsg(`${formatBytes(d.liberados_bytes || 0)} liberados.`, 'ok');
+    await loadStorage();
+  } catch {
+    _storageMsg('Erro de rede.', 'error');
+  }
+}
+
+function _renderStorageSobras(sobras) {
+  const wrap = document.getElementById('storage-sobras-wrap');
+  const box = document.getElementById('storage-sobras');
+  if (!wrap || !box) return;
+  if (!sobras.length) { wrap.style.display = 'none'; return; }
+  wrap.style.display = '';
+  box.innerHTML = `
+    <div class="storage-items">
+      ${sobras.map(s => `
+      <label class="storage-item">
+        <input type="checkbox" class="checkbox" value="${jsAttr(s.id)}" data-cat="sobras" />
+        <span class="storage-item-name">${esc(s.nome)}
+          <span class="storage-item-det">${esc(s.motivo)}</span></span>
+        <span class="storage-item-size">${esc(formatBytes(s.bytes))}</span>
+      </label>`).join('')}
+    </div>
+    <div class="storage-item-actions">
+      <button type="button" class="btn btn-danger" onclick="apagarSobras()">Apagar selecionados</button>
+    </div>`;
+}
+
+async function apagarSobras() {
+  const ids = [...document.querySelectorAll('#storage-sobras input[type=checkbox]:checked')].map(c => c.value);
+  if (!ids.length) { _storageMsg('Selecione o que você quer apagar.', 'error'); return; }
+  const ok = await showConfirm({
+    title: `Apagar ${ids.length} ${ids.length === 1 ? 'arquivo' : 'arquivos'}?`,
+    message: 'Confira os nomes antes: são arquivos soltos na pasta de dados. '
+           + 'Não tem como desfazer.',
+    confirmText: 'Apagar',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const fd = new FormData();
+    fd.append('ids', ids.join('\n'));
+    const r = await fetch('/api/storage/sobras/delete', { method: 'POST', body: fd });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { _storageMsg(d.detail || 'Não foi possível apagar.', 'error'); return; }
+    _storageMsg(`${d.apagados} apagado(s) — ${formatBytes(d.liberados_bytes || 0)} liberados.`, 'ok');
+    await loadStorage();
+  } catch {
+    _storageMsg('Erro de rede.', 'error');
+  }
 }

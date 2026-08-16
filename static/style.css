@@ -2267,3 +2267,60 @@ body[data-role="public"] .nav-group-label.group-empty-for-public { display: none
     align-items: start;
   }
 }
+
+/* ── Armazenamento ───────────────────────────────────────────────
+   Duas leituras: quanto cada tipo de dado ocupa (barra comparativa) e o
+   que dá para apagar. As categorias que o sistema recria sozinho ganham
+   selo e ação de limpar direto; as que guardam conteúdo do usuário só
+   permitem apagar item a item, de propósito. */
+.storage-body { padding: 24px; display: flex; flex-direction: column; gap: 20px; }
+
+.storage-summary { display: flex; gap: 32px; flex-wrap: wrap; }
+.storage-total-num { font-size: 26px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.storage-total-lbl { font-size: 12px; color: var(--slate-500); margin-top: 2px; }
+
+.storage-cats { display: flex; flex-direction: column; gap: 10px; }
+
+.storage-cat { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.storage-cat-head { display: flex; gap: 20px; padding: 16px; align-items: flex-start; }
+.storage-cat-info { flex: 1; min-width: 0; }
+.storage-cat-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; font-weight: 650; color: var(--text); }
+.storage-cat-sub { margin-top: 3px; font-size: 12px; line-height: 1.5; color: var(--slate-500); max-width: 68ch; }
+
+/* Barra comparativa: mostra de relance quem é o vilão do disco. */
+.storage-bar { margin-top: 10px; height: 6px; border-radius: 999px; background: var(--slate-100); overflow: hidden; }
+.storage-bar-fill { height: 100%; background: var(--blue); border-radius: 999px; }
+
+.storage-cat-right { text-align: right; flex-shrink: 0; }
+.storage-cat-size { font-size: 15px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.storage-cat-count { font-size: 11.5px; color: var(--slate-500); }
+.storage-cat-actions { display: flex; gap: 6px; margin-top: 8px; justify-content: flex-end; flex-wrap: wrap; }
+
+.storage-cat-body { border-top: 1px solid var(--border); padding: 14px 16px; }
+.storage-items { display: flex; flex-direction: column; gap: 2px; max-height: 380px; overflow-y: auto; overscroll-behavior: contain; }
+
+.storage-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: 8px; cursor: pointer;
+  font-size: 13px; min-height: 40px;
+}
+.storage-item:hover { background: var(--slate-50, #f8fafc); }
+.storage-item.is-busy { opacity: .6; cursor: not-allowed; }
+.storage-item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.storage-item-det { color: var(--slate-500); font-size: 11.5px; }
+.storage-item-size { font-variant-numeric: tabular-nums; color: var(--slate-600); flex-shrink: 0; }
+
+.storage-item-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+
+.storage-sec-title { margin: 0; font-size: 14px; font-weight: 700; color: var(--text); }
+.storage-sec-hint { margin: 4px 0 10px; font-size: 12px; line-height: 1.5; color: var(--slate-500); max-width: 68ch; }
+.storage-sobras { border: 1px solid var(--amber-200, #fde68a); background: var(--amber-50, #fffbeb); border-radius: 12px; padding: 16px; }
+.storage-skeleton { padding: 14px; font-size: 13px; color: var(--slate-500); }
+
+@media (max-width: 720px) {
+  .storage-body { padding: 16px; }
+  .storage-cat-head { flex-direction: column; gap: 12px; }
+  .storage-cat-right { text-align: left; }
+  .storage-cat-actions { justify-content: flex-start; }
+  .storage-item { min-height: 48px; }
+}

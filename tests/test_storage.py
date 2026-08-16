@@ -1,0 +1,116 @@
+"""Tela de Armazenamento: inventário e limpeza."""
+import os, sys
+import pytest
+
+_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+import storage
+
+
+@pytest.fixture
+def disco(tmp_path, monkeypatch):
+    """Estrutura de pastas isolada, com as mesmas categorias do app."""
+    d = tmp_path / ".whisper_data"
+    up, res = d / "uploads", d / "results"
+    soc = d / "social"
+    data, cache, exp, med = soc/"data", soc/"cache"/"thumbs", soc/"exports", soc/"media"
+    for p in (up, res, data, cache, exp, med):
+        p.mkdir(parents=True)
+    (up / "abc_video.mp4").write_bytes(b"x" * 5000)
+    (up / "def_audio.mp3").write_bytes(b"y" * 1000)
+    (res / "abc_video").mkdir(); (res / "abc_video" / "t.txt").write_bytes(b"z" * 300)
+    (data / "perfil_2026-08-11_1430.json").write_bytes(b"{}" * 100)
+    (cache / "thumb1.jpg").write_bytes(b"j" * 700)
+    (exp / "planilha.xlsx").write_bytes(b"e" * 400)
+    (d / "history.json").write_text("[]")
+    (d / "history 2.json").write_text("[]")          # cópia do iCloud
+    (d / "auth.json.bak-2026").write_text("{}")      # backup antigo
+
+    monkeypatch.setattr(storage, "DATA_DIR", str(d))
+    monkeypatch.setattr(storage, "UPLOAD_DIR", str(up))
+    monkeypatch.setattr(storage, "RESULTS_DIR", str(res))
+    monkeypatch.setattr(storage, "SOCIAL_DATA_DIR", str(data))
+    monkeypatch.setattr(storage, "SOCIAL_CACHE_DIR", str(cache))
+    monkeypatch.setattr(storage, "SOCIAL_EXPORT_DIR", str(exp))
+    monkeypatch.setattr(storage, "SOCIAL_MEDIA_DIR", str(med))
+    cats = {k: dict(v) for k, v in storage.CATEGORIAS.items()}
+    cats["uploads"]["pasta"] = str(up);          cats["results"]["pasta"] = str(res)
+    cats["social_data"]["pasta"] = str(data);    cats["social_cache"]["pasta"] = str(cache)
+    cats["social_exports"]["pasta"] = str(exp);  cats["social_media"]["pasta"] = str(med)
+    monkeypatch.setattr(storage, "CATEGORIAS", cats)
+    storage.configure(em_uso=lambda f: None)
+    return {"up": up, "res": res, "data": data, "cache": cache, "d": d}
+
+
+def test_overview_soma_tudo(disco):
+    o = storage.overview()
+    assert o["total_bytes"] > 0
+    ids = {c["id"] for c in o["categorias"]}
+    assert "uploads" in ids and "social_data" in ids
+    # ordenado do maior para o menor
+    bytes_ = [c["bytes"] for c in o["categorias"]]
+    assert bytes_ == sorted(bytes_, reverse=True)
+
+
+def test_lista_itens_ordenada(disco):
+    r = storage.listar_itens("uploads")
+    assert [i["nome"] for i in r["itens"]] == ["abc_video.mp4", "def_audio.mp3"]
+
+
+def test_coleta_ganha_nome_legivel(disco):
+    r = storage.listar_itens("social_data")
+    item = r["itens"][0]
+    assert item["nome"] == "@perfil"
+    assert "2026-08-11" in item["detalhe"]
+
+
+def test_apagar_libera_espaco(disco):
+    r = storage.apagar("uploads", ["def_audio.mp3"])
+    assert r["apagados"] == 1 and r["liberados_bytes"] == 1000
+    assert not (disco["up"] / "def_audio.mp3").exists()
+    assert (disco["up"] / "abc_video.mp4").exists()   # não levou o vizinho
+
+
+def test_apagar_pasta_de_resultado(disco):
+    r = storage.apagar("results", ["abc_video"])
+    assert r["apagados"] == 1
+    assert not (disco["res"] / "abc_video").exists()
+
+
+def test_nunca_apaga_arquivo_em_uso(disco):
+    storage.configure(em_uso=lambda f: "task-123" if f == "abc_video.mp4" else None)
+    r = storage.apagar("uploads", ["abc_video.mp4"])
+    assert r["apagados"] == 0 and r["em_uso"] == ["abc_video.mp4"]
+    assert (disco["up"] / "abc_video.mp4").exists()
+
+
+@pytest.mark.parametrize("malicioso", ["../history.json", "/etc/passwd", "..", "."])
+def test_nao_escapa_da_pasta(disco, malicioso):
+    storage.apagar("uploads", [malicioso])
+    assert (disco["d"] / "history.json").exists()      # nada fora foi tocado
+
+
+def test_limpar_so_vale_para_regeneravel(disco):
+    r = storage.limpar_categoria("social_cache")
+    assert r["apagados"] == 1
+    assert storage.listar_itens("social_cache")["total"] == 0
+
+
+def test_sobras_detecta_copia_do_icloud(disco):
+    nomes = {s["nome"]: s["motivo"] for s in storage.sobras()}
+    assert "history 2.json" in nomes and "iCloud" in nomes["history 2.json"]
+    assert "auth.json.bak-2026" in nomes
+    assert "history.json" not in nomes                 # o legítimo fica fora
+
+
+def test_apagar_sobras_nao_toca_no_legitimo(disco):
+    r = storage.apagar_sobras(["history.json", "history 2.json"])
+    assert r["apagados"] == 1
+    assert (disco["d"] / "history.json").exists()
+    assert not (disco["d"] / "history 2.json").exists()
+
+
+def test_categoria_invalida(disco):
+    with pytest.raises(KeyError):
+        storage.listar_itens("inventada")
