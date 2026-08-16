@@ -4231,6 +4231,19 @@ async def api_subscriptions_delete(request: Request, sub_id: str):
         raise HTTPException(404, "Assinatura não encontrada")
     return {"ok": True}
 
+@app.post("/api/subscriptions/{sub_id}/download-latest")
+async def api_subscriptions_download_latest(request: Request, sub_id: str,
+                                            quantidade: int = Form(5)):
+    """Baixa agora os N mais recentes do canal, sem esperar sair novidade."""
+    _require_admin(request)
+    if not subscriptions._get(sub_id):
+        raise HTTPException(404, "Assinatura não encontrada")
+    # Em thread: a coleta abre o navegador nas redes sociais e demora.
+    threading.Thread(
+        target=lambda: subscriptions.download_latest(sub_id, quantidade),
+        daemon=True).start()
+    return {"ok": True, "message": f"Buscando os {quantidade} mais recentes…"}
+
 @app.post("/api/subscriptions/{sub_id}/check")
 async def api_subscriptions_check(request: Request, sub_id: str):
     """Checa agora, sem esperar o intervalo. Roda em thread: a coleta pode

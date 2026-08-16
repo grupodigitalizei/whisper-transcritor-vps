@@ -4744,6 +4744,11 @@ enhanceSelects();
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                   Baixar Original para o PC
                 </div>
+                ${_me.is_admin ? `
+                <div class="dd-item" role="menuitem" tabindex="-1" onclick="compressOneMedia('${jsAttr(f.file)}')">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+                  Comprimir para ocupar menos espaço
+                </div>` : ''}
                 <div class="dd-sep"></div>` : ''}
                 ${_me.is_admin ? (f.visibility === 'public' ? `
                 <div class="dd-item" role="menuitem" tabindex="-1" onclick="setMediaVisibility('${jsAttr(f.file)}', false)">
@@ -5825,8 +5830,10 @@ function renderSubscriptions() {
   if (!box) return;
   if (!_subs.length) {
     box.innerHTML = `<p class="adv-dl-intro" style="margin-top:18px">
-      Nenhuma assinatura ainda. Cadastre um canal acima para o sistema
-      acompanhar sozinho.</p>`;
+      <strong>Nenhum canal cadastrado ainda.</strong><br>
+      Preencha o campo “Canal ou perfil” acima e clique em <strong>Assinar</strong>.
+      Depois aparece aqui um botão <strong>“Baixar vídeos agora”</strong> para trazer
+      os vídeos na hora.</p>`;
     return;
   }
   box.innerHTML = _subs.map(s => {
@@ -5853,9 +5860,14 @@ function renderSubscriptions() {
         </div>
       </div>
       <div class="subs-item-actions">
+        <button type="button" class="btn btn-primary" onclick="downloadLatestFromSub('${jsAttr(s.id)}')"
+                title="Traz os vídeos mais recentes deste canal agora mesmo">
+          ${sic('dl')} Baixar vídeos agora
+        </button>
         <button type="button" class="btn" onclick="checkSubscriptionNow('${jsAttr(s.id)}')"
-                title="Checar agora, sem esperar o intervalo">Checar agora</button>
-        <button type="button" class="btn" onclick="toggleSubscription('${jsAttr(s.id)}', ${s.paused ? 'false' : 'true'})">
+                title="Procura se saiu algo novo desde a última vez">Procurar novidades</button>
+        <button type="button" class="btn" onclick="toggleSubscription('${jsAttr(s.id)}', ${s.paused ? 'false' : 'true'})"
+                title="${s.paused ? 'Voltar a acompanhar este canal' : 'Parar de acompanhar por enquanto'}">
           ${s.paused ? 'Retomar' : 'Pausar'}
         </button>
         <button type="button" class="btn btn-danger" onclick="deleteSubscription('${jsAttr(s.id)}')"
@@ -5930,6 +5942,41 @@ async function deleteSubscription(id) {
   }
 }
 
+// "Baixar vídeos agora": traz os mais recentes do canal sem esperar novidade.
+// É o que a maioria quer ao assinar um canal — pegar o que já está lá.
+async function downloadLatestFromSub(id) {
+  const sub = _subs.find(s => s.id === id);
+  const quantidade = await showChoice({
+    title: `Baixar de "${sub?.label || 'canal'}"`,
+    message: sub?.auto_transcribe
+      ? 'Os vídeos serão baixados e transcritos automaticamente. Quantos você quer trazer agora?'
+      : 'Os vídeos serão baixados (sem transcrever). Quantos você quer trazer agora?',
+    choices: [
+      { value: '1',  label: 'O mais recente',   description: 'Só o último vídeo publicado' },
+      { value: '3',  label: '3 mais recentes',  description: 'Bom para testar' },
+      { value: '5',  label: '5 mais recentes',  description: 'Recomendado' },
+      { value: '10', label: '10 mais recentes', description: 'Pode demorar bastante' },
+    ],
+  });
+  if (!quantidade) return;
+
+  const fd = new FormData();
+  fd.append('quantidade', quantidade);
+  try {
+    const r = await fetch(`/api/subscriptions/${encodeURIComponent(id)}/download-latest`,
+                          { method: 'POST', body: fd });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { _subsMsg(d.detail || 'Não foi possível iniciar.', 'error'); return; }
+    _subsMsg(`Buscando os ${quantidade} mais recentes… acompanhe em `
+           + `${sub?.auto_transcribe ? 'Transcrições' : 'Biblioteca de Mídia'}.`, 'ok');
+    showToast('Busca iniciada — os vídeos vão aparecer na lista conforme chegam.', 'success');
+    setTimeout(loadSubscriptions, 5000);
+    setTimeout(loadSubscriptions, 15000);
+  } catch {
+    _subsMsg('Erro de rede.', 'error');
+  }
+}
+
 async function checkSubscriptionNow(id) {
   _subsMsg('Checando… nas redes sociais isso abre o ego lite e pode demorar um pouco.', 'ok');
   try {
@@ -5952,6 +5999,15 @@ async function checkSubscriptionNow(id) {
 // "substituir", é irreversível para quem só tinha aquela cópia.
 const _COMPRESS_PRESET_KEY = 'wt:compress-preset';
 
+// Comprimir UM arquivo, direto do menu da linha. É o caminho que a maioria
+// usa: ninguém deveria precisar descobrir que existe uma barra de seleção em
+// massa para conseguir comprimir um vídeo.
+async function compressOneMedia(filename) {
+  closeAllDDs();
+  await _compressFiles([filename]);
+}
+
+// Comprimir os selecionados (barra de ações em massa).
 async function compressSelectedMedia() {
   // Mesma fonte que excluir/publicar/retentar usam: só o que está VISÍVEL no
   // filtro atual. Com Array.from(_mediaSelected) a compressão pegava também
@@ -5960,14 +6016,19 @@ async function compressSelectedMedia() {
     ? _selectedVisibleMediaIds()
     : Array.from(_mediaSelected);
   if (!files.length) return;
+  await _compressFiles(files);
+}
 
+// Núcleo compartilhado pelos dois caminhos, para não haver duas experiências
+// diferentes de compressão dependendo de onde o usuário clicou.
+async function _compressFiles(files) {
   // Só faz sentido para áudio/vídeo — nunca some com a seleção em silêncio.
   const alvos = files.filter(f => {
     const t = _fileTypeFor(f);
     return t === 'video' || t === 'audio';
   });
   if (!alvos.length) {
-    showToast('Nenhum arquivo de áudio ou vídeo na seleção.', 'error');
+    showToast('Só é possível comprimir áudio ou vídeo.', 'error');
     return;
   }
 

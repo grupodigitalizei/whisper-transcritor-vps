@@ -411,6 +411,56 @@ def _start_items(sub: dict, items: list) -> list:
     return [i for i in started_ids if i]
 
 
+def download_latest(sub_id: str, quantidade: int = 5) -> dict:
+    """Baixa AGORA os N conteúdos mais recentes do canal/perfil, tenha ou não
+    saído coisa nova.
+
+    Existe porque "esperar sair um vídeo novo" não é o único uso real: muitas
+    vezes a pessoa assina um canal justamente para pegar o que já está lá. Sem
+    isto, a única forma de trazer o acervo era apagar a assinatura e recriá-la
+    escolhendo `initial_import` — nada óbvio.
+    """
+    sub = _get(sub_id)
+    if not sub:
+        raise KeyError("assinatura não encontrada")
+    quantidade = max(1, min(HARD_MAX_PER_CHECK, int(quantidade)))
+
+    discover = _discover.get(sub["platform"])
+    if not discover:
+        msg = f"sem coletor disponível para {sub['platform']}"
+        _mark_result(sub_id, status="erro", message=msg)
+        return {"status": "erro", "message": msg, "started": 0}
+
+    with _lock:
+        if sub_id in _em_checagem:
+            return {"status": "ocupada",
+                    "message": "esta assinatura já está sendo processada agora",
+                    "started": 0}
+        _em_checagem.add(sub_id)
+    try:
+        try:
+            items = discover(sub["target"], quantidade) or []
+        except Exception as exc:  # noqa: BLE001
+            msg = f"falha ao consultar: {exc}"
+            _mark_result(sub_id, status="erro", message=msg)
+            return {"status": "erro", "message": msg, "started": 0}
+
+        # Aqui NÃO filtramos por seen_ids: o usuário pediu explicitamente estes
+        # itens. O que já estiver no acervo o pipeline resolve como sempre.
+        take = items[:quantidade]
+        started_ids = _start_items(sub, take)
+        started = len(started_ids)
+        msg = (f"{started} item(ns) mais recentes em processamento"
+               if started else "nada foi iniciado (o canal não devolveu itens)")
+        _mark_result(sub_id, status="ok", message=msg,
+                     new_ids=started_ids, fetched=started,
+                     bootstrapped=True)
+        return {"status": "ok", "message": msg, "started": started}
+    finally:
+        with _lock:
+            _em_checagem.discard(sub_id)
+
+
 def due_subscriptions(now: float | None = None) -> list:
     """Assinaturas cuja hora de checar chegou (ativas e vencidas)."""
     now = now if now is not None else time.time()
