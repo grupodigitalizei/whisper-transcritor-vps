@@ -114,3 +114,57 @@ def test_apagar_sobras_nao_toca_no_legitimo(disco):
 def test_categoria_invalida(disco):
     with pytest.raises(KeyError):
         storage.listar_itens("inventada")
+
+
+# ── prévia antes de apagar ─────────────────────────────────────────────────
+def test_preview_transcricao_mostra_trecho(disco):
+    (disco["res"] / "abc_video" / "abc_video.txt").write_text(
+        "Este é o conteúdo falado no vídeo, para conferir antes de apagar.",
+        encoding="utf-8")
+    p = storage.preview("results", "abc_video")
+    assert p["tipo"] == "texto"
+    assert "conteúdo falado" in p["texto"]
+
+
+def test_preview_coleta_le_perfil_e_posts(disco):
+    import json
+    (disco["data"] / "perfil_2026-08-11_1430.json").write_text(json.dumps({
+        "profile": {"username": "canal", "platform": "Instagram"},
+        "collected_at": "2026-08-11T14:30:00",
+        "rows": [{"caption": "Primeiro post", "likes": 10},
+                 {"caption": "Segundo post", "likes": 20}],
+    }), encoding="utf-8")
+    p = storage.preview("social_data", "perfil_2026-08-11_1430.json")
+    assert p["tipo"] == "lista"
+    assert p["itens"][0]["titulo"] == "Primeiro post"
+    rotulos = {d["rotulo"]: d["valor"] for d in p["detalhes"]}
+    assert rotulos["Perfil"] == "@canal" and rotulos["Posts"] == "2"
+
+
+def test_preview_aceita_caption_como_objeto(disco):
+    """A API do Instagram devolve caption como {"text": ...}, não string —
+    o formato cru quebrava a prévia."""
+    import json
+    (disco["data"] / "perfil_2026-08-11_1430.json").write_text(json.dumps({
+        "profile": {"username": "canal"},
+        "items": [{"caption": {"text": "Legenda em objeto"}}],
+    }), encoding="utf-8")
+    p = storage.preview("social_data", "perfil_2026-08-11_1430.json")
+    assert p["itens"][0]["titulo"] == "Legenda em objeto"
+
+
+def test_preview_video_aponta_para_a_midia(disco):
+    p = storage.preview("uploads", "abc_video.mp4")
+    assert p["tipo"] == "video" and p["url"].endswith("abc_video.mp4")
+
+
+@pytest.mark.parametrize("malicioso", ["../history.json", "/etc/passwd", ".."])
+def test_preview_nao_escapa_da_pasta(disco, malicioso):
+    with pytest.raises((FileNotFoundError, KeyError)):
+        storage.preview("uploads", malicioso)
+
+
+def test_caminho_de_valida_pasta(disco):
+    assert storage.caminho_de("uploads", "abc_video.mp4").endswith("abc_video.mp4")
+    with pytest.raises(FileNotFoundError):
+        storage.caminho_de("uploads", "../history.json")

@@ -6506,13 +6506,20 @@ async function toggleStorageCat(catId) {
     body.innerHTML = `
       <div class="storage-items">
         ${d.itens.map(i => `
-        <label class="storage-item${i.em_uso ? ' is-busy' : ''}">
-          <input type="checkbox" class="checkbox" value="${jsAttr(i.id)}"
-                 data-cat="${jsAttr(catId)}" ${i.em_uso ? 'disabled' : ''} />
-          <span class="storage-item-name">${esc(i.nome)}${i.detalhe ? ` <span class="storage-item-det">${esc(i.detalhe)}</span>` : ''}</span>
+        <div class="storage-item${i.em_uso ? ' is-busy' : ''}">
+          <label class="storage-item-pick">
+            <input type="checkbox" class="checkbox" value="${jsAttr(i.id)}"
+                   data-cat="${jsAttr(catId)}" ${i.em_uso ? 'disabled' : ''} />
+            <span class="storage-item-name">${esc(i.nome)}${i.detalhe ? ` <span class="storage-item-det">${esc(i.detalhe)}</span>` : ''}</span>
+          </label>
           <span class="storage-item-size">${esc(formatBytes(i.bytes))}</span>
-          ${i.em_uso ? '<span class="social-badge">em uso agora</span>' : ''}
-        </label>`).join('')}
+          ${i.em_uso ? '<span class="tag-soft">em uso agora</span>' : ''}
+          <button type="button" class="storage-eye" title="Ver o conteúdo antes de apagar"
+                  aria-label="Pré-visualizar ${esc(i.nome)}"
+                  onclick="previewStorageItem('${jsAttr(catId)}', '${jsAttr(i.id)}')">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>`).join('')}
       </div>
       ${d.truncado ? `<p class="storage-sec-hint">Mostrando os ${d.itens.length} maiores de ${d.total}.</p>` : ''}
       <div class="storage-item-actions">
@@ -6633,5 +6640,113 @@ async function apagarSobras() {
     await loadStorage();
   } catch {
     _storageMsg('Erro de rede.', 'error');
+  }
+}
+
+// ── Prévia do conteúdo antes de apagar ─────────────────────────
+// Os nomes em disco são gerados ("0032380b_DR4xe-djYWF") e não dizem nada
+// sobre o conteúdo. Sem conferir antes, apagar vira aposta.
+async function previewStorageItem(catId, itemId) {
+  const corpo = `<div class="storage-skeleton">Abrindo…</div>`;
+  const el = document.getElementById('storage-preview-body');
+  const ov = document.getElementById('storage-preview-overlay');
+  if (!el || !ov) return;
+  el.innerHTML = corpo;
+  document.getElementById('storage-preview-title').textContent = 'Pré-visualização';
+  ov.classList.add('open');
+  attachFocusTrap('storage-preview-overlay');
+
+  try {
+    const r = await fetch(`/api/storage/${encodeURIComponent(catId)}/preview/${encodeURIComponent(itemId)}`);
+    if (!r.ok) { el.innerHTML = '<div class="storage-skeleton">Não foi possível abrir este item.</div>'; return; }
+    const p = await r.json();
+    document.getElementById('storage-preview-title').textContent = p.nome || 'Pré-visualização';
+
+    const meta = `
+      <div class="prev-meta">
+        ${(p.detalhes || []).map(d => `
+          <div><span class="prev-meta-lbl">${esc(d.rotulo)}</span>
+               <span class="prev-meta-val">${esc(d.valor)}</span></div>`).join('')}
+        <div><span class="prev-meta-lbl">Tamanho</span>
+             <span class="prev-meta-val">${esc(formatBytes(p.bytes || 0))}</span></div>
+      </div>`;
+
+    let conteudo = '';
+    if (p.tipo === 'texto') {
+      conteudo = `<div class="prev-texto">${esc(p.texto || '')}</div>`;
+    } else if (p.tipo === 'lista') {
+      conteudo = `
+        <div class="prev-lista">
+          ${(p.itens || []).map(i => `
+            <div class="prev-post">
+              ${i.thumb ? `<img class="prev-post-thumb" loading="lazy" alt=""
+                    src="/api/social/thumb?url=${encodeURIComponent(i.thumb)}"
+                    onerror="this.style.visibility='hidden'">` : '<div class="prev-post-thumb"></div>'}
+              <div class="prev-post-txt">
+                <div class="prev-post-title">${esc(i.titulo)}</div>
+                ${i.sub ? `<div class="prev-post-sub">${esc(i.sub)}</div>` : ''}
+              </div>
+            </div>`).join('')}
+        </div>
+        ${p.restantes ? `<p class="storage-sec-hint">e mais ${p.restantes} post(s) nesta coleta.</p>` : ''}`;
+    } else if (p.tipo === 'video') {
+      conteudo = `<video class="prev-media" controls preload="metadata" src="${esc(p.url)}"></video>`;
+    } else if (p.tipo === 'audio') {
+      conteudo = `<audio class="prev-audio" controls preload="metadata" src="${esc(p.url)}"></audio>`;
+    } else if (p.tipo === 'imagem') {
+      conteudo = `<img class="prev-media" alt="Miniatura guardada em cache" src="${esc(p.url)}">`;
+    } else {
+      conteudo = `<div class="storage-skeleton">Este tipo de arquivo não tem prévia — confira o nome e o tamanho acima.</div>`;
+    }
+
+    el.innerHTML = meta + conteudo + `
+      <div class="prev-acoes">
+        <button type="button" class="btn" onclick="fecharPreviewStorage()">Fechar</button>
+        <button type="button" class="btn btn-danger"
+                onclick="apagarDaPrevia('${jsAttr(catId)}', '${jsAttr(itemId)}', '${jsAttr(p.nome || itemId)}')">
+          Apagar este item
+        </button>
+      </div>`;
+  } catch {
+    el.innerHTML = '<div class="storage-skeleton">Erro de rede.</div>';
+  }
+}
+
+function fecharPreviewStorage() {
+  const ov = document.getElementById('storage-preview-overlay');
+  if (!ov) return;
+  ov.classList.remove('open');
+  detachFocusTrap('storage-preview-overlay');
+  // Para o vídeo/áudio, senão continua tocando com o modal fechado.
+  document.querySelectorAll('#storage-preview-body video, #storage-preview-body audio')
+    .forEach(m => { try { m.pause(); } catch {} });
+}
+
+// Apagar direto da prévia: é o momento em que a pessoa tem certeza.
+async function apagarDaPrevia(catId, itemId, nome) {
+  const ok = await showConfirm({
+    title: `Apagar "${nome}"?`,
+    message: 'Isto remove o arquivo do disco e não tem como desfazer.'
+           + (catId === 'uploads' ? ' A transcrição continua salva.' : ''),
+    confirmText: 'Apagar',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const fd = new FormData();
+    fd.append('ids', itemId);
+    const r = await fetch(`/api/storage/${encodeURIComponent(catId)}/delete`, { method: 'POST', body: fd });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { showToast(d.detail || 'Não foi possível apagar.', 'error'); return; }
+    if (d.em_uso && d.em_uso.length) {
+      showToast('Este arquivo está em uso agora e não foi apagado.', 'error');
+    } else {
+      showToast(`Apagado — ${formatBytes(d.liberados_bytes || 0)} liberados.`, 'success');
+    }
+    fecharPreviewStorage();
+    _storageAberta = null;
+    await loadStorage();
+  } catch {
+    showToast('Erro de rede ao apagar.', 'error');
   }
 }

@@ -244,6 +244,132 @@ def limpar_categoria(cat_id: str) -> dict:
     return apagar(cat_id, _listar(cfg["pasta"]))
 
 
+# ── previsualização ────────────────────────────────────────────────────────
+# Apagar às cegas é o risco real desta tela: os nomes de arquivo são gerados
+# ("0032380b_DR4xe-djYWF") e não dizem nada sobre o conteúdo. Cada categoria
+# devolve o que dá para mostrar sem carregar o arquivo inteiro na memória.
+
+_TRECHO_MAX = 1200          # caracteres de texto no preview
+_LISTA_MAX = 12             # itens listados dentro de uma coleta
+
+
+def _preview_transcricao(pasta: str) -> dict:
+    """Primeiras linhas do .txt + o que mais existe na pasta."""
+    arquivos = _listar(pasta)
+    txt = next((f for f in arquivos if f.endswith(".txt")
+                and not f.endswith("_timestamps.txt")), None)
+    trecho, palavras = "", None
+    if txt:
+        try:
+            with open(os.path.join(pasta, txt), encoding="utf-8", errors="replace") as f:
+                bruto = f.read(_TRECHO_MAX + 400)
+            palavras = len(bruto.split())
+            trecho = bruto[:_TRECHO_MAX]
+            if len(bruto) > _TRECHO_MAX:
+                trecho = trecho.rsplit(" ", 1)[0] + "…"
+        except OSError:
+            pass
+    return {
+        "tipo": "texto",
+        "texto": trecho or "(sem texto legível nesta pasta)",
+        "detalhes": [
+            {"rotulo": "Formatos", "valor": ", ".join(
+                sorted({os.path.splitext(a)[1].lstrip(".") or "?" for a in arquivos})) or "—"},
+            {"rotulo": "Arquivos", "valor": str(len(arquivos))},
+        ] + ([{"rotulo": "Palavras (no trecho lido)", "valor": f"{palavras:,}".replace(",", ".")}]
+             if palavras else []),
+    }
+
+
+def _preview_coleta(caminho: str) -> dict:
+    """Perfil, quantidade e os primeiros posts do dataset."""
+    import json
+    try:
+        with open(caminho, encoding="utf-8") as f:
+            payload = json.load(f)
+    except (OSError, ValueError):
+        return {"tipo": "texto", "texto": "(não foi possível ler esta coleta)",
+                "detalhes": []}
+    perfil = payload.get("profile") or {}
+    linhas = payload.get("rows") or payload.get("items") or []
+    def _texto(v) -> str:
+        """A legenda vem em dois formatos: string (datasets normalizados) e
+        objeto {"text": ...} (resposta crua da API do Instagram)."""
+        if isinstance(v, dict):
+            v = v.get("text") or v.get("title") or ""
+        return str(v or "").strip().replace("\n", " ")
+
+    posts = []
+    for r in linhas[:_LISTA_MAX]:
+        if not isinstance(r, dict):
+            continue
+        legenda = _texto(r.get("caption")) or _texto(r.get("title"))
+        posts.append({
+            "titulo": legenda[:90] or "(sem legenda)",
+            "sub": " · ".join(x for x in [
+                (r.get("date") or "")[:10],
+                f"{r.get('likes')} curtidas" if r.get("likes") else "",
+                f"{r.get('views')} views" if r.get("views") else "",
+            ] if x),
+            "thumb": r.get("thumb_url"),
+        })
+    return {
+        "tipo": "lista",
+        "itens": posts,
+        "restantes": max(0, len(linhas) - len(posts)),
+        "detalhes": [
+            {"rotulo": "Perfil", "valor": "@" + (perfil.get("username") or "?")},
+            {"rotulo": "Rede", "valor": perfil.get("platform") or "—"},
+            {"rotulo": "Posts", "valor": str(len(linhas))},
+            {"rotulo": "Coletado em", "valor": (payload.get("collected_at") or "")[:16].replace("T", " ")},
+        ],
+    }
+
+
+def preview(cat_id: str, item_id: str) -> dict:
+    """Prévia de um item, para conferir antes de apagar."""
+    cfg = CATEGORIAS.get(cat_id)
+    if not cfg:
+        raise KeyError("categoria desconhecida")
+    nome = os.path.basename((item_id or "").strip())
+    caminho = os.path.join(cfg["pasta"], nome)
+    if not nome or not _dentro_de(caminho, cfg["pasta"]) or not os.path.exists(caminho):
+        raise FileNotFoundError("item não encontrado")
+
+    base = {"id": nome, "nome": nome, "bytes": _tamanho_de(caminho),
+            "modificado": _mtime(caminho), "categoria": cat_id}
+
+    if cat_id == "results":
+        return {**base, **_preview_transcricao(caminho)}
+    if cat_id == "social_data":
+        return {**base, **_preview_coleta(caminho)}
+    if cat_id == "uploads":
+        ext = os.path.splitext(nome)[1].lower()
+        video = ext in (".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi")
+        return {**base, "tipo": "video" if video else "audio",
+                "url": f"/api/download-media/{nome}",
+                "detalhes": [{"rotulo": "Formato", "valor": ext.lstrip(".").upper() or "—"}]}
+    if cat_id in ("social_cache",):
+        return {**base, "tipo": "imagem",
+                "url": f"/api/storage/social_cache/arquivo/{nome}",
+                "detalhes": []}
+    # exports e mídia social: sem prévia útil além dos metadados
+    return {**base, "tipo": "arquivo", "detalhes": [
+        {"rotulo": "Formato", "valor": os.path.splitext(nome)[1].lstrip(".").upper() or "—"}]}
+
+
+def caminho_de(cat_id: str, item_id: str) -> str:
+    """Caminho absoluto validado — para servir o arquivo na prévia."""
+    cfg = CATEGORIAS.get(cat_id)
+    if not cfg:
+        raise KeyError("categoria desconhecida")
+    nome = os.path.basename((item_id or "").strip())
+    caminho = os.path.join(cfg["pasta"], nome)
+    if not nome or not _dentro_de(caminho, cfg["pasta"]) or not os.path.isfile(caminho):
+        raise FileNotFoundError("item não encontrado")
+    return caminho
+
+
 # ── sobras que não são de nenhuma categoria ────────────────────────────────
 def sobras() -> list:
     """Arquivos soltos em .whisper_data que não deveriam estar ali.

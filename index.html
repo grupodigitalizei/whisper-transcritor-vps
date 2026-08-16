@@ -645,6 +645,22 @@
       </div>
     </div><!-- /#card-storage -->
 
+    <!-- Prévia de um item do Armazenamento -->
+    <div class="overlay" id="storage-preview-overlay" role="dialog" aria-modal="true"
+         aria-labelledby="storage-preview-title"
+         onclick="if (event.target === this) fecharPreviewStorage()">
+      <div class="modal storage-preview-modal">
+        <div class="modal-head">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          <h2 class="modal-title" id="storage-preview-title">Pré-visualização</h2>
+          <button type="button" class="modal-close" onclick="fecharPreviewStorage()" aria-label="Fechar">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="modal-body" id="storage-preview-body"></div>
+      </div>
+    </div>
+
     <!-- Comprimir: arrasta um arquivo do computador e recebe ele menor -->
     <div class="card" id="card-compress" style="display:none;" role="tabpanel" aria-labelledby="main-tab-compress">
       <div class="card-header">

@@ -4179,6 +4179,28 @@ async def api_storage_itens(request: Request, cat_id: str):
     except KeyError:
         raise HTTPException(404, "Categoria desconhecida")
 
+@app.get("/api/storage/{cat_id}/preview/{item_id}")
+async def api_storage_preview(request: Request, cat_id: str, item_id: str):
+    """Prévia do conteúdo de um item, para conferir antes de apagar."""
+    _require_admin(request)
+    try:
+        return storage.preview(cat_id, item_id)
+    except KeyError:
+        raise HTTPException(404, "Categoria desconhecida")
+    except FileNotFoundError:
+        raise HTTPException(404, "Item não encontrado")
+
+@app.get("/api/storage/{cat_id}/arquivo/{item_id}")
+async def api_storage_arquivo(request: Request, cat_id: str, item_id: str):
+    """Serve o arquivo em si (miniatura, planilha) para a prévia."""
+    _require_admin(request)
+    try:
+        return FileResponse(storage.caminho_de(cat_id, item_id))
+    except KeyError:
+        raise HTTPException(404, "Categoria desconhecida")
+    except FileNotFoundError:
+        raise HTTPException(404, "Item não encontrado")
+
 @app.post("/api/storage/{cat_id}/delete")
 async def api_storage_delete(request: Request, cat_id: str, ids: str = Form(...)):
     """Apaga itens escolhidos. `ids` vem separado por \\n (nome de arquivo
