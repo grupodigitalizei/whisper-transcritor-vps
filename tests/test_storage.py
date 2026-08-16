@@ -227,3 +227,20 @@ def test_mime_do_stream_cobre_formatos_de_gravacao():
     assert app._MIME_POR_EXT[".mov"] == "video/quicktime"
     for ext in (".mp4", ".webm", ".mkv", ".mp3", ".wav"):
         assert ext in app._MIME_POR_EXT, f"{ext} sem MIME — vira octet-stream"
+
+
+def test_modais_ficam_fora_do_app_shell():
+    """O focus-trap marca .app-shell como inert para bloquear o fundo. Um modal
+    colocado DENTRO dessa árvore fica inerte junto e nenhum clique passa — foi
+    o que aconteceu com a prévia do Armazenamento."""
+    import os
+    raiz = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    html = open(os.path.join(raiz, "index.html"), encoding="utf-8").read()
+    fim_shell = html.rindex("</div><!-- /.app-shell -->")
+    for mid in ("storage-preview-overlay", "settings-overlay",
+                "viewer-overlay", "dialog-overlay"):
+        pos = html.find(f'id="{mid}"')
+        assert pos > 0, f"{mid} não existe no HTML"
+        assert pos > fim_shell, (
+            f"{mid} está dentro do .app-shell: o focus-trap vai deixá-lo inerte "
+            f"e seus botões não vão funcionar")
