@@ -1008,6 +1008,7 @@ async function openSettings() {
       _settingsCache = s;  // keep ETA wall-clock math in sync with truth
       _setConcurrencyValue('set-download-concurrent',   s.download_concurrent   ?? 3);
       _setConcurrencyValue('set-transcribe-concurrent', s.transcribe_concurrent ?? 1);
+      _setConcurrencyValue('set-compress-concurrent',   s.compress_concurrent   ?? 2);
     }
   } catch { /* defaults already selected in DOM */ }
   if (_me.is_admin) _refreshPublicPanel();
@@ -1026,7 +1027,8 @@ function closeSettings() {
 async function saveSettings() {
   const dl = parseInt(document.getElementById('set-download-concurrent').value, 10);
   const tr = parseInt(document.getElementById('set-transcribe-concurrent').value, 10);
-  if (!(dl >= 1 && dl <= 16) || !(tr >= 1 && tr <= 16)) {
+  const cp = parseInt(document.getElementById('set-compress-concurrent')?.value || '2', 10);
+  if (!(dl >= 1 && dl <= 16) || !(tr >= 1 && tr <= 16) || !(cp >= 1 && cp <= 16)) {
     showToast('Valores devem estar entre 1 e 16.', 'error');
     return;
   }
@@ -1036,9 +1038,10 @@ async function saveSettings() {
     const fd = new FormData();
     fd.append('download_concurrent',   String(dl));
     fd.append('transcribe_concurrent', String(tr));
+    fd.append('compress_concurrent',   String(cp));
     const r = await fetch('/api/settings', { method: 'POST', body: fd });
     if (!r.ok) { showToast('Não foi possível salvar.', 'error'); return; }
-    _settingsCache = { download_concurrent: dl, transcribe_concurrent: tr };  // refresh local cache
+    _settingsCache = { download_concurrent: dl, transcribe_concurrent: tr, compress_concurrent: cp };
     showToast('Configurações salvas.', 'success');
     closeSettings();
     _renderQueueSummary(); // ETA total agora reflete o novo paralelismo
@@ -4253,6 +4256,13 @@ async function runOldMediaCleanup() {
       ` — ${_formatBytes(data.freed_bytes)} liberados.`,
       'success'
     );
+    // Arquivos em uso são preservados de propósito (apagar no meio de uma
+    // transcrição a quebrava). Dizer isso evita a impressão de que a faxina
+    // simplesmente ignorou parte da lista.
+    if (data.skipped_active && data.skipped_active.length) {
+      showToast(`${data.skipped_active.length} arquivo(s) não foram apagados por estarem `
+              + `em uso agora.`, '');
+    }
     document.getElementById('cleanup-banner').style.display = 'none';
     _cleanupOldItems = [];
     // Refresh media list in case the user has the Library tab open
@@ -6017,6 +6027,13 @@ async function compressSelectedMedia() {
     const d = await r.json().catch(() => ({}));
     if (!r.ok) { showToast(d.detail || 'Não foi possível comprimir.', 'error'); return; }
     showToast(`Comprimindo ${d.count} ${d.count === 1 ? 'arquivo' : 'arquivos'}…`, 'success');
+    // Sem este aviso o usuário achava que TODOS foram enviados: os que estavam
+    // baixando/transcrevendo são pulados de propósito (comprimir durante uma
+    // transcrição deixava o item preso em "processando").
+    if (d.skipped_active && d.skipped_active.length) {
+      showToast(`${d.skipped_active.length} arquivo(s) em uso agora não foram comprimidos. `
+              + `Tente de novo quando terminarem.`, '');
+    }
     // Cada arquivo tem sua própria task — acompanha todas.
     (d.started || []).forEach(s => pollCompression(s.task_id, s.file));
   } catch {

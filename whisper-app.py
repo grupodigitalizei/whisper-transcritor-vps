@@ -1258,6 +1258,7 @@ async def api_set_settings(
     request: Request,
     download_concurrent:   str = Form(None),
     transcribe_concurrent: str = Form(None),
+    compress_concurrent:   str = Form(None),
 ):
     """Updates concurrency settings. Values are clamped to [1, 16].
     Changes take effect on the NEXT acquire of each semaphore — in-flight
@@ -1267,6 +1268,7 @@ async def api_set_settings(
     new = {}
     if download_concurrent   is not None: new["download_concurrent"]   = download_concurrent
     if transcribe_concurrent is not None: new["transcribe_concurrent"] = transcribe_concurrent
+    if compress_concurrent   is not None: new["compress_concurrent"]   = compress_concurrent
     if not new:
         raise HTTPException(400, "Nenhuma configuração informada")
     return _save_settings(new)
