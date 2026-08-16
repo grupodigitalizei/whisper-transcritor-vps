@@ -5394,7 +5394,10 @@ function renderSocialGrid() {
     const durBadge = r.duration_s ? `<span class="social-dur">${sic('play')} ${socialFmtDur(r.duration_s)}</span>` : '';
     const erBadge = (r.er !== null && r.er !== undefined)
       ? `<span class="social-er social-er-${socialErCls(r.er)}">ER ${r.er}%</span>` : '';
-    const cd = esc(r.code);
+    // jsAttr (e não esc) porque isto entra num literal JS dentro de onclick:
+    // o parser de HTML decodifica &#39; ANTES de o JS compilar, então esc()
+    // deixaria a aspa escapar da string. Mesmo padrão do resto do app.
+    const cd = jsAttr(r.code);
     return `
     <div class="social-card${isSel ? ' selected' : ''}" data-code="${cd}" role="button" aria-pressed="${isSel}"
          tabindex="0" onclick="socialCardClick('${cd}', event)"
@@ -5940,7 +5943,12 @@ async function checkSubscriptionNow(id) {
 const _COMPRESS_PRESET_KEY = 'wt:compress-preset';
 
 async function compressSelectedMedia() {
-  const files = Array.from(_mediaSelected);
+  // Mesma fonte que excluir/publicar/retentar usam: só o que está VISÍVEL no
+  // filtro atual. Com Array.from(_mediaSelected) a compressão pegava também
+  // itens escondidos pelo filtro — divergente do resto da barra de ações.
+  const files = (typeof _selectedVisibleMediaIds === 'function')
+    ? _selectedVisibleMediaIds()
+    : Array.from(_mediaSelected);
   if (!files.length) return;
 
   // Só faz sentido para áudio/vídeo — nunca some com a seleção em silêncio.

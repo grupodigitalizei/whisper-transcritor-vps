@@ -3110,7 +3110,17 @@ def _retry_item(filename: str) -> dict:
         url = _validate_media_url(url)
         ext = os.path.splitext(media_entry.get("name") or filename)[1].lower()
         media_type = "audio" if ext in _AUDIO_EXT_SET else "video"
-        res = _kickoff_download_only(url, media_type, "best", existing_filename=filename)
+        # Reaproveita a extensão REAL do arquivo como container/formato. Sem
+        # isto o retry voltava ao padrão (mp4/mp3): o outtmpl não casava mais
+        # com o nome existente e o yt-dlp gravava conteúdo de um formato dentro
+        # de um arquivo com a extensão de outro.
+        real = ext.lstrip(".").lower()
+        if media_type == "video":
+            fmt_kwargs = {"container": real if real in _VALID_CONTAINERS else "auto"}
+        else:
+            fmt_kwargs = {"audio_format": real if real in _VALID_AUDIO_FORMATS else "auto"}
+        res = _kickoff_download_only(url, media_type, "best",
+                                     existing_filename=filename, **fmt_kwargs)
         return {"kind": "download", "task_id": res["task_id"]}
 
     raise HTTPException(404, "Item não encontrado em histórico nem em mídia.")
@@ -3162,7 +3172,7 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str,
                        existing_filename: str | None = None,
                        visibility: str = VIS_PRIVATE,
                        container: str = "auto", audio_format: str = "mp3",
-                       resuming: bool = False):
+                       resuming: bool = False, folder: str = ""):
     is_video = media_type == "video"
     # Formato de saída escolhido pelo usuário. "auto"/"original" preservam o
     # comportamento histórico (mp4 para vídeo, mp3 para áudio); os demais
@@ -3269,6 +3279,16 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str,
         # baixar o arquivo depois.
         real_ext = os.path.splitext(filename)[1].lstrip(".") or ext
         _save_media(filename, f"{title}.{real_ext}", url=url, is_transcribed=False, status="done")
+        # Pasta de destino (usada pelas assinaturas em modo "só baixar"):
+        # _save_media não recebe folder, então gravamos logo depois — ele
+        # preserva o campo nas gravações seguintes.
+        if folder:
+            with _media_lock:
+                media = _load_media()
+                for m in media:
+                    if m.get("file") == filename:
+                        m["folder"] = folder
+                _atomic_write_json(MEDIA_FILE, media)
         _set_task(task_id, status="done", progress=100, phase="done", phase_progress=100,
                   name=f"{title}.{real_ext}", filename=filename)
     except _DownloadPaused:
@@ -4115,7 +4135,12 @@ def _subs_kickoff_transcribe(url: str, model: str, language: str, folder: str) -
 
 def _subs_kickoff_download(url: str, folder: str) -> None:
     url = _validate_media_url(url)
-    _kickoff_download_only(url, "video", "best", visibility=VIS_PRIVATE)
+    # `folder` era recebido e descartado: assinatura em modo "só baixar" ignorava
+    # a pasta de destino escolhida no cadastro.
+    if folder:
+        _ensure_folder_tree(folder)
+    _kickoff_download_only(url, "video", "best", visibility=VIS_PRIVATE,
+                           folder=folder or "")
 
 def _configure_subscriptions() -> None:
     subscriptions.configure(

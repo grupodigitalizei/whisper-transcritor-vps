@@ -622,7 +622,10 @@
           (a menos que você peça os mais recentes agora).
         </p>
 
-        <div class="pub-msg" id="subs-msg"></div>
+        <!-- role=status aqui (e não na lista): é ESTA a frase que o leitor de
+             tela precisa anunciar. Com o aria-live na lista inteira, cada
+             recarga relia todas as assinaturas e a mensagem passava batida. -->
+        <div class="pub-msg" id="subs-msg" role="status" aria-live="polite"></div>
 
         <div class="adv-dl-grid">
           <div class="field">
@@ -706,7 +709,7 @@
           <button type="button" class="btn btn-primary" onclick="addSubscription()">Assinar</button>
         </div>
 
-        <div id="subs-list" class="subs-list" aria-live="polite">
+        <div id="subs-list" class="subs-list">
           <!-- populado por renderSubscriptions() -->
         </div>
       </div>

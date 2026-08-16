@@ -91,6 +91,23 @@ def _parse_confirm_form(html: str):
     return action, inputs
 
 
+def _limpar_parciais(dest_dir: str, base_stem: str, force_filename: str | None) -> None:
+    """Remove sobras de uma tentativa que falhou, para o método seguinte não
+    herdar bytes truncados nem deixar arquivo órfão em caso de sucesso."""
+    alvo = os.path.splitext(force_filename)[0] if force_filename else base_stem
+    if not alvo:
+        return
+    try:
+        for f in os.listdir(dest_dir):
+            if f.startswith(alvo):
+                try:
+                    os.remove(os.path.join(dest_dir, f))
+                except OSError:
+                    pass
+    except OSError:
+        pass
+
+
 def download(url: str, dest_dir: str, base_stem: str, force_filename: str | None = None,
              on_start=None, progress_cb=None, cancel_cb=None, timeout: int = 30):
     """Baixa o arquivo público do Drive.
@@ -122,6 +139,11 @@ def download(url: str, dest_dir: str, base_stem: str, force_filename: str | None
             raise
         except Exception as e:
             erros.append(f"{metodo.__name__.replace('_download_', '')}: {e}")
+            # O método que falhou pode ter deixado um parcial em dest_dir — que
+            # aqui é o UPLOAD_DIR de verdade, não um diretório temporário. Se o
+            # método seguinte tiver sucesso, ninguém mais limpa esse lixo: o
+            # caminho de sucesso não passa por _cleanup_task_files.
+            _limpar_parciais(dest_dir, base_stem, force_filename)
     raise RuntimeError("Não consegui baixar do Google Drive — confira se o arquivo "
                        "está como 'Qualquer pessoa com o link'. (" + " | ".join(erros)[-260:] + ")")
 

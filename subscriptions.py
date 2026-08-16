@@ -218,7 +218,13 @@ def update_subscription(sub_id: str, **changes) -> dict:
             for k, v in changes.items():
                 if k not in editable:
                     continue
-                if k == "interval_hours":
+                if k == "label":
+                    # add_subscription validava e o update não — assimetria que
+                    # tirava a defesa em profundidade do que vai para a tela.
+                    v = str(v or "").strip()
+                    if not _LABEL_RE.match(v):
+                        raise ValueError("nome inválido")
+                elif k == "interval_hours":
                     v = max(MIN_INTERVAL_HOURS, min(MAX_INTERVAL_HOURS, float(v)))
                 elif k == "max_per_check":
                     v = max(1, min(HARD_MAX_PER_CHECK, int(v)))
