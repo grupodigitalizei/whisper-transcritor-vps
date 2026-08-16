@@ -2189,17 +2189,11 @@ body[data-role="public"] .nav-group-label.group-empty-for-public { display: none
    O certo é limitar o CARD e centralizá-lo: o bloco fica proporcional e
    não sobra buraco. Cards com tabela (Transcrições, Mídia) continuam em
    largura total, porque ali a largura é útil. */
-#card-advanced,
-#card-subs,
-#card-compress {
-  /* width:100% é obrigatório aqui: .app-main é flex column, e num flex item
-     o margin-inline:auto faz a caixa encolher para o tamanho do conteúdo
-     (shrink-to-fit) em vez de usar o max-width. Sem isto cada card ficava
-     com uma largura diferente, conforme o texto que tivesse dentro. */
-  width: 100%;
-  max-width: 860px;
-  margin-inline: auto;
-}
+/* Os cards de formulário usam a MESMA largura de todos os outros cards do
+   sistema (Transcrições, Biblioteca, Redes Sociais). A tentativa anterior de
+   limitá-los em 860px resolvia o vazio à direita mas criava algo pior: um
+   card visivelmente menor que os demais, fora do padrão. O vazio se resolve
+   distribuindo o conteúdo, não encolhendo a caixa. */
 
 /* Texto corrido continua com largura de leitura (45–75 caracteres),
    mesmo com o card mais largo. */
@@ -2242,5 +2236,34 @@ body[data-role="public"] .nav-group-label.group-empty-for-public { display: none
   .settings-col + .settings-col {
     border-left: 0; border-top: 1px solid var(--border);
     padding-left: 0; padding-top: 18px;
+  }
+}
+
+/* ── Conteúdo dos cards de formulário em largura total ───────────
+   Com o card na largura do sistema (~1100px), o conteúdo precisa ocupar o
+   espaço em vez de deixar metade vazia. */
+
+/* Campos curtos lado a lado; o campo de URL fica sozinho, porque link é
+   longo e cortar atrapalha a conferência. */
+@media (min-width: 1000px) {
+  .adv-dl-grid { grid-template-columns: repeat(3, 1fr); gap: 16px 20px; }
+
+  /* Os quatro interruptores em 2x2 em vez de uma pilha estreita. */
+  .adv-options {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 32px;
+  }
+}
+
+/* Assinaturas: Rede e Endereço são a mesma informação (que canal seguir),
+   então podem dividir a linha — a regra de coluna única vale para campos
+   independentes. O resto continua embaixo, em coluna. */
+@media (min-width: 860px) {
+  .subs-form-top {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 16px;
+    align-items: start;
   }
 }
