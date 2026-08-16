@@ -186,25 +186,28 @@ def _download_via_browser(url, dest, on_progress=None):
     Cobre o que o yt-dlp não alcança — Instagram, YouTube com proteção de
     token e qualquer conteúdo que exija a sessão do usuário.
     """
-    import requests
     from . import intercept
+    from . import downloader
     found = intercept.resolve_media(url)
     media = found.get("video") or found.get("image")
     ext = ".mp4" if found.get("video") else ".jpg"
     name = _safe(re.sub(r"^https?://", "", url).replace("/", "_")) + ext
     path = os.path.join(dest, name)
 
-    with requests.get(media, stream=True, timeout=120,
-                      headers={"User-Agent": "Mozilla/5.0 (Macintosh)"}) as r:
-        r.raise_for_status()
-        total = int(r.headers.get("Content-Length") or 0)
-        done = 0
-        with open(path, "wb") as f:
-            for chunk in r.iter_content(1 << 16):
-                f.write(chunk)
-                done += len(chunk)
-                if on_progress:
-                    on_progress(done, total, name)
+    # A URL vem do og:video/og:image da página — ou seja, de conteúdo controlado
+    # por quem publicou o post. Baixar isso com um requests.get solto deixaria o
+    # servidor buscar qualquer endereço (inclusive interno) a mando de terceiro.
+    # download_media aplica a mesma defesa do caminho principal: allowlist de CDN
+    # verificada a cada hop de redirect, tamanho mínimo e conferência de magic
+    # bytes (para não salvar uma página de erro com extensão .mp4).
+    if not media:
+        raise RuntimeError("nenhuma mídia encontrada na página")
+    downloader.download_media(media, path, timeout=120)
+    if on_progress:
+        try:
+            on_progress(os.path.getsize(path), os.path.getsize(path), name)
+        except OSError:
+            pass
     note = ""
     if not found.get("video"):
         note = ("Só a imagem estava disponível nessa página. Se era um vídeo, "

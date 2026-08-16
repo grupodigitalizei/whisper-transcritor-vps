@@ -134,6 +134,10 @@ def _clean_target(platform: str, target: str) -> str:
     if platform == "youtube":
         parsed = urlparse(target if "://" in target else "https://" + target)
         host = (parsed.hostname or "").lower()
+        # Scheme também é validado: sem isto um "ftp://youtube.com/x" passaria
+        # daqui direto para o yt-dlp.
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("use um endereço http:// ou https://")
         if not any(host == h or host.endswith("." + h)
                    for h in ("youtube.com", "youtu.be")):
             raise ValueError("para YouTube, informe a URL do canal (youtube.com/@canal)")

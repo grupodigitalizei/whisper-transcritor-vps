@@ -42,7 +42,7 @@ PLATFORMS = {
 }
 
 NODE_TEMPLATE = r"""
-const TARGET_URL = '__TARGET_URL__'
+const TARGET_URL = __TARGET_URL__
 const MAX_ITEMS  = __MAX_ITEMS__
 const MAX_SCROLLS= __MAX_SCROLLS__
 const OUT_FILE   = '__OUT_FILE__'
@@ -194,7 +194,7 @@ def capture(platform, target, max_items=100, max_scrolls=40, on_progress=None):
 
     tmp = os.path.join(DATA_DIR, f".intercept_{platform}_{os.getpid()}.json")
     script = (NODE_TEMPLATE
-              .replace("__TARGET_URL__", url)
+              .replace("__TARGET_URL__", json.dumps(url))
               .replace("__MAX_ITEMS__", str(int(max_items)))
               .replace("__MAX_SCROLLS__", str(int(max_scrolls)))
               .replace("__OUT_FILE__", tmp)
@@ -211,7 +211,7 @@ def capture(platform, target, max_items=100, max_scrolls=40, on_progress=None):
 
 
 RESOLVE_TEMPLATE = r"""
-const TARGET_URL = '__TARGET_URL__'
+const TARGET_URL = __TARGET_URL__
 const OUT_FILE   = '__OUT_FILE__'
 
 const task = await useOrCreateTaskSpace('igsorter resolve')
@@ -275,7 +275,7 @@ def resolve_media(url):
     if not ego_available():
         raise RuntimeError("ego lite não encontrado para resolver a mídia")
     tmp = os.path.join(DATA_DIR, f".resolve_{os.getpid()}.json")
-    script = (RESOLVE_TEMPLATE.replace("__TARGET_URL__", url)
+    script = (RESOLVE_TEMPLATE.replace("__TARGET_URL__", json.dumps(url))
                               .replace("__OUT_FILE__", tmp))
     _run_ego(script)
     if not os.path.isfile(tmp):
@@ -312,10 +312,21 @@ def _num(x):
     return int(n)
 
 
+# Identificador de post aceito. Todas as redes usam shortcode alfanumérico ou id
+# numérico — nada além disso é legítimo. Este é o funil por onde passam os posts
+# das 4 redes, então validar aqui protege de uma vez todos os lugares que
+# confiam no `code` depois: o script Node do ego-lite (onde uma aspa vira
+# execução de código), o atributo onclick do mosaico e a URL do card.
+_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+def _safe_code(code) -> str:
+    code = str(code or "").strip()
+    return code if _CODE_RE.match(code) else ""
+
 def _row(**kw):
     caption = kw.get("caption") or ""
     ts = kw.get("ts")
-    return {"code": kw.get("code") or "", "url": kw.get("url") or "",
+    return {"code": _safe_code(kw.get("code")), "url": kw.get("url") or "",
             "type": kw.get("type") or "Reel/Vídeo", "pinned": kw.get("pinned", False),
             "date": dt.datetime.fromtimestamp(ts).isoformat() if ts else None,
             "ts": ts, "caption": caption,

@@ -1976,22 +1976,9 @@ function _buildRowInner(f) {
           </button>
           <div class="dropdown" id="dd-${esc(f.id)}" role="menu">
             ${(f.status === 'queued' || f.status === 'processing') ? `
-            ${(f._phase === 'download' && f.task_id) ? `
-            <div class="dd-item" role="menuitem" tabindex="-1" onclick="pauseDownload('${jsAttr(f.task_id)}')">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-              Pausar download
-            </div>` : ''}
             <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="cancelTranscriptionById('${jsAttr(f.task_id || '')}')">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
               Cancelar transcrição
-            </div>` : f.status === 'paused' ? `
-            <div class="dd-item" role="menuitem" tabindex="-1" onclick="resumeDownload('${jsAttr(f.task_id || '')}', '${jsAttr(f.file)}')">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-              Retomar download
-            </div>
-            <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="deleteFile('${jsAttr(f.id)}')">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-              Excluir
             </div>` : (f.status === 'error' || f.status === 'cancelled') ? `
             ${f.status === 'error' ? `
             <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="viewError('${jsAttr(f.id)}')">
@@ -4719,9 +4706,22 @@ enhanceSelects();
         // a retry option; the regular file-management items only make sense
         // when there's actually a file on disk to download.
         const actionItems = isActive ? `
+                <div class="dd-item" role="menuitem" tabindex="-1" onclick="pauseMediaDownload('${jsAttr(f.file)}')">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                  Pausar download
+                </div>
                 <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="cancelMediaDownload('${jsAttr(f.file)}')">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
                   Cancelar download
+                </div>` : f.status === 'paused' ? `
+                <div class="dd-item" role="menuitem" tabindex="-1" onclick="resumeMediaDownload('${jsAttr(f.file)}')">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                  Retomar download
+                </div>
+                <div class="dd-sep"></div>
+                <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="deleteMediaFile('${jsAttr(f.file)}')">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                  Excluir Mídia Hospedada
                 </div>` : `
                 ${isFailed ? `
                 <div class="dd-item" role="menuitem" tabindex="-1" onclick="retryMediaFile('${jsAttr(f.file)}')">
@@ -6037,6 +6037,56 @@ function pollCompression(taskId, filename) {
 // ═══════════════════════════════════════════════════════════════
 // Vale só para download: uma transcrição é uma única chamada ao Whisper que
 // não dá para interromper no meio — para ela existe o cancelar.
+// Resolve o task_id a partir do nome do arquivo: media.json não guarda esse id
+// (mesmo caminho que cancelMediaDownload já usava).
+async function _taskIdForMediaFile(filename, includePaused) {
+  const url = '/api/active-tasks' + (includePaused ? '?include_paused=true' : '');
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const tasks = await res.json();
+  for (const [tid, t] of Object.entries(tasks)) {
+    if (t.filename === filename) return tid;
+  }
+  return null;
+}
+
+async function pauseMediaDownload(filename) {
+  closeAllDDs();
+  try {
+    const taskId = await _taskIdForMediaFile(filename, false);
+    if (!taskId) {
+      showToast('Este download não está mais ativo.', 'error');
+      loadMedia();
+      return;
+    }
+    await pauseDownload(taskId);
+    setTimeout(loadMedia, 1200);
+  } catch {
+    showToast('Erro de rede ao pausar.', 'error');
+  }
+}
+
+async function resumeMediaDownload(filename) {
+  closeAllDDs();
+  try {
+    const taskId = await _taskIdForMediaFile(filename, true);
+    if (!taskId) {
+      // Depois de um restart do servidor a task some da memória; o arquivo
+      // parcial continua no disco, então reenviar a URL reaproveita o que já veio.
+      showToast('Este download não está mais na fila do servidor. '
+              + 'Use "Tentar novamente" para retomar.', 'error');
+      loadMedia();
+      return;
+    }
+    await resumeDownload(taskId, null);
+    setTimeout(loadMedia, 1500);
+    const iv = setInterval(loadMedia, 5000);
+    setTimeout(() => clearInterval(iv), 120000);
+  } catch {
+    showToast('Erro de rede ao retomar.', 'error');
+  }
+}
+
 async function pauseDownload(taskId) {
   try {
     const r = await fetch(`/api/transcribe/${encodeURIComponent(taskId)}/pause`, { method: 'POST' });

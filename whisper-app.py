@@ -1389,8 +1389,13 @@ async def api_social_collect(
     if not SOCIAL_MULTI_OK or platform not in _PROFILE_URL:
         raise HTTPException(400, f"Rede não suportada: {platform}")
     target = username.strip()
-    prof_url = target if target.startswith("http") else \
-        _PROFILE_URL[platform].format(u=target.lstrip("@"))
+    if target.startswith("http"):
+        # Única rota de coleta que aceitava URL crua direto do formulário: sem
+        # isto, um endereço interno (http://127.0.0.1:…) chegaria ao yt-dlp sem
+        # passar pelo guard de SSRF que todas as outras rotas aplicam.
+        prof_url = _validate_media_url(target)
+    else:
+        prof_url = _PROFILE_URL[platform].format(u=target.lstrip("@"))
 
     def _task_multi(job, log):
         def prog(done, total):
@@ -2189,13 +2194,20 @@ async def api_cancel_transcribe(task_id: str, request: Request):
     return {"status": "cancel_requested", "task_id": task_id}
 
 @app.get("/api/active-tasks")
-async def api_active_tasks(request: Request):
+async def api_active_tasks(request: Request, include_paused: bool = False):
     """Return all in-memory tasks that are still queued or processing.
-    Um usuário público só recebe as tarefas dos itens que ele pode ver."""
+    Um usuário público só recebe as tarefas dos itens que ele pode ver.
+
+    `include_paused` fica FORA do padrão de propósito: quem chama isto no boot
+    religa o polling de progresso, e uma task pausada não tem progresso a
+    acompanhar. A Biblioteca de Mídia pede com o parâmetro ligado só para
+    descobrir o task_id na hora de retomar (media.json não guarda esse id).
+    """
     role = _role_of(request)
+    wanted = ("queued", "processing") + (("paused",) if include_paused else ())
     with _tasks_lock:
         alive = {tid: dict(t) for tid, t in _tasks.items()
-                 if t.get("status") in ("queued", "processing")}
+                 if t.get("status") in wanted}
     if role == auth.ROLE_ADMIN:
         return alive
     # Carrega os catálogos uma vez e reaproveita para todas as tarefas.
@@ -3150,9 +3162,15 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str,
                     filename = f
                     break
 
-        _save_media(filename, f"{title}.{ext}", url=url, is_transcribed=False, status="done")
+        # A extensão REAL pode não ser a que pedimos: com container/audio_format
+        # "original" não há remux, então o yt-dlp entrega o container nativo do
+        # site (.webm, .m4a…). Usar `ext` aqui gravaria um nome de exibição
+        # mentindo sobre o conteúdo — e é esse nome que o navegador recebe ao
+        # baixar o arquivo depois.
+        real_ext = os.path.splitext(filename)[1].lstrip(".") or ext
+        _save_media(filename, f"{title}.{real_ext}", url=url, is_transcribed=False, status="done")
         _set_task(task_id, status="done", progress=100, phase="done", phase_progress=100,
-                  name=f"{title}.{ext}", filename=filename)
+                  name=f"{title}.{real_ext}", filename=filename)
     except _DownloadPaused:
         # NÃO limpa os parciais: são eles que permitem retomar de onde parou.
         # Guarda os argumentos para o resume poder recriar o mesmo download.
