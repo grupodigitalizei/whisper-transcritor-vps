@@ -2268,59 +2268,150 @@ body[data-role="public"] .nav-group-label.group-empty-for-public { display: none
   }
 }
 
+/* ── Assinaturas: opções em grade que se adapta sozinha ──────────
+   Sete selects empilhados num card de 1100px desperdiçavam a largura e
+   obrigavam a rolar. A regra de coluna única vale para formulário de
+   preenchimento sequencial; aqui são CONFIGURAÇÕES, com valor padrão já
+   definido, que a pessoa só ajusta se quiser — grade é o formato certo.
+
+   auto-fit + minmax faz o número de colunas seguir o espaço real (3 em tela
+   larga, 2 em média, 1 no celular) sem depender de breakpoint fixo: o mesmo
+   bloco funciona dentro do card estreito ou largo. */
+.subs-opt-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 14px 20px;
+}
+.subs-opt-grid .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+
+.subs-opt-group + .subs-opt-group { margin-top: 18px; }
+
+/* Rótulo do grupo: separa os três assuntos sem precisar de borda em cada um. */
+.subs-opt-legend {
+  font-size: 11px; font-weight: 700; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--slate-400);
+  margin-bottom: 8px; padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
 /* ── Armazenamento ───────────────────────────────────────────────
-   Duas leituras: quanto cada tipo de dado ocupa (barra comparativa) e o
-   que dá para apagar. As categorias que o sistema recria sozinho ganham
-   selo e ação de limpar direto; as que guardam conteúdo do usuário só
-   permitem apagar item a item, de propósito. */
-.storage-body { padding: 24px; display: flex; flex-direction: column; gap: 20px; }
+   Três decisões que governam esta tela:
 
-.storage-summary { display: flex; gap: 32px; flex-wrap: wrap; }
-.storage-total-num { font-size: 26px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
-.storage-total-lbl { font-size: 12px; color: var(--slate-500); margin-top: 2px; }
+   1. O resumo usa os MESMOS .stat-card do topo do app. Não havia razão para
+      inventar outro jeito de mostrar dois números.
+   2. As categorias são uma LISTA com colunas alinhadas (nome | tamanho |
+      ações) e divisória entre linhas — antes cada bloco flutuava solto e o
+      botão encostava na barra de progresso.
+   3. Um nível de ênfase por linha: o tamanho é o dado que importa, então é
+      ele que recebe peso; nome em 14px, descrição em 12px cinza. */
+.storage-body { padding: 22px 24px 26px; display: flex; flex-direction: column; gap: 22px; }
 
-.storage-cats { display: flex; flex-direction: column; gap: 10px; }
+.storage-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.stat-sub { font-size: 11.5px; color: var(--slate-400); margin-top: 2px; }
 
-.storage-cat { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
-.storage-cat-head { display: flex; gap: 20px; padding: 16px; align-items: flex-start; }
-.storage-cat-info { flex: 1; min-width: 0; }
-.storage-cat-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; font-weight: 650; color: var(--text); }
-.storage-cat-sub { margin-top: 3px; font-size: 12px; line-height: 1.5; color: var(--slate-500); max-width: 68ch; }
+/* Cabeçalho da lista: dá nome às colunas e ancora o alinhamento. */
+.storage-list-head,
+.storage-row {
+  display: grid;
+  grid-template-columns: 1fr 132px 210px;   /* 210px cabe 'Ver itens' + 'Limpar' na mesma linha */
+  gap: 20px;
+  align-items: start;
+}
+.storage-list-head {
+  padding: 0 4px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px; font-weight: 700; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--slate-400);
+}
+.storage-list-head span:nth-child(2) { text-align: right; }
+.storage-list-head span:nth-child(3) { text-align: right; }
 
-/* Barra comparativa: mostra de relance quem é o vilão do disco. */
-.storage-bar { margin-top: 10px; height: 6px; border-radius: 999px; background: var(--slate-100); overflow: hidden; }
+.storage-cats { display: block; }
+
+.storage-row {
+  padding: 16px 4px;
+  border-bottom: 1px solid var(--slate-100);
+}
+.storage-row:last-of-type { border-bottom: 0; }
+.storage-row:hover { background: var(--slate-50, #f8fafc); }
+
+.storage-row-title {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-size: 14px; font-weight: 650; color: var(--slate-900);
+}
+.storage-row-desc {
+  margin-top: 3px; font-size: 12px; line-height: 1.5;
+  color: var(--slate-500); max-width: 62ch;
+}
+
+/* Selo discreto: informação de apoio não compete com o título. */
+.tag-soft {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .02em;
+  padding: 2px 7px; border-radius: 999px;
+  background: var(--slate-100); color: var(--slate-500);
+}
+
+.storage-bar {
+  margin-top: 10px; height: 5px; border-radius: 999px;
+  background: var(--slate-100); overflow: hidden; max-width: 520px;
+}
 .storage-bar-fill { height: 100%; background: var(--blue); border-radius: 999px; }
 
-.storage-cat-right { text-align: right; flex-shrink: 0; }
-.storage-cat-size { font-size: 15px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
-.storage-cat-count { font-size: 11.5px; color: var(--slate-500); }
-.storage-cat-actions { display: flex; gap: 6px; margin-top: 8px; justify-content: flex-end; flex-wrap: wrap; }
+/* Números à direita e com tabular-nums: a coluna fica alinhada de verdade. */
+.storage-row-size { text-align: right; }
+.storage-size-num {
+  font-size: 15px; font-weight: 700; color: var(--slate-900);
+  font-variant-numeric: tabular-nums; letter-spacing: -0.2px;
+}
+.storage-size-sub { font-size: 11.5px; color: var(--slate-500); margin-top: 1px; }
 
-.storage-cat-body { border-top: 1px solid var(--border); padding: 14px 16px; }
-.storage-items { display: flex; flex-direction: column; gap: 2px; max-height: 380px; overflow-y: auto; overscroll-behavior: contain; }
+.storage-row-acts { display: flex; gap: 8px; justify-content: flex-end; align-items: flex-start; }
+.storage-row-acts .btn { white-space: nowrap; }
 
+/* O painel de itens ocupa a linha inteira, abaixo das três colunas. */
+.storage-row-body {
+  grid-column: 1 / -1;
+  margin-top: 14px; padding: 14px 16px;
+  background: var(--slate-50, #f8fafc);
+  border: 1px solid var(--border); border-radius: 10px;
+}
+
+.storage-items {
+  display: flex; flex-direction: column; gap: 2px;
+  max-height: 360px; overflow-y: auto; overscroll-behavior: contain;
+}
 .storage-item {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 10px; border-radius: 8px; cursor: pointer;
-  font-size: 13px; min-height: 40px;
+  font-size: 13px; min-height: 40px; background: var(--surface);
 }
-.storage-item:hover { background: var(--slate-50, #f8fafc); }
-.storage-item.is-busy { opacity: .6; cursor: not-allowed; }
-.storage-item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.storage-item:hover { background: var(--blue-50); }
+.storage-item.is-busy { opacity: .55; cursor: not-allowed; }
+.storage-item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--slate-800); }
 .storage-item-det { color: var(--slate-500); font-size: 11.5px; }
 .storage-item-size { font-variant-numeric: tabular-nums; color: var(--slate-600); flex-shrink: 0; }
 
-.storage-item-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.storage-item-actions {
+  display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap;
+  padding-top: 12px; border-top: 1px solid var(--border);
+}
 
-.storage-sec-title { margin: 0; font-size: 14px; font-weight: 700; color: var(--text); }
-.storage-sec-hint { margin: 4px 0 10px; font-size: 12px; line-height: 1.5; color: var(--slate-500); max-width: 68ch; }
-.storage-sobras { border: 1px solid var(--amber-200, #fde68a); background: var(--amber-50, #fffbeb); border-radius: 12px; padding: 16px; }
+.storage-sec-title { margin: 0; font-size: 14px; font-weight: 700; color: var(--slate-900); }
+.storage-sec-hint { margin: 4px 0 12px; font-size: 12px; line-height: 1.5; color: var(--slate-500); max-width: 62ch; }
+.storage-sobras {
+  border: 1px solid var(--warn-bd, #fde68a); background: var(--warn-bg, #fffbeb);
+  border-radius: 12px; padding: 18px;
+}
 .storage-skeleton { padding: 14px; font-size: 13px; color: var(--slate-500); }
 
-@media (max-width: 720px) {
+/* Abaixo de 860px a grade vira empilhada: três colunas espremidas seriam
+   ilegíveis, e o tamanho passa a ficar junto do nome. */
+@media (max-width: 860px) {
   .storage-body { padding: 16px; }
-  .storage-cat-head { flex-direction: column; gap: 12px; }
-  .storage-cat-right { text-align: left; }
-  .storage-cat-actions { justify-content: flex-start; }
+  .storage-list-head { display: none; }
+  .storage-row { grid-template-columns: 1fr auto; gap: 10px; }
+  .storage-row-main { grid-column: 1 / -1; order: 1; }
+  .storage-row-size { grid-column: 1; order: 2; text-align: left; }
+  .storage-row-acts { grid-column: 2; order: 3; align-items: center; }
   .storage-item { min-height: 48px; }
 }

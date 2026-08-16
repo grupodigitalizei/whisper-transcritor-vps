@@ -6425,14 +6425,30 @@ async function loadStorage() {
 function _renderStorageResumo(d) {
   const box = document.getElementById('storage-summary');
   if (!box) return;
+  const usado = d.total_bytes || 0, livre = d.livre_bytes || 0;
+  const totalDisco = usado + livre;
+  const pct = totalDisco ? Math.round((usado / totalDisco) * 100) : 0;
+  // Mesmos cartões de estatística do topo do app — o resumo daqui não tem
+  // motivo para parecer outra coisa.
   box.innerHTML = `
-    <div class="storage-total">
-      <div class="storage-total-num">${esc(formatBytes(d.total_bytes || 0))}</div>
-      <div class="storage-total-lbl">guardados pelo sistema</div>
+    <div class="stat-card">
+      <div class="stat-icon stat-icon-blue" aria-hidden="true">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+      </div>
+      <div class="stat-body">
+        <div class="stat-value">${esc(formatBytes(usado))}</div>
+        <div class="stat-label">GUARDADOS PELO SISTEMA</div>
+      </div>
     </div>
-    <div class="storage-total">
-      <div class="storage-total-num">${esc(formatBytes(d.livre_bytes || 0))}</div>
-      <div class="storage-total-lbl">livres no disco</div>
+    <div class="stat-card">
+      <div class="stat-icon stat-icon-green" aria-hidden="true">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+      </div>
+      <div class="stat-body">
+        <div class="stat-value">${esc(formatBytes(livre))}</div>
+        <div class="stat-label">LIVRES NO DISCO</div>
+        <div class="stat-sub">${pct}% do disco em uso por este app</div>
+      </div>
     </div>`;
 }
 
@@ -6440,30 +6456,34 @@ function _renderStorageCats(cats) {
   const box = document.getElementById('storage-cats');
   if (!box) return;
   const maior = Math.max(1, ...cats.map(c => c.bytes || 0));
-  box.innerHTML = cats.map(c => `
-    <div class="storage-cat" id="stcat-${esc(c.id)}">
-      <div class="storage-cat-head">
-        <div class="storage-cat-info">
-          <div class="storage-cat-title">
-            ${esc(c.titulo)}
-            ${c.regeneravel ? '<span class="social-badge">recriado sozinho</span>' : ''}
-          </div>
-          <div class="storage-cat-sub">${esc(c.descricao)}</div>
-          <div class="storage-bar"><div class="storage-bar-fill" style="width:${Math.round((c.bytes / maior) * 100)}%"></div></div>
+  box.innerHTML = `
+    <div class="storage-list-head">
+      <span>Tipo de dado</span><span>Tamanho</span><span>Ações</span>
+    </div>
+    ${cats.map(c => `
+    <div class="storage-row" id="stcat-${esc(c.id)}">
+      <div class="storage-row-main">
+        <div class="storage-row-title">
+          ${esc(c.titulo)}
+          ${c.regeneravel ? '<span class="tag-soft">recriado sozinho</span>' : ''}
         </div>
-        <div class="storage-cat-right">
-          <div class="storage-cat-size">${esc(formatBytes(c.bytes || 0))}</div>
-          <div class="storage-cat-count">${c.itens} ${c.itens === 1 ? 'item' : 'itens'}</div>
-          <div class="storage-cat-actions">
-            <button type="button" class="btn" onclick="toggleStorageCat('${jsAttr(c.id)}')"
-                    ${c.itens ? '' : 'disabled'}>Ver itens</button>
-            ${c.regeneravel && c.itens ? `
-            <button type="button" class="btn" onclick="limparCategoria('${jsAttr(c.id)}', '${jsAttr(c.titulo)}')">Limpar tudo</button>` : ''}
-          </div>
+        <div class="storage-row-desc">${esc(c.descricao)}</div>
+        <div class="storage-bar" role="img" aria-label="${Math.round((c.bytes / maior) * 100)}% do maior grupo">
+          <div class="storage-bar-fill" style="width:${Math.round((c.bytes / maior) * 100)}%"></div>
         </div>
       </div>
-      <div class="storage-cat-body" id="stbody-${esc(c.id)}" style="display:none"></div>
-    </div>`).join('');
+      <div class="storage-row-size">
+        <div class="storage-size-num">${esc(formatBytes(c.bytes || 0))}</div>
+        <div class="storage-size-sub">${c.itens} ${c.itens === 1 ? 'item' : 'itens'}</div>
+      </div>
+      <div class="storage-row-acts">
+        <button type="button" class="btn" onclick="toggleStorageCat('${jsAttr(c.id)}')"
+                ${c.itens ? '' : 'disabled'}>Ver itens</button>
+        ${c.regeneravel && c.itens ? `
+        <button type="button" class="btn" onclick="limparCategoria('${jsAttr(c.id)}', '${jsAttr(c.titulo)}')">Limpar</button>` : ''}
+      </div>
+      <div class="storage-row-body" id="stbody-${esc(c.id)}" style="display:none"></div>
+    </div>`).join('')}`;
 }
 
 async function toggleStorageCat(catId) {
