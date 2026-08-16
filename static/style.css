@@ -2295,6 +2295,96 @@ body[data-role="public"] .nav-group-label.group-empty-for-public { display: none
 }
 
 /* ── Armazenamento ───────────────────────────────────────────────
+   A tela usa os componentes que já existem: .stat-card no resumo e
+   .files-table na lista (a mesma da Biblioteca de Mídia). O que segue
+   abaixo só complementa — nada aqui redefine tipografia, padding ou
+   botão, senão a tela volta a destoar do resto do sistema. */
+.storage-body { padding: 22px 24px 26px; display: flex; flex-direction: column; gap: 22px; }
+
+.storage-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.stat-sub { font-size: 11.5px; color: var(--slate-400); margin-top: 2px; }
+
+/* Descrição sob o nome, no mesmo tom das outras telas. */
+.storage-desc { margin-top: 3px; font-size: 12.5px; line-height: 1.5; color: var(--slate-500); max-width: 62ch; }
+
+/* Barra fina de comparação: mostra o vilão do disco de relance sem virar
+   um elemento gráfico grande. */
+.storage-bar { margin-top: 8px; height: 4px; max-width: 420px; border-radius: 999px;
+               background: var(--slate-100); overflow: hidden; }
+.storage-bar-fill { height: 100%; background: var(--blue); border-radius: 999px; }
+
+.storage-size { font-weight: 700; color: var(--slate-900); font-variant-numeric: tabular-nums; }
+.storage-count { font-size: 11.5px; color: var(--slate-500); margin-top: 1px; }
+.storage-acts { display: flex; gap: 8px; justify-content: flex-end; }
+.storage-acts .btn { white-space: nowrap; }
+
+/* Painel de itens: ocupa a linha inteira, logo abaixo da categoria. */
+.storage-body-row > td { padding: 0 14px 14px !important; }
+.storage-cat-body { padding: 14px 16px; background: var(--slate-50, #f8fafc);
+                    border: 1px solid var(--slate-100); border-radius: var(--r-md); }
+
+.storage-items { display: flex; flex-direction: column; gap: 2px;
+                 max-height: 360px; overflow-y: auto; overscroll-behavior: contain; }
+.storage-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+                border-radius: var(--r-sm); font-size: 14px; min-height: 40px;
+                background: var(--surface); }
+.storage-item:hover { background: var(--blue-50); }
+.storage-item.is-busy { opacity: .55; }
+.storage-item-pick { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; cursor: pointer; }
+.storage-item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+                     white-space: nowrap; color: var(--slate-800); }
+.storage-item-det { color: var(--slate-500); font-size: 12px; }
+.storage-item-size { font-variant-numeric: tabular-nums; color: var(--slate-600); flex-shrink: 0; }
+.storage-item-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap;
+                        padding-top: 12px; border-top: 1px solid var(--slate-100); }
+
+/* Botão de olho: alvo de 32px, contorno só no hover/foco. */
+.storage-eye { flex-shrink: 0; width: 32px; height: 32px; display: inline-flex;
+               align-items: center; justify-content: center; border: 1px solid transparent;
+               border-radius: var(--r-sm); background: transparent; color: var(--slate-400);
+               cursor: pointer; transition: color var(--t) var(--ease), background var(--t) var(--ease); }
+.storage-eye:hover { color: var(--blue); background: var(--blue-50); }
+.storage-eye:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+
+.storage-sec-title { margin: 0; font-size: 14px; font-weight: 700; color: var(--slate-900); }
+.storage-sec-hint { margin: 4px 0 12px; font-size: 12.5px; line-height: 1.5; color: var(--slate-500); max-width: 62ch; }
+.storage-sobras { border: 1px solid var(--warn-bd, #fde68a); background: var(--warn-bg, #fffbeb);
+                  border-radius: var(--r-lg); padding: 18px; }
+.storage-skeleton { padding: 14px; font-size: 13.5px; color: var(--slate-500); }
+
+@media (max-width: 720px) {
+  .storage-body { padding: 16px; }
+  .storage-acts { justify-content: flex-start; }
+  .storage-item { min-height: 48px; }
+}
+
+/* ── Assinaturas: opções em grade que se adapta sozinha ──────────
+   Sete selects empilhados num card de 1100px desperdiçavam a largura e
+   obrigavam a rolar. A regra de coluna única vale para formulário de
+   preenchimento sequencial; aqui são CONFIGURAÇÕES, com valor padrão já
+   definido, que a pessoa só ajusta se quiser — grade é o formato certo.
+
+   auto-fit + minmax faz o número de colunas seguir o espaço real (3 em tela
+   larga, 2 em média, 1 no celular) sem depender de breakpoint fixo: o mesmo
+   bloco funciona dentro do card estreito ou largo. */
+.subs-opt-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 14px 20px;
+}
+.subs-opt-grid .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+
+.subs-opt-group + .subs-opt-group { margin-top: 18px; }
+
+/* Rótulo do grupo: separa os três assuntos sem precisar de borda em cada um. */
+.subs-opt-legend {
+  font-size: 11px; font-weight: 700; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--slate-400);
+  margin-bottom: 8px; padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* ── Armazenamento ───────────────────────────────────────────────
    Três decisões que governam esta tela:
 
    1. O resumo usa os MESMOS .stat-card do topo do app. Não havia razão para

@@ -6456,47 +6456,62 @@ function _renderStorageCats(cats) {
   const box = document.getElementById('storage-cats');
   if (!box) return;
   const maior = Math.max(1, ...cats.map(c => c.bytes || 0));
+  // Mesma tabela das outras telas (.files-table): mesmo cabeçalho, mesmo
+  // padding, e o mesmo comportamento de virar card no celular.
   box.innerHTML = `
-    <div class="storage-list-head">
-      <span>Tipo de dado</span><span>Tamanho</span><span>Ações</span>
-    </div>
-    ${cats.map(c => `
-    <div class="storage-row" id="stcat-${esc(c.id)}">
-      <div class="storage-row-main">
-        <div class="storage-row-title">
-          ${esc(c.titulo)}
-          ${c.regeneravel ? '<span class="tag-soft">recriado sozinho</span>' : ''}
-        </div>
-        <div class="storage-row-desc">${esc(c.descricao)}</div>
-        <div class="storage-bar" role="img" aria-label="${Math.round((c.bytes / maior) * 100)}% do maior grupo">
-          <div class="storage-bar-fill" style="width:${Math.round((c.bytes / maior) * 100)}%"></div>
-        </div>
-      </div>
-      <div class="storage-row-size">
-        <div class="storage-size-num">${esc(formatBytes(c.bytes || 0))}</div>
-        <div class="storage-size-sub">${c.itens} ${c.itens === 1 ? 'item' : 'itens'}</div>
-      </div>
-      <div class="storage-row-acts">
-        <button type="button" class="btn" onclick="toggleStorageCat('${jsAttr(c.id)}')"
-                ${c.itens ? '' : 'disabled'}>Ver itens</button>
-        ${c.regeneravel && c.itens ? `
-        <button type="button" class="btn" onclick="limparCategoria('${jsAttr(c.id)}', '${jsAttr(c.titulo)}')">Limpar</button>` : ''}
-      </div>
-      <div class="storage-row-body" id="stbody-${esc(c.id)}" style="display:none"></div>
-    </div>`).join('')}`;
+    <table class="files-table" aria-label="Espaço usado por tipo de dado">
+      <thead>
+        <tr>
+          <th class="col-name" scope="col">Tipo de dado</th>
+          <th class="col-dur" scope="col">Tamanho</th>
+          <th class="col-actions" scope="col"><span class="sr-only">Ações</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${cats.map(c => `
+        <tr id="stcat-${esc(c.id)}">
+          <td class="col-name" data-label="Tipo">
+            <div class="file-name-row">
+              <div class="file-name">${esc(c.titulo)}</div>
+              ${c.regeneravel ? '<span class="ftag">recriado sozinho</span>' : ''}
+            </div>
+            <div class="storage-desc">${esc(c.descricao)}</div>
+            <div class="storage-bar" aria-hidden="true">
+              <div class="storage-bar-fill" style="width:${Math.round((c.bytes / maior) * 100)}%"></div>
+            </div>
+          </td>
+          <td class="col-dur" data-label="Tamanho">
+            <div class="file-dur storage-size">${esc(formatBytes(c.bytes || 0))}</div>
+            <div class="storage-count">${c.itens} ${c.itens === 1 ? 'item' : 'itens'}</div>
+          </td>
+          <td class="col-actions" data-label="Ações">
+            <div class="storage-acts">
+              <button type="button" class="btn" onclick="toggleStorageCat('${jsAttr(c.id)}')"
+                      ${c.itens ? '' : 'disabled'}>Ver itens</button>
+              ${c.regeneravel && c.itens ? `
+              <button type="button" class="btn" onclick="limparCategoria('${jsAttr(c.id)}', '${jsAttr(c.titulo)}')">Limpar</button>` : ''}
+            </div>
+          </td>
+        </tr>
+        <tr class="storage-body-row" id="strow-${esc(c.id)}" style="display:none">
+          <td colspan="3"><div class="storage-cat-body" id="stbody-${esc(c.id)}"></div></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
 }
 
 async function toggleStorageCat(catId) {
   const body = document.getElementById('stbody-' + catId);
-  if (!body) return;
+  const linha = document.getElementById('strow-' + catId);
+  if (!body || !linha) return;
   if (_storageAberta === catId) {          // clicou de novo: fecha
-    body.style.display = 'none';
+    linha.style.display = 'none';
     _storageAberta = null;
     return;
   }
-  document.querySelectorAll('.storage-cat-body').forEach(b => b.style.display = 'none');
+  document.querySelectorAll('.storage-body-row').forEach(l => l.style.display = 'none');
   _storageAberta = catId;
-  body.style.display = 'block';
+  linha.style.display = '';
   body.innerHTML = '<div class="storage-skeleton">Carregando itens…</div>';
   try {
     const r = await fetch(`/api/storage/${encodeURIComponent(catId)}`);
