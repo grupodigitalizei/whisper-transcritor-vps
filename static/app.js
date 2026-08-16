@@ -6697,24 +6697,19 @@ async function previewStorageItem(catId, itemId) {
         ${p.restantes ? `<p class="storage-sec-hint">e mais ${p.restantes} post(s) nesta coleta.</p>` : ''}`;
     } else if (p.tipo === 'video' || p.tipo === 'audio') {
       const grande = (p.bytes || 0) > 400 * 1024 * 1024;   // ~400 MB
-      const tag = p.tipo === 'video'
-        ? `<video class="prev-media" controls preload="metadata" playsinline
-                  src="${esc(p.url)}"
-                  onerror="_prevMediaErro(this)"></video>`
-        : `<audio class="prev-audio" controls preload="metadata"
-                  src="${esc(p.url)}"
-                  onerror="_prevMediaErro(this)"></audio>`;
-      // Arquivo muito grande não abre sozinho: um clique deliberado evita que
-      // abrir a prévia dispare o carregamento de centenas de MB.
+      // O player é montado por _prevCarregarMidia a partir de data-attributes.
+      // Antes o HTML do <video> era serializado para dentro de um onclick, o
+      // que produzia atributo malformado assim que o conteúdo tinha aspas.
       conteudo = grande
         ? `<div class="prev-pesado" id="prev-pesado">
              <p>Este arquivo tem ${esc(formatBytes(p.bytes))}. Carregar aqui pode demorar.</p>
-             <button type="button" class="btn" onclick="_prevCarregarMidia(this, ${JSON.stringify(tag).replace(/"/g, '&quot;')})">
+             <button type="button" class="btn" id="prev-play"
+                     data-tipo="${esc(p.tipo)}" data-src="${esc(p.url)}">
                Reproduzir mesmo assim
              </button>
              ${p.url_download ? `<a class="btn" href="${esc(p.url_download)}">Baixar para o computador</a>` : ''}
            </div>`
-        : tag;
+        : `<div id="prev-player" data-tipo="${esc(p.tipo)}" data-src="${esc(p.url)}"></div>`;
     } else if (p.tipo === 'imagem') {
       conteudo = `<img class="prev-media" alt="Miniatura guardada em cache" src="${esc(p.url)}">`;
     } else {
@@ -6729,6 +6724,13 @@ async function previewStorageItem(catId, itemId) {
           Apagar este item
         </button>
       </div>`;
+
+    // Mídia é montada por DOM depois do innerHTML: o <video> nunca entra como
+    // string, então nome de arquivo com aspas ou acento não quebra o atributo.
+    const slot = document.getElementById('prev-player');
+    if (slot) slot.replaceWith(_prevMontarPlayer(slot.dataset.tipo, slot.dataset.src));
+    const play = document.getElementById('prev-play');
+    if (play) play.addEventListener('click', () => _prevCarregarMidia(play));
   } catch {
     el.innerHTML = '<div class="storage-skeleton">Erro de rede.</div>';
   }
@@ -6773,10 +6775,56 @@ async function apagarDaPrevia(catId, itemId, nome) {
   }
 }
 
+// O navegador só toca o que sabe decodificar. Um .mov de gravação bruta
+// costuma ser ProRes ou HEVC — formatos que o Chrome não abre e que travam a
+// aba enquanto ele tenta. Perguntar antes evita o travamento inteiro.
+const _MIME_PREV = {
+  mp4: 'video/mp4', m4v: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime',
+  mkv: 'video/x-matroska', avi: 'video/x-msvideo',
+  mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', wav: 'audio/wav',
+  ogg: 'audio/ogg', opus: 'audio/ogg', flac: 'audio/flac',
+};
+
+function _navegadorTocaEsse(tipo, src) {
+  const ext = (src.split('.').pop() || '').toLowerCase().split('?')[0];
+  const mime = _MIME_PREV[ext];
+  if (!mime) return false;
+  const teste = document.createElement(tipo === 'video' ? 'video' : 'audio');
+  // '' = não suporta; 'maybe'/'probably' = vale tentar
+  return teste.canPlayType(mime) !== '';
+}
+
+// Cria o elemento de mídia por DOM (nunca por string em atributo).
+function _prevMontarPlayer(tipo, src) {
+  if (!_navegadorTocaEsse(tipo, src)) {
+    const aviso = document.createElement('div');
+    aviso.className = 'prev-pesado';
+    aviso.innerHTML = `<p>Este formato não é reproduzido pelo navegador
+      (arquivos de gravação em ProRes, HEVC ou MKV, por exemplo).
+      Baixe para assistir no seu player.</p>`;
+    return aviso;
+  }
+  const el = document.createElement(tipo === 'video' ? 'video' : 'audio');
+  el.className = tipo === 'video' ? 'prev-media' : 'prev-audio';
+  el.controls = true;
+  el.preload = 'metadata';       // só o cabeçalho do arquivo
+  if (tipo === 'video') el.playsInline = true;
+  el.addEventListener('error', () => _prevMediaErro(el), { once: true });
+  // Se o cabeçalho não chegar, o player fica parado sem dizer nada. O aviso
+  // aparece em vez de deixar a impressão de tela travada.
+  const guarda = setTimeout(() => {
+    if (el.readyState === 0) _prevMediaErro(el);
+  }, 12000);
+  el.addEventListener('loadedmetadata', () => clearTimeout(guarda), { once: true });
+  el.src = src;
+  return el;
+}
+
 // Troca o aviso de "arquivo grande" pelo player, sob clique deliberado.
-function _prevCarregarMidia(btn, tagHtml) {
+function _prevCarregarMidia(btn) {
   const box = document.getElementById('prev-pesado');
-  if (box) box.outerHTML = tagHtml;
+  if (!box) return;
+  box.replaceWith(_prevMontarPlayer(btn.dataset.tipo, btn.dataset.src));
 }
 
 // Sem isto o <video> falhava calado e a prévia parecia travada.

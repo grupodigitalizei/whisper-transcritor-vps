@@ -213,3 +213,17 @@ def test_stream_serve_mime_correto():
     assert app._MIME_POR_EXT[".mp4"] == "video/mp4"
     assert app._MIME_POR_EXT[".mp3"] == "audio/mpeg"
     assert app._MIME_POR_EXT[".mov"].startswith("video/")
+
+
+def test_mime_do_stream_cobre_formatos_de_gravacao():
+    """O .mov é o caso que travava: precisa de Content-Type correto para o
+    navegador conseguir dizer que NÃO sabe tocar, em vez de tentar."""
+    import importlib.util, sys, types, os
+    sys.modules.setdefault("whisper", types.ModuleType("whisper"))
+    raiz = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    spec = importlib.util.spec_from_file_location("wa_mime2", os.path.join(raiz, "whisper-app.py"))
+    app = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(app)
+    assert app._MIME_POR_EXT[".mov"] == "video/quicktime"
+    for ext in (".mp4", ".webm", ".mkv", ".mp3", ".wav"):
+        assert ext in app._MIME_POR_EXT, f"{ext} sem MIME — vira octet-stream"
