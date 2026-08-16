@@ -4018,6 +4018,67 @@ async def api_compress_plan(filename: str, request: Request, preset: str = "medi
     except compressor.CompressError as e:
         raise HTTPException(400, str(e))
 
+@app.post("/api/compress/upload")
+async def api_compress_upload(request: Request,
+                              file: UploadFile = File(...),
+                              preset: str = Form("medio"),
+                              prefer_hevc: str = Form("false")):
+    """Comprime um arquivo enviado do computador do usuário.
+
+    Diferente de /api/compress (que age sobre o que já está no acervo), aqui o
+    arquivo chega agora, pelo navegador. Depois de comprimido ele fica na
+    Biblioteca de Mídia, de onde pode ser baixado de volta — ou transcrito,
+    já que cai no mesmo UPLOAD_DIR de sempre.
+    """
+    _require_admin(request)
+    if not compressor.capabilities()["available"]:
+        raise HTTPException(400, "FFmpeg não está instalado nesta máquina.")
+    if preset not in compressor.PRESETS:
+        raise HTTPException(400, "Preset inválido")
+
+    original_name = file.filename or f"video_{uuid.uuid4().hex[:8]}.mp4"
+    # Mesma sanitização do upload de transcrição: nome de exibição preservado,
+    # nome de disco sem separadores nem controle.
+    safe_stem = re.sub(r"[/\\\x00-\x1f]+", "_", original_name).strip() \
+                or f"video_{uuid.uuid4().hex[:8]}.mp4"
+    filename = f"{uuid.uuid4().hex[:8]}_{safe_stem}"
+    upload_path = os.path.join(UPLOAD_DIR, filename)
+
+    if compressor.media_kind(upload_path) == "other":
+        raise HTTPException(400, "Formato não suportado — envie áudio ou vídeo.")
+
+    # Streaming em blocos com teto, como o upload de transcrição.
+    size = 0
+    try:
+        with open(upload_path, "wb") as f:
+            while True:
+                chunk = await file.read(UPLOAD_CHUNK)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    raise HTTPException(
+                        413, f"Arquivo excede o limite de {MAX_UPLOAD_BYTES // (1024*1024)} MB")
+                f.write(chunk)
+    except HTTPException:
+        _safe_remove(upload_path)
+        raise
+    except Exception as e:
+        _safe_remove(upload_path)
+        raise HTTPException(500, f"Erro ao receber o arquivo: {e}")
+
+    _mark_pending_visibility(filename, _visibility_for_new(request))
+    _save_media(filename, original_name, is_transcribed=False, status="processing")
+
+    task_id = str(uuid.uuid4())
+    _set_task(task_id, status="queued", progress=0, phase="compress",
+              name=f"Comprimindo {original_name}", filename=filename)
+    threading.Thread(target=_run_compression,
+                     args=(task_id, filename, preset, True, prefer_hevc == "true"),
+                     daemon=True).start()
+    return {"ok": True, "task_id": task_id, "file": filename,
+            "name": original_name, "size_bytes": size}
+
 @app.post("/api/compress")
 async def api_compress(request: Request, files: str = Form(...),
                        preset: str = Form("medio"),

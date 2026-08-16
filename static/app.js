@@ -2969,7 +2969,7 @@ function switchTab(tab) {
 // Group = 'main' for the page tabs, 'modal' for the upload modal tabs.
 const _TABLIST_GROUPS = {
   main:  ['main-tab-transcriptions', 'main-tab-public', 'main-tab-media',
-          'main-tab-social', 'main-tab-subs', 'main-tab-advanced'],
+          'main-tab-social', 'main-tab-compress', 'main-tab-subs', 'main-tab-advanced'],
   modal: ['tab-file', 'tab-url', 'tab-batch'],
   'adv-type':    ['adv-type-video', 'adv-type-audio'],
   'adv-urlmode': ['adv-urlmode-single', 'adv-urlmode-batch'],
@@ -3000,6 +3000,7 @@ const _MAIN_TAB_TITLES = {
   public:         'Transcrições Públicas',
   media:          'Biblioteca de Mídia',
   social:         'Redes Sociais',
+  compress:       'Comprimir Vídeo',
   subs:           'Assinaturas',
   advanced:       'Download Avançado',
 };
@@ -3012,18 +3013,19 @@ const _MAIN_TAB_CARDS = {
   public:         'card-transcriptions',
   media:          'card-media',
   social:         'card-social',
+  compress:       'card-compress',
   subs:           'card-subs',
   advanced:       'card-advanced',
 };
 
 // Abas restritas ao admin. A equipe não tem o botão, mas quem chama
 // switchMainTab por outro caminho cai aqui e volta para a aba inicial.
-const _ADMIN_ONLY_TABS = new Set(['public', 'social', 'subs']);
+const _ADMIN_ONLY_TABS = new Set(['public', 'social', 'subs', 'compress']);
 
 function switchMainTab(tab) {
   if (_ADMIN_ONLY_TABS.has(tab) && !_me.is_admin) tab = 'transcriptions';
   const activeCard = _MAIN_TAB_CARDS[tab] || 'card-transcriptions';
-  ['transcriptions', 'public', 'media', 'social', 'advanced'].forEach(t => {
+  ['transcriptions', 'public', 'media', 'social', 'compress', 'subs', 'advanced'].forEach(t => {
     const pressed = t === tab;
     const btn = document.getElementById('main-tab-' + t);
     if (btn) {
@@ -6209,4 +6211,164 @@ async function resumeDownload(taskId, filename) {
   } catch {
     showToast('Erro de rede ao retomar.', 'error');
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  COMPRIMIR — arrasta um arquivo do computador e recebe menor
+// ═══════════════════════════════════════════════════════════════
+// Diferente da compressão da Biblioteca (que age no que já está no acervo),
+// aqui o arquivo vem da máquina do usuário na hora.
+const _compressJobs = new Map();   // task_id -> {name, size}
+
+function _compressMsg(text, kind) {
+  const el = document.getElementById('compress-msg');
+  if (!el) return;
+  el.textContent = text || '';
+  el.className = 'pub-msg' + (text ? ' is-' + kind : '');
+}
+
+function handleCompressDragOver(e) {
+  e.preventDefault();
+  document.getElementById('compress-drop')?.classList.add('dragover');
+}
+
+function handleCompressDragLeave(e) {
+  e.preventDefault();
+  document.getElementById('compress-drop')?.classList.remove('dragover');
+}
+
+function handleCompressDrop(e) {
+  e.preventDefault();
+  document.getElementById('compress-drop')?.classList.remove('dragover');
+  const files = Array.from(e.dataTransfer?.files || []);
+  if (files.length) _enviarParaComprimir(files);
+}
+
+function handleCompressFileSelect(e) {
+  const files = Array.from(e.target.files || []);
+  if (files.length) _enviarParaComprimir(files);
+  e.target.value = '';   // permite reenviar o mesmo arquivo depois
+}
+
+async function _enviarParaComprimir(files) {
+  const preset = document.getElementById('compress-preset')?.value || 'medio';
+
+  // Só áudio/vídeo — avisa em vez de falhar lá no servidor.
+  const validos = files.filter(f => /^(video|audio)\//.test(f.type) ||
+                                    /\.(mp4|mov|mkv|avi|webm|m4v|mp3|m4a|wav|aac|flac|ogg)$/i.test(f.name));
+  const ignorados = files.length - validos.length;
+  if (!validos.length) {
+    _compressMsg('Envie um arquivo de vídeo ou áudio.', 'error');
+    return;
+  }
+  if (ignorados > 0) {
+    _compressMsg(`${ignorados} arquivo(s) ignorado(s) — só dá para comprimir vídeo ou áudio.`, 'error');
+  }
+
+  for (const file of validos) {
+    const linhaId = 'up-' + Math.random().toString(36).slice(2, 10);
+    _renderCompressRow(linhaId, { name: file.name, size: file.size, fase: 'enviando', pct: 0 });
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('preset', preset);
+      const r = await fetch('/api/compress/upload', { method: 'POST', body: fd });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        _renderCompressRow(linhaId, { name: file.name, size: file.size,
+                                      fase: 'erro', erro: d.detail || 'falhou ao enviar' });
+        continue;
+      }
+      _compressJobs.set(d.task_id, { name: file.name, size: file.size, linhaId });
+      _renderCompressRow(linhaId, { name: file.name, size: file.size, fase: 'comprimindo', pct: 0 });
+      _acompanharCompressao(d.task_id);
+    } catch {
+      _renderCompressRow(linhaId, { name: file.name, size: file.size,
+                                    fase: 'erro', erro: 'erro de rede' });
+    }
+  }
+}
+
+function _renderCompressRow(linhaId, info) {
+  const box = document.getElementById('compress-list');
+  if (!box) return;
+  let row = document.getElementById(linhaId);
+  if (!row) {
+    row = document.createElement('div');
+    row.id = linhaId;
+    row.className = 'subs-item';
+    box.prepend(row);
+  }
+  const barra = (info.fase === 'comprimindo' || info.fase === 'enviando')
+    ? `<div class="compress-bar"><div class="compress-bar-fill" style="width:${Math.round(info.pct || 0)}%"></div></div>`
+    : '';
+  let estado, cls = '';
+  if (info.fase === 'enviando')          estado = 'Enviando para o servidor…';
+  else if (info.fase === 'comprimindo')  estado = `Comprimindo… ${Math.round(info.pct || 0)}%`;
+  else if (info.fase === 'pronto')       { estado = `Pronto — ${esc(info.resumo)}`; cls = 'success'; }
+  else if (info.fase === 'pulado')       { estado = esc(info.erro || 'já estava compacto'); }
+  else                                   { estado = `Falhou — ${esc(info.erro || 'erro')}`; cls = 'error'; }
+
+  row.innerHTML = `
+    <div class="subs-item-main">
+      <div class="subs-item-title">${esc(info.name)}</div>
+      <div class="subs-item-sub">${esc(formatBytes(info.size || 0))}</div>
+      <div class="subs-item-status ${cls}">${estado}</div>
+      ${barra}
+    </div>
+    <div class="subs-item-actions">
+      ${info.fase === 'pronto' && info.file ? `
+      <button type="button" class="btn btn-primary" onclick="dlMediaFile('${jsAttr(info.file)}')">
+        Baixar comprimido
+      </button>` : ''}
+    </div>`;
+}
+
+function _acompanharCompressao(taskId) {
+  const meta = _compressJobs.get(taskId);
+  if (!meta) return;
+  const timer = setInterval(async () => {
+    try {
+      const r = await fetch(`/api/progress/${encodeURIComponent(taskId)}`);
+      if (!r.ok) {                     // task sumiu (restart do servidor)
+        clearInterval(timer);
+        _renderCompressRow(meta.linhaId, { ...meta, fase: 'erro',
+                                           erro: 'o servidor reiniciou durante a compressão' });
+        return;
+      }
+      const t = await r.json();
+      if (t.status === 'done' && t.skipped) {
+        // Não é falha: o arquivo já estava compacto e foi mantido como estava.
+        clearInterval(timer);
+        _renderCompressRow(meta.linhaId, { ...meta, fase: 'pulado',
+                                           erro: t.message || 'já estava compacto' });
+        _compressJobs.delete(taskId);
+      } else if (t.status === 'done') {
+        clearInterval(timer);
+        const resumo = t.saved_pct != null
+          ? `${formatBytes(t.old_bytes)} → ${formatBytes(t.new_bytes)} (${t.saved_pct}% menor)`
+          : 'compressão concluída';
+        _renderCompressRow(meta.linhaId, { ...meta, fase: 'pronto',
+                                           resumo, file: t.filename || meta.file });
+        showToast(`"${meta.name}" comprimido.`, 'success');
+        _compressJobs.delete(taskId);
+        if (typeof loadMedia === 'function') loadMedia();
+      } else if (t.status === 'error') {
+        clearInterval(timer);
+        // "já está compacto" não é falha — é a proteção contra piorar o arquivo.
+        const jaCompacto = /compact|menor que o original/i.test(t.error || '');
+        _renderCompressRow(meta.linhaId, {
+          ...meta, fase: jaCompacto ? 'pulado' : 'erro',
+          erro: t.error || 'erro na compressão' });
+        _compressJobs.delete(taskId);
+      } else if (t.status === 'cancelled') {
+        clearInterval(timer);
+        _renderCompressRow(meta.linhaId, { ...meta, fase: 'erro', erro: 'cancelado' });
+        _compressJobs.delete(taskId);
+      } else {
+        _renderCompressRow(meta.linhaId, { ...meta, fase: 'comprimindo',
+                                           pct: t.progress || 0 });
+      }
+    } catch { /* falha de rede pontual — a próxima volta tenta de novo */ }
+  }, 1200);
 }

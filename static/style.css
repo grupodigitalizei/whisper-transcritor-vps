@@ -2013,3 +2013,32 @@
   .subs-item-actions { width: 100%; }
   .subs-item-actions .btn { flex: 1; }
 }
+
+/* ── Comprimir: zona de arrastar ─────────────────────────────── */
+.drop-zone {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; padding: 44px 20px; margin-top: 4px;
+  border: 2px dashed var(--border); border-radius: 14px;
+  background: var(--surface-2, var(--surface));
+  color: var(--slate-500); cursor: pointer;
+  transition: border-color .15s, background .15s, color .15s;
+  text-align: center;
+}
+.drop-zone:hover,
+.drop-zone:focus-visible { border-color: var(--blue); color: var(--blue); }
+.drop-zone.dragover {
+  border-color: var(--blue); color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 8%, transparent);
+}
+.drop-zone-title { font-size: 15px; font-weight: 650; color: var(--text); }
+.drop-zone-sub   { font-size: 12.5px; }
+
+/* Barra de progresso da compressão */
+.compress-bar {
+  margin-top: 8px; height: 6px; border-radius: 999px;
+  background: var(--border); overflow: hidden;
+}
+.compress-bar-fill {
+  height: 100%; background: var(--blue); border-radius: 999px;
+  transition: width .3s ease;
+}

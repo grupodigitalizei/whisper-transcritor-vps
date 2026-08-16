@@ -49,6 +49,10 @@
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1"/></svg>
         Redes Sociais
       </button>
+      <button type="button" id="main-tab-compress" class="app-nav-item admin-only" role="tab" aria-selected="false" aria-controls="card-compress" tabindex="-1" onclick="switchMainTab('compress')" onkeydown="onTablistKey(event, 'main')">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+        Comprimir Vídeo
+      </button>
       <button type="button" id="main-tab-subs" class="app-nav-item admin-only" role="tab" aria-selected="false" aria-controls="card-subs" tabindex="-1" onclick="switchMainTab('subs')" onkeydown="onTablistKey(event, 'main')">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1.5"/></svg>
         Assinaturas
@@ -604,6 +608,55 @@
       </div>
     </div>
   </div><!-- /#card-social -->
+
+    <!-- Comprimir: arrasta um arquivo do computador e recebe ele menor -->
+    <div class="card" id="card-compress" style="display:none;" role="tabpanel" aria-labelledby="main-tab-compress">
+      <div class="card-header">
+        <div class="card-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+          Comprimir Vídeo
+        </div>
+      </div>
+
+      <div class="adv-dl-body">
+        <p class="adv-dl-intro">
+          Arraste um vídeo do seu computador aqui e ele volta bem menor, sem perder
+          qualidade visível. Serve para qualquer arquivo — não precisa estar no acervo.
+        </p>
+
+        <div class="pub-msg" id="compress-msg" role="status" aria-live="polite"></div>
+
+        <!-- Zona de arrastar -->
+        <div class="drop-zone" id="compress-drop"
+             ondragover="handleCompressDragOver(event)"
+             ondragleave="handleCompressDragLeave(event)"
+             ondrop="handleCompressDrop(event)"
+             onclick="document.getElementById('compress-file-input').click()"
+             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();document.getElementById('compress-file-input').click()}"
+             role="button" tabindex="0"
+             aria-label="Arraste vídeos aqui ou clique para escolher do computador">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <div class="drop-zone-title">Arraste seus vídeos aqui</div>
+          <div class="drop-zone-sub">ou clique para escolher do computador</div>
+        </div>
+        <input type="file" id="compress-file-input" accept="video/*,audio/*" multiple
+               style="display:none" onchange="handleCompressFileSelect(event)" />
+
+        <div class="adv-dl-grid" style="margin-top:16px">
+          <div class="field">
+            <label for="compress-preset">Nível de compressão</label>
+            <select id="compress-preset" class="select">
+              <option value="leve">Leve — qualidade quase intacta</option>
+              <option value="medio" selected>Médio — recomendado</option>
+              <option value="forte">Forte — arquivo bem menor</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Lista dos arquivos em processamento -->
+        <div id="compress-list" class="subs-list"></div>
+      </div>
+    </div><!-- /#card-compress -->
 
     <!-- Assinaturas: acompanha canais/perfis e traz o que sai de novo -->
     <div class="card" id="card-subs" style="display:none;" role="tabpanel" aria-labelledby="main-tab-subs">
