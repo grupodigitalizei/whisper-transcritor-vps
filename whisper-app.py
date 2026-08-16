@@ -289,7 +289,8 @@ def _cleanup_task_files(prefix: str) -> None:
         pass
 
 def _ydl_download_with_fallback(url: str, ydl_opts: dict, task_id: str,
-                                filename: str, phase_label: str = "download"):
+                                filename: str, phase_label: str = "download",
+                                preserve_partials: bool = False):
     """Baixa via yt-dlp passando pela cascata de motores (download_engine).
 
     O motor 1 é exatamente `ydl_opts` como o chamador montou — o caminho que já
@@ -309,6 +310,13 @@ def _ydl_download_with_fallback(url: str, ydl_opts: dict, task_id: str,
     def _on_before_retry():
         # Remove .part/parciais da tentativa anterior, senão o yt-dlp tentaria
         # retomar bytes inválidos no motor seguinte.
+        #
+        # Exceção: numa RETOMADA de download pausado, os parciais vêm de antes
+        # desta execução e são justamente o que a pausa preservou. Limpá-los
+        # aqui fazia a pausa se autodestruir — bastava o motor 1 falhar por um
+        # motivo transitório e o usuário perdia 80% já baixados, sem aviso.
+        if preserve_partials:
+            return
         _cleanup_task_files(os.path.splitext(filename)[0])
 
     info, engine_name = download_engine.run_with_fallback(
@@ -336,6 +344,10 @@ SETTINGS_FILE = os.path.join(SCRIPT_DIR, ".whisper_data", "settings.json")
 _DEFAULT_SETTINGS = {
     "download_concurrent":   3,   # quantos yt-dlp em paralelo
     "transcribe_concurrent": 1,   # quantas chamadas Whisper em paralelo
+    # Encoder de hardware (videotoolbox) tem poucas sessões simultâneas, e por
+    # software o ffmpeg come a CPU que o Whisper precisa. 2 é um meio-termo que
+    # aproveita a máquina sem competir com a transcrição.
+    "compress_concurrent":   2,   # quantos ffmpeg em paralelo
 }
 _SETTINGS_CACHE: dict = {}
 
@@ -403,6 +415,7 @@ class _DynamicSem:
             self._cond.notify_all()
 
 _transcribe_sem = _DynamicSem("transcribe_concurrent")  # was Semaphore(1) — now user-tunable
+_compress_sem   = _DynamicSem("compress_concurrent")    # a compressão era a única fila sem teto
 _download_sem   = _DynamicSem("download_concurrent")    # NEW — gate yt-dlp jobs
 
 _thread_local = threading.local()
@@ -475,14 +488,29 @@ def _validate_transcribe_params(model: str, task: str) -> None:
     if task not in _VALID_TASKS:
         raise HTTPException(400, f"Tarefa inválida: {task!r}")
 
+# Quantos modelos Whisper manter carregados. Cada um ocupa de centenas de MB a
+# vários GB de RAM; sem teto, experimentar turbo → large-v3 → medium ao longo da
+# semana deixava os três residentes até o processo morrer, num Mac que também
+# roda ffmpeg e o navegador do ego-lite.
+_MAX_CACHED_MODELS = 2
+
 def _load_model(name: str):
     # Rede de segurança: qualquer caminho que chegue aqui (upload, URL, retry)
     # passa por esta checagem antes de tocar em whisper.load_model.
     if name not in _VALID_MODELS:
         raise ValueError(f"modelo inválido: {name!r}")
     with _models_lock:
-        if name not in _models:
-            _models[name] = whisper.load_model(name)
+        if name in _models:
+            # Marca como usado por último (dict preserva ordem de inserção).
+            _models[name] = _models.pop(name)
+            return _models[name]
+        _models[name] = whisper.load_model(name)
+        # Descarta o menos usado recentemente. Só a referência é solta: o
+        # próximo uso recarrega do disco, que é barato perto de manter GB presos.
+        while len(_models) > _MAX_CACHED_MODELS:
+            antigo = next(iter(_models))          # chave mais antiga
+            _models.pop(antigo, None)
+            print(f"[modelos] descarregado '{antigo}' para liberar memória")
         return _models[name]
 
 # ── Helpers ────────────────────────────────────────────────────
@@ -832,6 +860,10 @@ def _set_task(task_id: str, **kw):
         _tasks.setdefault(task_id, {}).update(kw)
         if kw.get("status") in _TERMINAL_STATES:
             _prune_tasks_locked()
+
+# Teto de URLs por envio em lote. O Download Avançado já tinha o seu
+# (_ADVANCED_MAX_TOTAL_ITEMS); este fluxo não herdou o cuidado.
+_BATCH_MAX_ITEMS = 150
 
 _ACTIVE_STATES = ("queued", "processing", "paused")
 
@@ -2199,12 +2231,14 @@ async def api_resume_download(task_id: str, request: Request):
 
     _set_task(task_id, status="queued", phase="download", pause_requested=False,
               name="Retomando download…")
+    kwargs = {k: v for k, v in args.items() if k not in ("url", "media_type", "quality")}
+    # Avisa a cascata de motores que os parciais no disco são para APROVEITAR,
+    # não para limpar — do contrário a retomada apagaria o que a pausa guardou.
+    kwargs["resuming"] = True
     threading.Thread(target=_run_download_only,
                      args=(task_id, args["url"], args.get("media_type", "video"),
                            args.get("quality", "best")),
-                     kwargs={k: v for k, v in args.items()
-                             if k not in ("url", "media_type", "quality")},
-                     daemon=True).start()
+                     kwargs=kwargs, daemon=True).start()
     return {"ok": True, "message": "Retomando de onde parou."}
 
 @app.delete("/api/transcribe/{task_id}")
@@ -2969,6 +3003,13 @@ async def api_transcribe_batch(
     if not clean:
         raise HTTPException(400, "Nenhuma URL válida (deve começar com http:// ou https://)")
 
+    # Teto de itens, como o Download Avançado já fazia (_ADVANCED_MAX_TOTAL_ITEMS).
+    # Sem ele, colar 2 mil linhas criava 2 mil threads paradas no semáforo, 2 mil
+    # entradas em memória e um history.json reescrito 2 mil vezes — além de 2 mil
+    # polls de 800ms no navegador, um auto-DoS.
+    batch_truncated = len(clean) > _BATCH_MAX_ITEMS
+    clean = clean[:_BATCH_MAX_ITEMS]
+
     # Folder validation only applies to transcribe mode (download-only items
     # live in media.json and don't have a folder concept the user picks here).
     do_transcribe = transcribe == "true"
@@ -2996,6 +3037,7 @@ async def api_transcribe_batch(
         "skipped":    sum(1 for t in task_ids if not t),
         "total":      len(clean),
         "transcribe": do_transcribe,
+        "truncated":  batch_truncated,
         "task_ids":   [t for t in task_ids if t][:50],  # cap response size
     }
 
@@ -3119,7 +3161,8 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str,
                        metadata: bool = False, audio_lang: str | None = None,
                        existing_filename: str | None = None,
                        visibility: str = VIS_PRIVATE,
-                       container: str = "auto", audio_format: str = "mp3"):
+                       container: str = "auto", audio_format: str = "mp3",
+                       resuming: bool = False):
     is_video = media_type == "video"
     # Formato de saída escolhido pelo usuário. "auto"/"original" preservam o
     # comportamento histórico (mp4 para vídeo, mp3 para áudio); os demais
@@ -3203,7 +3246,8 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str,
                 {'key': 'FFmpegMetadata', 'add_metadata': True, 'add_chapters': True})
 
         with _download_sem:
-            info = _ydl_download_with_fallback(url, ydl_opts, task_id, filename)
+            info = _ydl_download_with_fallback(url, ydl_opts, task_id, filename,
+                                               preserve_partials=resuming)
             title = (info or {}).get('title', 'Media Secundária')
 
 
@@ -3893,12 +3937,20 @@ def _run_compression(task_id: str, filename: str, preset: str,
         _set_task(task_id, status="processing", progress=0, phase="compress",
                   phase_progress=0, name=f"Comprimindo {filename}", filename=filename)
 
-        result = compressor.compress(
-            path, preset, replace=replace, prefer_hevc=prefer_hevc,
-            on_progress=lambda pct: _set_task(task_id, progress=pct,
-                                              phase="compress", phase_progress=pct),
-            is_cancelled=lambda: bool(_get_task(task_id).get("cancel_requested")),
-        )
+        # Selecionar 60 vídeos e clicar em Comprimir criava 60 threads e 60
+        # processos ffmpeg de uma vez — a única fila do app sem teto. As demais
+        # esperam aqui, e a task fica visível como "queued" enquanto isso.
+        with _compress_sem:
+            if _get_task(task_id).get("cancel_requested"):
+                _set_task(task_id, status="cancelled", progress=0, phase="cancelled",
+                          filename=filename, name="Compressão cancelada")
+                return
+            result = compressor.compress(
+                path, preset, replace=replace, prefer_hevc=prefer_hevc,
+                on_progress=lambda pct: _set_task(task_id, progress=pct,
+                                                  phase="compress", phase_progress=pct),
+                is_cancelled=lambda: bool(_get_task(task_id).get("cancel_requested")),
+            )
 
         if result.get("skipped"):
             # Não é erro: o arquivo simplesmente não valia a pena comprimir.
