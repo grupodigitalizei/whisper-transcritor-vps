@@ -5291,7 +5291,22 @@ function pollSocialJob(jobId, onDone) {
   const isCollect = !onDone;   // coleta usa o fluxo padrão (mostra progresso, recarrega)
   const timer = setInterval(async () => {
     try {
-      const j = await (await fetch('/api/social/job/' + jobId)).json();
+      const res = await fetch('/api/social/job/' + jobId);
+      // Sem esta checagem, um 404 (job perdido num restart do servidor) parseia
+      // como JSON normal, j.status fica undefined, nenhum clearInterval roda e
+      // este timer bate no servidor a cada 1,2s PARA SEMPRE enquanto a aba
+      // existir — uma vez por ação social feita antes do restart.
+      if (!res.ok) {
+        clearInterval(timer);
+        if (prog) prog.textContent = '';
+        const btn = document.getElementById('social-collect-btn');
+        if (btn) btn.disabled = false;
+        showToast(res.status === 404
+          ? 'Esta tarefa não existe mais no servidor (ele foi reiniciado?). Tente de novo.'
+          : 'Não foi possível acompanhar a tarefa.', 'error');
+        return;
+      }
+      const j = await res.json();
       const p = j.progress;
       if (p && isCollect) {
         prog.textContent = ('collected' in p)

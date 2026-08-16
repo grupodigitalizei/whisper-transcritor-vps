@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 
 from .core import DATA_DIR
 
@@ -228,6 +229,24 @@ def _run_ego(script, on_progress, timeout):
     proc = subprocess.Popen(["ego-browser", "nodejs"], stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     lines = []
+    # Watchdog: `for line in proc.stdout` bloqueia até o pipe fechar. Se o
+    # ego-browser travar com stdout aberto (aba pendurada, popup do sistema,
+    # rede caída), o laço nunca termina — e o timeout do proc.wait() só seria
+    # avaliado DEPOIS dele, ou seja, nunca protegia esse caso. Resultado: thread
+    # Python presa e um Chromium residente para sempre. O timer mata o processo,
+    # o pipe fecha e o laço acaba.
+    expirou = threading.Event()
+
+    def _matar_por_timeout():
+        expirou.set()
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+    watchdog = threading.Timer(timeout, _matar_por_timeout)
+    watchdog.daemon = True
+    watchdog.start()
     try:
         proc.stdin.write(script)
         proc.stdin.close()
@@ -240,9 +259,18 @@ def _run_ego(script, on_progress, timeout):
                     on_progress(int(m.group(1)))
                 elif line.strip():
                     on_progress(None, line[:200])
-        proc.wait(timeout=timeout)
+        proc.wait(timeout=30)
     except subprocess.TimeoutExpired:
-        proc.kill()
+        raise RuntimeError("coleta excedeu o tempo limite")
+    finally:
+        watchdog.cancel()
+        # Nenhuma saída deixa subprocesso órfão — nem erro, nem timeout.
+        if proc.poll() is None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    if expirou.is_set():
         raise RuntimeError("coleta excedeu o tempo limite")
     return "\n".join(lines), lines
 

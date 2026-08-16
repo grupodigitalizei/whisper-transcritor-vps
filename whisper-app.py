@@ -259,6 +259,11 @@ def _build_ydl_opts(url: str, progress_hook, base: dict | None = None) -> dict:
         # that still expose progressive URLs; 'web' stays last as fallback.
         'extractor_args': {'youtube': {'player_client': ['web', 'tv_simply', 'ios', 'mweb']}},
         'retries': 3,
+        # Sem isto, uma conexão que abre e depois estagna (CDN mudo, túnel
+        # caindo) trava o yt-dlp para sempre SEGURANDO um slot do _download_sem.
+        # Três sockets mortos bastavam para parar a fila inteira em silêncio,
+        # sem erro e sem log — só reiniciar resolvia.
+        'socket_timeout': 60,
     }
     if _host_allows_cookies(url):
         # YouTube/Google need login cookies for progressive URLs. Only sent to

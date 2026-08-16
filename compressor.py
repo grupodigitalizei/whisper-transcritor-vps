@@ -282,19 +282,32 @@ def compress(path: str, preset: str = "medio", *, replace: bool = True,
 
     proc = None
     try:
+        # stderr vai JUNTO com stdout de propósito. Como PIPE separado, ele
+        # nunca era drenado durante a codificação: num arquivo problemático o
+        # ffmpeg escreve avisos por frame ("Past duration too large"), enche o
+        # buffer do pipe (~64 KB) e BLOQUEIA na escrita — o laço de progresso
+        # para de receber linhas e os dois processos ficam presos para sempre.
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, text=True)
+                                stderr=subprocess.STDOUT, text=True)
+        # Guarda as últimas linhas para a mensagem de erro: como stderr agora vem
+        # junto do stdout, é daqui que sai o diagnóstico quando o ffmpeg falha.
+        tail: list[str] = []
         for line in proc.stdout:
             if is_cancelled and is_cancelled():
                 proc.kill()
                 raise CompressCancelled("compressão cancelada")
+            if line.strip() and not line.startswith(("out_time", "frame=", "fps=",
+                                                     "bitrate=", "total_size=",
+                                                     "speed=", "progress=")):
+                tail.append(line.rstrip())
+                del tail[:-15]        # só as 15 últimas interessam
             m = _TIME_RE.search(line)
             if m and duration and on_progress:
                 secs = int(m.group(1)) / 1_000_000
                 on_progress(max(0.0, min(100.0, secs / duration * 100)))
         proc.wait(timeout=30)
         if proc.returncode != 0:
-            err = (proc.stderr.read() or "")[-500:] if proc.stderr else ""
+            err = "\n".join(tail)[-500:]
             raise CompressError(f"FFmpeg falhou: {err.strip() or 'erro desconhecido'}")
 
         if not os.path.isfile(tmp_out) or os.path.getsize(tmp_out) == 0:

@@ -13,6 +13,7 @@ import json
 import os
 import re
 import subprocess
+import threading
 
 from .core import DATA_DIR
 from .collector import ego_available
@@ -162,6 +163,21 @@ def _run_ego(script, on_progress=None, timeout=1800):
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             text=True)
     lines = []
+    # Ver a explicação em collector._run_ego: o timeout do proc.wait() nunca
+    # protegia o laço de leitura, então um ego travado deixava thread + Chromium
+    # presos para sempre. O watchdog mata o processo mesmo sem nenhuma saída.
+    expirou = threading.Event()
+
+    def _matar_por_timeout():
+        expirou.set()
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+    watchdog = threading.Timer(timeout, _matar_por_timeout)
+    watchdog.daemon = True
+    watchdog.start()
     try:
         proc.stdin.write(script)
         proc.stdin.close()
@@ -174,9 +190,17 @@ def _run_ego(script, on_progress=None, timeout=1800):
                     on_progress(int(m.group(1)))
                 elif line.strip():
                     on_progress(None, line[:200])
-        proc.wait(timeout=timeout)
+        proc.wait(timeout=30)
     except subprocess.TimeoutExpired:
-        proc.kill()
+        raise RuntimeError("interceptação excedeu o tempo limite")
+    finally:
+        watchdog.cancel()
+        if proc.poll() is None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    if expirou.is_set():
         raise RuntimeError("interceptação excedeu o tempo limite")
     return "\n".join(lines)
 
