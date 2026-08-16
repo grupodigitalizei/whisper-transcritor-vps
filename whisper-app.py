@@ -1211,7 +1211,14 @@ async def serve_html():
                         f'href="/static/style.css?v={_ver("static/style.css")}"')
     html = html.replace('src="/static/app.js"',
                         f'src="/static/app.js?v={_ver("static/app.js")}"')
-    return html
+    # O cache-busting acima cuida do CSS e do JS, mas o próprio HTML ficava
+    # cacheável: o navegador servia uma cópia antiga da página com o JS novo.
+    # Como a página é a fonte dos IDs que o JS procura, um elemento adicionado
+    # depois (um modal, um painel) simplesmente não existia — e o código que o
+    # buscava saía em silêncio, sem erro visível.
+    return HTMLResponse(html, headers={
+        "Cache-Control": "no-cache, must-revalidate",
+    })
 
 # -- History & stats
 @app.get("/api/history")

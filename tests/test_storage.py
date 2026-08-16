@@ -168,3 +168,18 @@ def test_caminho_de_valida_pasta(disco):
     assert storage.caminho_de("uploads", "abc_video.mp4").endswith("abc_video.mp4")
     with pytest.raises(FileNotFoundError):
         storage.caminho_de("uploads", "../history.json")
+
+
+# ── a página não pode ficar em cache ───────────────────────────────────────
+def test_html_servido_com_no_cache():
+    """O CSS e o JS têm cache-busting por ?v=, mas o HTML não tinha nenhum
+    header: o navegador servia a página antiga com o JS novo, e qualquer
+    elemento adicionado depois (um modal) simplesmente não existia no DOM."""
+    import asyncio, importlib.util, sys, types, os
+    sys.modules.setdefault("whisper", types.ModuleType("whisper"))
+    raiz = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    spec = importlib.util.spec_from_file_location("wa_cache", os.path.join(raiz, "whisper-app.py"))
+    app = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(app)
+    resp = asyncio.run(app.serve_html())
+    assert "no-cache" in (resp.headers.get("cache-control") or "")

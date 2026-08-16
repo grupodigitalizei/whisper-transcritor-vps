@@ -6650,7 +6650,13 @@ async function previewStorageItem(catId, itemId) {
   const corpo = `<div class="storage-skeleton">Abrindo…</div>`;
   const el = document.getElementById('storage-preview-body');
   const ov = document.getElementById('storage-preview-overlay');
-  if (!el || !ov) return;
+  if (!el || !ov) {
+    // Acontecia com a página em cache: o JS novo procurava um elemento que a
+    // versão antiga do HTML não tinha, e o clique não fazia nada. Falhar
+    // calado é pior que falhar — pelo menos diga o que fazer.
+    showToast('Recarregue a página (Cmd+Shift+R) para ativar a pré-visualização.', 'error');
+    return;
+  }
   el.innerHTML = corpo;
   document.getElementById('storage-preview-title').textContent = 'Pré-visualização';
   ov.classList.add('open');
