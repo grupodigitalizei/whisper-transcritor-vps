@@ -2042,3 +2042,142 @@
   height: 100%; background: var(--blue); border-radius: 999px;
   transition: width .3s ease;
 }
+
+/* ── Navegação agrupada ──────────────────────────────────────────
+   Lei da proximidade: o espaço ENTRE grupos tem que ser maior que o
+   espaço DENTRO do grupo, senão nada parece agrupado. Aqui: 2px entre
+   itens do mesmo grupo, 20px acima do rótulo do grupo seguinte. */
+.nav-group-label {
+  margin: 20px 0 6px;                 /* espaço ACIMA do título, não abaixo */
+  padding: 0 11px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .05em;              /* caixa alta pequena pede tracking positivo */
+  text-transform: uppercase;
+  color: var(--slate-400);
+  user-select: none;
+}
+/* O primeiro rótulo não precisa do respiro extra: já está no topo. */
+.nav-group-label:first-child { margin-top: 2px; }
+
+/* Quando o funcionário está logado, grupos inteiros podem ficar vazios
+   (todos os itens são .admin-only) — o rótulo sozinho viraria ruído. */
+body[data-role="public"] .nav-group-label.group-empty-for-public { display: none; }
+
+/* ── Assinaturas ─────────────────────────────────────────────────
+   Antes: 10 campos num grid multicoluna, tudo visível de uma vez, sem
+   hierarquia. Agora: dois blocos (criar / acompanhados), formulário em
+   COLUNA ÚNICA com o essencial, e o resto atrás de "Mais opções". */
+.subs-body {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;                          /* entre blocos: maior que o gap interno */
+  padding: 24px;
+}
+
+.subs-panel {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  padding: 20px;
+}
+
+.subs-panel-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.subs-panel-hint {
+  margin: 6px 0 0;                    /* perto do próprio título */
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--slate-500);
+  max-width: 65ch;                    /* largura de leitura */
+}
+
+/* Coluna única — multicoluna aumenta campo pulado e erro. */
+.subs-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 16px;
+  max-width: 520px;
+}
+.subs-form .field { display: flex; flex-direction: column; gap: 6px; }
+
+.field-hint { font-size: 11.5px; line-height: 1.45; color: var(--slate-500); }
+.field-optional { font-weight: 500; color: var(--slate-400); }
+
+/* Progressive disclosure: um nível só, com pista textual clara. */
+.subs-more { border-top: 1px solid var(--border); padding-top: 12px; }
+.subs-more > summary {
+  cursor: pointer; list-style: none;
+  font-size: 13px; font-weight: 600; color: var(--blue);
+  padding: 6px 0; min-height: 32px;
+  display: flex; align-items: center; gap: 6px;
+}
+.subs-more > summary::-webkit-details-marker { display: none; }
+.subs-more > summary::before {
+  content: ''; width: 0; height: 0;
+  border-left: 5px solid currentColor;
+  border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+  transition: transform 150ms cubic-bezier(.2,0,0,1);
+}
+.subs-more[open] > summary::before { transform: rotate(90deg); }
+.subs-more > summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 6px; }
+.subs-more-body { display: flex; flex-direction: column; gap: 14px; padding: 12px 0 4px; }
+
+.subs-submit { align-self: flex-start; min-height: 40px; padding: 0 20px; }
+
+.subs-count { font-size: 12px; font-weight: 600; color: var(--slate-500); }
+
+@media (prefers-reduced-motion: reduce) {
+  .subs-more > summary::before { transition-duration: 1ms; }
+}
+
+/* No celular o formulário ocupa a largura toda e os alvos crescem. */
+@media (max-width: 720px) {
+  .subs-body { padding: 16px; gap: 16px; }
+  .subs-panel { padding: 16px; }
+  .subs-form { max-width: none; }
+  .subs-submit { align-self: stretch; min-height: 48px; }
+}
+
+/* Estado vazio: título + explicação + próximo passo (nunca container vazio). */
+.subs-empty { padding: 28px 20px; text-align: center; }
+.subs-empty-title { font-size: 14.5px; font-weight: 650; color: var(--text); }
+.subs-empty-text {
+  margin: 6px auto 0; max-width: 46ch;
+  font-size: 12.5px; line-height: 1.55; color: var(--slate-500);
+}
+
+/* A lista mora dentro do painel: sem borda dupla e sem margem extra. */
+.subs-panel .subs-list { margin-top: 14px; }
+.subs-panel .subs-item { border-radius: 12px; }
+
+/* Campo de texto: espelha o .select (que já existia) para os dois terem a
+   mesma altura, borda e foco. Antes o .input não tinha estilo nenhum e
+   aparecia com a aparência crua do navegador ao lado dos selects. */
+.input {
+  width: 100%; height: 40px; padding: 0 12px;
+  border: 1.5px solid var(--slate-200); border-radius: var(--r-sm);
+  font-family: inherit; font-size: 14px; color: var(--slate-800);
+  background: var(--surface);
+  outline: none;
+  transition: border-color var(--t) var(--ease);
+}
+.input:focus { border-color: var(--blue); }
+.input:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.input::placeholder { color: var(--slate-400); }
+
+.field-label { font-size: 13px; font-weight: 600; color: var(--slate-700); }
+
+/* 16px no mobile: abaixo disso o Safari iOS dá zoom ao focar e não desfaz. */
+@media (max-width: 720px) {
+  .input, .select { font-size: 16px; height: 48px; }
+}

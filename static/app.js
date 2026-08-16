@@ -5830,12 +5830,18 @@ async function loadSubscriptions() {
 function renderSubscriptions() {
   const box = document.getElementById('subs-list');
   if (!box) return;
+  const cnt = document.getElementById('subs-count');
+  if (cnt) cnt.textContent = _subs.length ? `(${_subs.length})` : '';
   if (!_subs.length) {
-    box.innerHTML = `<p class="adv-dl-intro" style="margin-top:18px">
-      <strong>Nenhum canal cadastrado ainda.</strong><br>
-      Preencha o campo “Canal ou perfil” acima e clique em <strong>Assinar</strong>.
-      Depois aparece aqui um botão <strong>“Baixar vídeos agora”</strong> para trazer
-      os vídeos na hora.</p>`;
+    box.innerHTML = `
+      <div class="subs-empty">
+        <div class="subs-empty-title">Nenhum canal por enquanto</div>
+        <p class="subs-empty-text">
+          Cole o endereço de um canal no campo acima e clique em
+          <strong>Acompanhar canal</strong>. Ele aparece aqui, com um botão para
+          baixar os vídeos na hora.
+        </p>
+      </div>`;
     return;
   }
   box.innerHTML = _subs.map(s => {
@@ -5866,14 +5872,29 @@ function renderSubscriptions() {
                 title="Traz os vídeos mais recentes deste canal agora mesmo">
           ${sic('dl')} Baixar vídeos agora
         </button>
-        <button type="button" class="btn" onclick="checkSubscriptionNow('${jsAttr(s.id)}')"
-                title="Procura se saiu algo novo desde a última vez">Procurar novidades</button>
-        <button type="button" class="btn" onclick="toggleSubscription('${jsAttr(s.id)}', ${s.paused ? 'false' : 'true'})"
-                title="${s.paused ? 'Voltar a acompanhar este canal' : 'Parar de acompanhar por enquanto'}">
-          ${s.paused ? 'Retomar' : 'Pausar'}
-        </button>
-        <button type="button" class="btn btn-danger" onclick="deleteSubscription('${jsAttr(s.id)}')"
-                aria-label="Excluir assinatura ${esc(s.label)}">Excluir</button>
+        <div class="dd-wrap">
+          <button type="button" class="dots-btn" aria-label="Mais ações — ${esc(s.label)}"
+                  aria-haspopup="menu" aria-expanded="false"
+                  onclick="toggleDD('sub-${jsAttr(s.id)}', this, event)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
+          </button>
+          <div class="dropdown" id="dd-sub-${esc(s.id)}" role="menu">
+            <div class="dd-item" role="menuitem" tabindex="-1" onclick="checkSubscriptionNow('${jsAttr(s.id)}')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+              Procurar novidades
+            </div>
+            <div class="dd-item" role="menuitem" tabindex="-1" onclick="toggleSubscription('${jsAttr(s.id)}', ${s.paused ? 'false' : 'true'})">
+              ${s.paused
+                ? `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg> Retomar`
+                : `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pausar`}
+            </div>
+            <div class="dd-sep"></div>
+            <div class="dd-item danger" role="menuitem" tabindex="-1" onclick="deleteSubscription('${jsAttr(s.id)}')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+              Parar de acompanhar
+            </div>
+          </div>
+        </div>
       </div>
     </div>`;
   }).join('');
