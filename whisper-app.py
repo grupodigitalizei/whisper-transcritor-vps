@@ -4197,6 +4197,38 @@ async def api_storage_preview(request: Request, cat_id: str, item_id: str):
     except FileNotFoundError:
         raise HTTPException(404, "Item não encontrado")
 
+_MIME_POR_EXT = {
+    ".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime",
+    ".webm": "video/webm", ".mkv": "video/x-matroska", ".avi": "video/x-msvideo",
+    ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".aac": "audio/aac",
+    ".wav": "audio/wav", ".ogg": "audio/ogg", ".opus": "audio/ogg",
+    ".flac": "audio/flac",
+    ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+    ".webp": "image/webp", ".gif": "image/gif",
+}
+
+@app.get("/api/storage/{cat_id}/stream/{item_id}")
+async def api_storage_stream(request: Request, cat_id: str, item_id: str):
+    """Serve mídia para TOCAR na página, não para baixar.
+
+    /api/download-media manda Content-Disposition: attachment — correto para o
+    botão "baixar", mas faz o navegador tratar a resposta como download, e um
+    <video> apontado para lá não reproduz. Além disso os arquivos aqui chegam a
+    2 GB: sem Range o navegador tentaria puxar tudo antes de mostrar o primeiro
+    quadro, o que travava a página. FileResponse responde 206 por trecho, então
+    com preload="metadata" só o cabeçalho do arquivo é lido.
+    """
+    _require_admin(request)
+    try:
+        caminho = storage.caminho_de(cat_id, item_id)
+    except KeyError:
+        raise HTTPException(404, "Categoria desconhecida")
+    except FileNotFoundError:
+        raise HTTPException(404, "Item não encontrado")
+    ext = os.path.splitext(caminho)[1].lower()
+    return FileResponse(caminho,
+                        media_type=_MIME_POR_EXT.get(ext, "application/octet-stream"))
+
 @app.get("/api/storage/{cat_id}/arquivo/{item_id}")
 async def api_storage_arquivo(request: Request, cat_id: str, item_id: str):
     """Serve o arquivo em si (miniatura, planilha) para a prévia."""

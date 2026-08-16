@@ -2474,3 +2474,12 @@ body[data-role="public"] .nav-group-label.group-empty-for-public { display: none
   .prev-acoes { flex-direction: column-reverse; }
   .prev-acoes .btn { width: 100%; min-height: 48px; }
 }
+
+/* Aviso antes de carregar mídia pesada na prévia. */
+.prev-pesado {
+  padding: 22px; text-align: center;
+  border: 1px dashed var(--border); border-radius: 10px;
+  background: var(--slate-50, #f8fafc);
+}
+.prev-pesado p { margin: 0 0 12px; font-size: 13px; color: var(--slate-600); }
+.prev-pesado .btn { margin: 0 4px; }

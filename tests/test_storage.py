@@ -183,3 +183,33 @@ def test_html_servido_com_no_cache():
     spec.loader.exec_module(app)
     resp = asyncio.run(app.serve_html())
     assert "no-cache" in (resp.headers.get("cache-control") or "")
+
+
+# ── prévia de mídia: tocar, não baixar ─────────────────────────────────────
+def test_preview_video_usa_rota_de_stream(disco):
+    """A rota de download manda Content-Disposition: attachment, e um <video>
+    apontado para lá não reproduz — a prévia precisa da rota inline."""
+    p = storage.preview("uploads", "abc_video.mp4")
+    assert "/stream/" in p["url"], "prévia apontando para rota de download"
+    assert "download-media" not in p["url"]
+    # o botão de baixar continua existindo, separado
+    assert p["url_download"].startswith("/api/download-media/")
+
+
+def test_preview_escapa_nome_na_url(disco):
+    (disco["up"] / "com espaço & sinal.mp4").write_bytes(b"x" * 10)
+    p = storage.preview("uploads", "com espaço & sinal.mp4")
+    assert " " not in p["url"] and "%20" in p["url"]
+
+
+def test_stream_serve_mime_correto():
+    """Sem media_type o navegador não sabe que é vídeo."""
+    import importlib.util, sys, types, os
+    sys.modules.setdefault("whisper", types.ModuleType("whisper"))
+    raiz = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    spec = importlib.util.spec_from_file_location("wa_mime", os.path.join(raiz, "whisper-app.py"))
+    app = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(app)
+    assert app._MIME_POR_EXT[".mp4"] == "video/mp4"
+    assert app._MIME_POR_EXT[".mp3"] == "audio/mpeg"
+    assert app._MIME_POR_EXT[".mov"].startswith("video/")

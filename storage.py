@@ -346,12 +346,22 @@ def preview(cat_id: str, item_id: str) -> dict:
     if cat_id == "uploads":
         ext = os.path.splitext(nome)[1].lower()
         video = ext in (".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi")
-        return {**base, "tipo": "video" if video else "audio",
-                "url": f"/api/download-media/{nome}",
-                "detalhes": [{"rotulo": "Formato", "valor": ext.lstrip(".").upper() or "—"}]}
+        from urllib.parse import quote
+        return {
+            **base,
+            "tipo": "video" if video else "audio",
+            # rota de STREAM (inline, com Range), não a de download: um <video>
+            # apontado para a rota de download não reproduz.
+            "url": f"/api/storage/uploads/stream/{quote(nome)}",
+            # o botão de baixar continua usando a rota própria, que manda o
+            # arquivo com o nome original.
+            "url_download": f"/api/download-media/{quote(nome)}",
+            "detalhes": [{"rotulo": "Formato", "valor": ext.lstrip(".").upper() or "—"}],
+        }
     if cat_id in ("social_cache",):
+        from urllib.parse import quote
         return {**base, "tipo": "imagem",
-                "url": f"/api/storage/social_cache/arquivo/{nome}",
+                "url": f"/api/storage/social_cache/arquivo/{quote(nome)}",
                 "detalhes": []}
     # exports e mídia social: sem prévia útil além dos metadados
     return {**base, "tipo": "arquivo", "detalhes": [

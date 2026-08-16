@@ -6695,10 +6695,26 @@ async function previewStorageItem(catId, itemId) {
             </div>`).join('')}
         </div>
         ${p.restantes ? `<p class="storage-sec-hint">e mais ${p.restantes} post(s) nesta coleta.</p>` : ''}`;
-    } else if (p.tipo === 'video') {
-      conteudo = `<video class="prev-media" controls preload="metadata" src="${esc(p.url)}"></video>`;
-    } else if (p.tipo === 'audio') {
-      conteudo = `<audio class="prev-audio" controls preload="metadata" src="${esc(p.url)}"></audio>`;
+    } else if (p.tipo === 'video' || p.tipo === 'audio') {
+      const grande = (p.bytes || 0) > 400 * 1024 * 1024;   // ~400 MB
+      const tag = p.tipo === 'video'
+        ? `<video class="prev-media" controls preload="metadata" playsinline
+                  src="${esc(p.url)}"
+                  onerror="_prevMediaErro(this)"></video>`
+        : `<audio class="prev-audio" controls preload="metadata"
+                  src="${esc(p.url)}"
+                  onerror="_prevMediaErro(this)"></audio>`;
+      // Arquivo muito grande não abre sozinho: um clique deliberado evita que
+      // abrir a prévia dispare o carregamento de centenas de MB.
+      conteudo = grande
+        ? `<div class="prev-pesado" id="prev-pesado">
+             <p>Este arquivo tem ${esc(formatBytes(p.bytes))}. Carregar aqui pode demorar.</p>
+             <button type="button" class="btn" onclick="_prevCarregarMidia(this, ${JSON.stringify(tag).replace(/"/g, '&quot;')})">
+               Reproduzir mesmo assim
+             </button>
+             ${p.url_download ? `<a class="btn" href="${esc(p.url_download)}">Baixar para o computador</a>` : ''}
+           </div>`
+        : tag;
     } else if (p.tipo === 'imagem') {
       conteudo = `<img class="prev-media" alt="Miniatura guardada em cache" src="${esc(p.url)}">`;
     } else {
@@ -6755,4 +6771,20 @@ async function apagarDaPrevia(catId, itemId, nome) {
   } catch {
     showToast('Erro de rede ao apagar.', 'error');
   }
+}
+
+// Troca o aviso de "arquivo grande" pelo player, sob clique deliberado.
+function _prevCarregarMidia(btn, tagHtml) {
+  const box = document.getElementById('prev-pesado');
+  if (box) box.outerHTML = tagHtml;
+}
+
+// Sem isto o <video> falhava calado e a prévia parecia travada.
+function _prevMediaErro(el) {
+  const aviso = document.createElement('div');
+  aviso.className = 'storage-skeleton';
+  aviso.textContent = 'Não foi possível reproduzir este arquivo aqui — '
+                    + 'o formato pode não ser suportado pelo navegador. '
+                    + 'Use "Baixar para o computador".';
+  el.replaceWith(aviso);
 }
