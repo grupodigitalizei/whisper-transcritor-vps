@@ -1825,20 +1825,29 @@ function estimateRemainingSecs(f, nowTs) {
   nowTs = nowTs || (Date.now() / 1000);
   if (f.status === 'done' || f.status === 'error') return 0;
 
+  // Item que já baixou e espera um slot da fila: para efeito de estimativa ele
+  // é idêntico a um "queued" — a transcrição ainda não começou, então precisa
+  // do tempo cheio. Pular direto para a heurística evita que os cálculos
+  // baseados em elapsed abaixo reaproveitem o started_at/progress da fase de
+  // DOWNLOAD e produzam uma ETA já vencida. A linha de ETA não aparece na
+  // tabela nessa fase (ver renderStatus), mas o resumo da fila no topo somava
+  // esse número — e zerar a contribuição subestimaria o total.
+  const aguardandoSlot = _WAITING_PHASES.has(f._phase);
+
   // PREFERRED: derive remaining time from the percentage the user is actually
   // looking at — phase_progress (0–100 of the current phase). The backend
   // sets `started_at` when the transcribe phase starts, so for that phase
   // `elapsed` is genuinely the transcription elapsed time:
   //   remaining ≈ elapsed * (100 - p) / p
   // This makes ETA self-correct to the real machine speed and match the bar.
-  if (f.status === 'processing' && f.started_at && f._phase === 'transcribe'
+  if (!aguardandoSlot && f.status === 'processing' && f.started_at && f._phase === 'transcribe'
       && typeof f._phaseProgress === 'number' && f._phaseProgress >= 3) {
     const elapsed = nowTs - f.started_at;
     const p = Math.min(99.5, f._phaseProgress);
     if (elapsed > 0 && p > 0) return Math.max(0, elapsed * (100 - p) / p);
   }
   // Same idea, fallback when only overall progress is known.
-  if (f.status === 'processing' && f.started_at && typeof f._progress === 'number' && f._progress >= 3) {
+  if (!aguardandoSlot && f.status === 'processing' && f.started_at && typeof f._progress === 'number' && f._progress >= 3) {
     const elapsed = nowTs - f.started_at;
     const p = Math.min(99.5, f._progress);
     if (elapsed > 0 && p > 0) return Math.max(0, elapsed * (100 - p) / p);
@@ -1851,7 +1860,9 @@ function estimateRemainingSecs(f, nowTs) {
   if (f.dur_secs && rate) total = f.dur_secs * rate;
   else                    total = _avgTotalProcessingSecs(f.mode);
   if (total == null) return null;
-  if (f.status === 'processing' && f.started_at) {
+  // Aguardando slot: nada do tempo estimado foi consumido ainda (o elapsed que
+  // existe é da fase de download), então vale o total cheio, como num "queued".
+  if (!aguardandoSlot && f.status === 'processing' && f.started_at) {
     const elapsed = nowTs - f.started_at;
     return Math.max(0, total - elapsed);
   }
@@ -1883,11 +1894,18 @@ function fmtSecs(s) {
 // Phase labels — show "Baixando 35%" vs "Transcrevendo 67%" so the user
 // can tell download from transcription at a glance.
 const _PHASE_LABEL = {
-  download:   'Baixando',
-  transcribe: 'Transcrevendo',
-  saving:     'Salvando',
-  compress:   'Comprimindo',
+  download:            'Baixando',
+  awaiting_transcribe: 'Aguardando transcrição',
+  transcribe:          'Transcrevendo',
+  saving:              'Salvando',
+  compress:            'Comprimindo',
 };
+
+// Fases que são espera pura, não trabalho em andamento. Não têm porcentagem
+// nem ETA honesta: o item só sai daqui quando um slot da fila vagar, e não
+// dá para prever quando. Mostrar "0%" ou uma estimativa herdada da fase
+// anterior seria pior que não mostrar nada.
+const _WAITING_PHASES = new Set(['awaiting_transcribe']);
 
 function renderStatus(status, f) {
   const s = STATUS_MAP[status] || STATUS_MAP.queued;
@@ -1899,12 +1917,14 @@ function renderStatus(status, f) {
   if (f && status === 'processing') {
     const phaseLabel = _PHASE_LABEL[f._phase];
     if (phaseLabel) label = phaseLabel;
-    // Prefer phase_progress (the 0–100 of the CURRENT phase — more intuitive).
-    // Fall back to overall progress if phase_progress isn't reported yet.
-    const pct = (typeof f._phaseProgress === 'number') ? f._phaseProgress
-              : (typeof f._progress === 'number')      ? f._progress
-              : null;
-    if (pct != null) pctLabel = ` <small style="opacity:.7">${Math.floor(pct)}%</small>`;
+    if (!_WAITING_PHASES.has(f._phase)) {
+      // Prefer phase_progress (the 0–100 of the CURRENT phase — more intuitive).
+      // Fall back to overall progress if phase_progress isn't reported yet.
+      const pct = (typeof f._phaseProgress === 'number') ? f._phaseProgress
+                : (typeof f._progress === 'number')      ? f._progress
+                : null;
+      if (pct != null) pctLabel = ` <small style="opacity:.7">${Math.floor(pct)}%</small>`;
+    }
   }
 
   // ETA só faz sentido para itens REALMENTE em processamento — a estimativa
@@ -1912,7 +1932,10 @@ function renderStatus(status, f) {
   // para 100 itens em fila era enganoso (era a média histórica do modelo).
   // O resumo do total continua visível no topo da tabela via _renderQueueSummary.
   let eta = '';
-  if (f && status === 'processing') {
+  // Numa fase de espera o rótulo já diz tudo ("Aguardando transcrição"). Cair
+  // no "finalizando…" abaixo seria pior que o bug original: sugere que está
+  // quase pronto quando o trabalho sequer começou.
+  if (f && status === 'processing' && !_WAITING_PHASES.has(f._phase)) {
     const est = estimateRemainingSecs(f);
     if (est != null && est > 0) {
       eta = `<div class="row-eta">~${fmtSecs(est)} restante</div>`;
@@ -2298,6 +2321,43 @@ function toggleSelect(id, cb) {
   syncBulkBar();
   syncHeaderCheck();
 }
+
+// ── Shift+clique genérico, para listas de checkbox "soltos" ─────
+// As tabelas de Transcrições e Mídia têm o shift+clique embutido no próprio
+// onclick da linha (handleCheckboxClick / handleMediaCheckboxClick), porque
+// elas mantêm um Set de ids e re-renderizam a cada clique. Já as listas de
+// Armazenamento são checkboxes puros, lidos só na hora de agir — para elas
+// basta este listener delegado: marque o container com `data-shift-range` e
+// o intervalo passa a funcionar, sem precisar de estado próprio.
+//
+// O anchor fica num WeakMap por container (e não numa variável global) para
+// que abrir outra categoria não herde o último clique da categoria anterior —
+// o que faria o shift selecionar um intervalo que o usuário nunca viu.
+const _shiftAnchors = new WeakMap();
+
+document.addEventListener('click', (ev) => {
+  const cb = ev.target.closest?.('input[type="checkbox"]');
+  if (!cb || cb.disabled) return;
+  const container = cb.closest('[data-shift-range]');
+  if (!container) return;
+
+  const anchor = _shiftAnchors.get(container);
+  // `anchor` pode ter sido descartado por um re-render da lista; nesse caso o
+  // clique atual apenas vira o novo ponto de partida.
+  if (ev.shiftKey && anchor && anchor !== cb && container.contains(anchor)) {
+    const boxes = [...container.querySelectorAll('input[type="checkbox"]:not(:disabled)')];
+    const a = boxes.indexOf(anchor), b = boxes.indexOf(cb);
+    if (a !== -1 && b !== -1) {
+      // O clique nativo já alternou `cb`; replicamos esse estado no intervalo,
+      // então shift+clique tanto marca quanto desmarca em lote.
+      const [lo, hi] = a < b ? [a, b] : [b, a];
+      for (let i = lo; i <= hi; i++) boxes[i].checked = cb.checked;
+      // Shift+clique arrasta seleção de texto no navegador — atrapalha a leitura.
+      try { window.getSelection().removeAllRanges(); } catch {}
+    }
+  }
+  _shiftAnchors.set(container, cb);
+});
 
 // Select/deselect respects the current filter — toggleAll only affects the
 // visible rows, and header indeterminate state is computed against visible too.
@@ -4893,6 +4953,56 @@ enhanceSelects();
       }
     }
 
+    // Baixa os originais selecionados num ZIP só. Disparar um download por
+    // arquivo não serve aqui: o navegador bloqueia downloads múltiplos
+    // automáticos após os primeiros, e a seleção chegaria incompleta sem aviso.
+    async function downloadSelectedMedia() {
+      const ids = _selectedVisibleMediaIds();
+      if (!ids.length) return;
+      // Só o que está fisicamente no disco — o mesmo critério que decide se o
+      // menu de cada linha mostra "Baixar Original". Itens em download ou que
+      // falharam entram na seleção pelos outros botões (ex.: "Tentar novamente").
+      const byId = new Map(_mediaFiles.map(m => [m.id, m]));
+      const prontos = ids.filter(id => byId.get(id)?.on_disk);
+      if (!prontos.length) {
+        showToast('Nenhum dos itens selecionados está disponível para download.', 'error');
+        return;
+      }
+      const ignorados = ids.length - prontos.length;
+
+      const btns = document.querySelectorAll('#media-bulk-bar .bulk-btn');
+      btns.forEach(b => b.disabled = true);
+      showToast(`Preparando ZIP com ${prontos.length} arquivo(s)…`, '');
+      try {
+        const fd = new FormData();
+        fd.append('files', JSON.stringify(prontos));
+        const res = await fetch('/api/download-media-zip', { method: 'POST', body: fd });
+        if (!res.ok) {
+          let msg = 'Não foi possível montar o ZIP.';
+          try { const e = await res.json(); if (e.detail) msg = e.detail; } catch {}
+          showToast(msg, 'error');
+          return;
+        }
+        // O ZIP pode ter centenas de MB; blob + objectURL evita uma segunda ida
+        // ao servidor (que window.location faria, remontando tudo do zero).
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = 'midias_selecionadas.zip';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+        showToast(
+          `${prontos.length} arquivo(s) baixado(s) em ZIP — com legenda, métricas ` +
+          `e capa de quem foi salvo com metadados` +
+          (ignorados ? ` · ${ignorados} sem original no disco` : '') + '.',
+          'success');
+      } catch {
+        showToast('Erro de rede ao baixar.', 'error');
+      } finally {
+        btns.forEach(b => b.disabled = false);
+      }
+    }
+
     async function deleteSelectedMedia() {
       const ids = _selectedVisibleMediaIds();
       if (!ids.length) return;
@@ -6519,7 +6629,7 @@ async function toggleStorageCat(catId) {
     const d = await r.json();
     if (!d.itens.length) { body.innerHTML = '<div class="storage-skeleton">Nada guardado aqui.</div>'; return; }
     body.innerHTML = `
-      <div class="storage-items">
+      <div class="storage-items" data-shift-range>
         ${d.itens.map(i => `
         <div class="storage-item${i.em_uso ? ' is-busy' : ''}">
           <label class="storage-item-pick">
@@ -6537,6 +6647,7 @@ async function toggleStorageCat(catId) {
         </div>`).join('')}
       </div>
       ${d.truncado ? `<p class="storage-sec-hint">Mostrando os ${d.itens.length} maiores de ${d.total}.</p>` : ''}
+      <p class="storage-sec-hint">Dica: marque um item e use <b>Shift</b>+clique em outro para marcar tudo entre os dois.</p>
       <div class="storage-item-actions">
         <button type="button" class="btn" onclick="storageMarcarTodos('${jsAttr(catId)}', true)">Selecionar todos</button>
         <button type="button" class="btn" onclick="storageMarcarTodos('${jsAttr(catId)}', false)">Limpar seleção</button>
@@ -6620,7 +6731,7 @@ function _renderStorageSobras(sobras) {
   if (!sobras.length) { wrap.style.display = 'none'; return; }
   wrap.style.display = '';
   box.innerHTML = `
-    <div class="storage-items">
+    <div class="storage-items" data-shift-range>
       ${sobras.map(s => `
       <label class="storage-item">
         <input type="checkbox" class="checkbox" value="${jsAttr(s.id)}" data-cat="sobras" />

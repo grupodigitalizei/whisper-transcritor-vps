@@ -554,19 +554,31 @@ def _original_name_for(filename: str) -> str:
         pass
     return _result_base(filename)
 
+def _tem_extensao_real(name: str) -> bool:
+    """Se `name` já termina numa extensão de arquivo de verdade.
+
+    `os.path.splitext` sozinho não serve aqui: o nome exibido de uma mídia
+    social vem da legenda do post, e uma legenda que termina em "…na mente. "
+    devolve ext=". ", que é truthy — o arquivo então era baixado SEM o .mp4 e
+    não abria. Exigir algo curto e alfanumérico (.mp4, .jpg, .opus) evita isso."""
+    return bool(re.fullmatch(r"\.[A-Za-z0-9]{1,5}", os.path.splitext(name)[1]))
+
 def _original_media_name_for(filename: str) -> str:
     """Return the media's original full filename (with extension) for download."""
     ext = os.path.splitext(filename)[1]
+    def _com_ext(name: str) -> str:
+        # Espaço/ponto no fim quebra a criação do arquivo no Windows e deixa o
+        # nome ambíguo em qualquer sistema — some antes de anexar a extensão.
+        name = name.rstrip(" .")
+        return name if _tem_extensao_real(name) else name + ext
     try:
         # History is the most reliable source (name stored as original basename without ext)
         for entry in _load_history():
             if entry.get("file") == filename and entry.get("name"):
-                name = entry["name"]
-                return name if os.path.splitext(name)[1] else name + ext
+                return _com_ext(entry["name"])
         for entry in _load_media():
             if entry.get("file") == filename and entry.get("name"):
-                name = entry["name"]
-                return name if os.path.splitext(name)[1] else name + ext
+                return _com_ext(entry["name"])
     except Exception:
         pass
     return filename
@@ -627,9 +639,14 @@ def _result_dir(filename: str) -> str:
     return d
 
 def _build_markdown_text(name: str, text: str, lang: str = "?",
-                         duration: str = "—", model: str = "?", date: str = "") -> str:
+                         duration: str = "—", model: str = "?", date: str = "",
+                         source_url: str | None = None) -> str:
     """Compose a Markdown version of a transcription: title + metadata line,
-    then the plain text as the body. Pure formatter — no I/O."""
+    then the plain text as the body. Pure formatter — no I/O.
+
+    `source_url` (quando o item veio de um link) entra como linha própria: um
+    .md que sai daqui costuma ser lido longe do app, e sem a origem não há como
+    voltar ao vídeo para conferir um trecho ou citar a fonte."""
     meta = " · ".join(p for p in (
         f"**Duração:** {duration}" if duration not in (None, "", "—") else None,
         f"**Idioma:** {lang}"      if lang     not in (None, "", "?") else None,
@@ -639,8 +656,30 @@ def _build_markdown_text(name: str, text: str, lang: str = "?",
     parts = [f"# {name}"]
     if meta:
         parts += ["", meta]
+    if source_url:
+        # Link explícito (texto + destino) em vez de autolink: assim continua
+        # legível mesmo quando o .md é colado num editor que não renderiza.
+        parts += ["", f"**Fonte original:** [{source_url}]({source_url})"]
     parts += ["", "---", "", text.strip(), ""]
     return "\n".join(parts)
+
+def _source_url_for(filename: str, media: list | None = None) -> str | None:
+    """URL de origem do item, quando ele veio de um link (YouTube, Instagram,
+    TikTok, Drive…). Fica só no media.json — o history.json não guarda esse
+    campo — então a busca é lá, unida pelo nome do arquivo.
+
+    Aceita `media` já carregado para não reler o catálogo inteiro por item
+    quando o chamador está montando um ZIP com dezenas de transcrições."""
+    try:
+        for entry in (media if media is not None else _load_media()):
+            if entry.get("file") == filename:
+                url = (entry.get("url") or "").strip()
+                # Só http(s): o campo também recebe caminhos locais em itens
+                # que vieram de upload, e linkar isso num .md não serve a nada.
+                return url if url.startswith(("http://", "https://")) else None
+    except Exception:
+        pass
+    return None
 
 def _ensure_markdown(filename: str, history: list | None = None) -> str | None:
     """Return the path to {base}.md inside the results dir, generating it lazily
@@ -652,8 +691,20 @@ def _ensure_markdown(filename: str, history: list | None = None) -> str | None:
     if not os.path.isdir(d):
         return None
     md_path = os.path.join(d, f"{base}.md")
+    source_url = _source_url_for(filename)
     if os.path.exists(md_path):
-        return md_path
+        # Um .md gerado antes de existir a linha "Fonte original" fica sem ela
+        # para sempre, já que este caminho normalmente só reaproveita o arquivo.
+        # Se hoje temos a URL e o arquivo ainda não a cita, vale regerar — o .md
+        # é um export derivado do .txt, então recriá-lo não perde nada.
+        if not source_url:
+            return md_path
+        try:
+            with open(md_path, encoding="utf-8") as f:
+                if source_url in f.read():
+                    return md_path
+        except OSError:
+            return md_path
     txt_path = os.path.join(d, f"{base}.txt")
     text = ""
     if os.path.exists(txt_path):
@@ -665,6 +716,7 @@ def _ensure_markdown(filename: str, history: list | None = None) -> str | None:
         name=_original_name_for(filename), text=text,
         lang=entry.get("lang", "?"), duration=entry.get("duration", "—"),
         model=entry.get("mode", "?"), date=entry.get("date", ""),
+        source_url=source_url,
     )
     with open(md_path, "w", encoding="utf-8") as f:
         f.write(content)
@@ -680,6 +732,7 @@ def _save_result_files(filename: str, result: dict):
         name=_original_name_for(filename), text=result["text"],
         lang=result.get("lang", "?"), duration=result.get("duration", "—"),
         model=entry.get("mode", "?"), date=entry.get("date", ""),
+        source_url=_source_url_for(filename),
     )
     for fname, content in [
         (f"{base}.txt",            result["text"]),
@@ -892,6 +945,14 @@ def _get_task(task_id: str) -> dict:
 def _run_transcription(task_id, file_path, filename, model_name,
                        language, task_type, do_filter):
     _thread_local.task_id = task_id
+    # Um item que acabou de baixar continua "processing" com phase="download"
+    # em 100% até um slot do _transcribe_sem vagar. Sem marcar essa espera, a
+    # linha congelava em "Baixando 100%" — com a ETA do download já vencida —
+    # e parecia travada justamente quando a fila estava cheia.
+    # Uploads diretos chegam aqui como "queued" e devem permanecer assim: a UI
+    # já os mostra como "Aguardando" e os chips de filtro contam por status.
+    if _get_task(task_id).get("status") == "processing":
+        _set_task(task_id, phase="awaiting_transcribe", phase_progress=0)
     with _transcribe_sem:
         # Early-out for tasks cancelled while still queued. The actual transcription
         # below cannot be interrupted (it's a single blocking call into Whisper), but
@@ -1721,10 +1782,22 @@ async def api_social_fetch(
                         f.write(row.get("caption") or "")
                     meta = {k: row.get(k) for k in ("code", "url", "type", "date", "likes",
                             "comments", "reshares", "views", "er", "duration_s", "hashtags", "username")}
+                    meta["thumb_url"] = row.get("thumb_url")
                     with open(os.path.join(UPLOAD_DIR, base + ".meta.json"), "w", encoding="utf-8") as f:
                         json.dump(meta, f, ensure_ascii=False, indent=2)
                 except Exception:
                     pass
+                # Capa como sidecar. O cache de thumbs existe, mas é indexado por
+                # hash da URL — a partir do arquivo de mídia não há como chegar
+                # nele. Sem gravar aqui, a capa fica inalcançável no download.
+                thumb = row.get("thumb_url")
+                if thumb:
+                    capa = os.path.join(UPLOAD_DIR, base + ".capa.jpg")
+                    if not (os.path.exists(capa) and os.path.getsize(capa) > 0):
+                        try:
+                            social_downloader.download_media(thumb, capa, timeout=20)
+                        except Exception:
+                            pass   # capa é acessório: nunca derruba o download da mídia
             downloaded_items = []  # (filename, fpath, is_video)
             if is_ig:
                 for n, m in enumerate(medias, 1):
@@ -1968,10 +2041,113 @@ async def api_download_media(filename: str, request: Request):
         raise HTTPException(404, "Mídia não encontrada no servidor")
     return FileResponse(path, filename=_original_media_name_for(filename))
 
+_SIDECAR_EXTS = (".legenda.txt", ".meta.json", ".capa.jpg")
+
+def _sidecars_for(filename: str) -> list[tuple[str, str]]:
+    """Sidecars de metadados gravados ao lado de uma mídia social baixada com a
+    opção "Metadados": legenda, métricas (likes/views/ER/hashtags) e capa.
+
+    Retorna [(caminho_no_disco, sufixo)] — o sufixo é anexado ao nome de
+    exibição pelo chamador, para que no ZIP a legenda fique ao lado do vídeo
+    com o mesmo nome-base e a relação entre eles seja óbvia.
+
+    Num carrossel (`<base>_1.mp4`, `<base>_2.mp4`) os sidecars são do POST, não
+    de cada arquivo — por isso o sufixo `_N` é removido para achar a base."""
+    stem = os.path.splitext(filename)[0]
+    if not stem.startswith("ig_"):
+        return []
+    base = re.sub(r"_\d+$", "", stem)
+    out = []
+    for ext in _SIDECAR_EXTS:
+        p = os.path.join(UPLOAD_DIR, base + ext)
+        if os.path.isfile(p):
+            out.append((p, ext))
+    return out
+
+@app.post("/api/download-media-zip")
+async def api_download_media_zip(request: Request, files: str = Form(...),
+                                 include_meta: str = Form("true")):
+    """Baixa em um único ZIP os originais selecionados na Biblioteca de Mídia.
+
+    Sem isto, "baixar vários" só poderia disparar um download por arquivo — o
+    navegador bloqueia downloads múltiplos automáticos depois dos primeiros, e
+    o usuário terminaria com parte da seleção sem perceber."""
+    try:
+        filenames = json.loads(files)
+        if not isinstance(filenames, list):
+            raise ValueError("files deve ser uma lista")
+    except (json.JSONDecodeError, ValueError) as e:
+        raise HTTPException(400, f"Parâmetro 'files' inválido: {e}")
+    if not filenames:
+        raise HTTPException(400, "Nenhum arquivo selecionado")
+
+    uploads_real = os.path.realpath(UPLOAD_DIR)
+    entries = []
+    for fn in filenames:
+        if not isinstance(fn, str):
+            raise HTTPException(400, "Cada item de 'files' deve ser string")
+        fn = _safe_filename(fn)
+        # Mesma regra da rota individual: um item privado no meio da seleção é
+        # pedido forjado, então derruba o ZIP inteiro em vez de sair de fora.
+        _require_file_access(fn, request)
+        path = os.path.join(UPLOAD_DIR, fn)
+        if os.path.commonpath([os.path.realpath(path), uploads_real]) != uploads_real:
+            continue
+        if os.path.isfile(path):
+            entries.append((fn, path, _original_media_name_for(fn)))
+
+    if not entries:
+        raise HTTPException(404, "Nenhum dos arquivos selecionados está no servidor")
+
+    # Nomes de exibição podem repetir (dois posts com a mesma legenda viram o
+    # mesmo nome); o ZIP é plano, então desempata com " (2)", " (3)"…
+    used: set[str] = set()
+    def _unique(name: str) -> str:
+        if name not in used:
+            used.add(name)
+            return name
+        stem, ext = os.path.splitext(name)
+        n = 2
+        while f"{stem} ({n}){ext}" in used:
+            n += 1
+        out = f"{stem} ({n}){ext}"
+        used.add(out)
+        return out
+
+    zip_name = f"midias_selecionadas_{uuid.uuid4().hex[:8]}.zip"
+    zip_path = os.path.join(DATA_DIR, zip_name)
+    # ZIP_STORED, não DEFLATED: vídeo/áudio já vêm comprimidos, então deflate
+    # gastaria CPU (e tempo, em seleções de centenas de MB) para ganhar ~0%.
+    want_meta = str(include_meta).lower() != "false"
+    # Sidecars são do POST, não de cada arquivo: num carrossel os dois vídeos
+    # compartilham a mesma legenda/capa. Sem este controle, o mesmo .meta.json
+    # entraria duas vezes (como "… (2)"), sugerindo metadados diferentes.
+    sidecars_feitos: set[str] = set()
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED) as zf:
+        for fn, path, display in entries:
+            stem_exibicao = os.path.splitext(_unique(display))[0]
+            zf.write(path, stem_exibicao + os.path.splitext(display)[1])
+            if not want_meta:
+                continue
+            for sc_path, sc_ext in _sidecars_for(fn):
+                if sc_path in sidecars_feitos:
+                    continue
+                sidecars_feitos.add(sc_path)
+                # Mesmo nome-base do vídeo + sufixo do sidecar, para que legenda,
+                # métricas e capa fiquem visivelmente atreladas ao arquivo certo.
+                zf.write(sc_path, _unique(stem_exibicao + sc_ext))
+
+    return FileResponse(zip_path, filename="midias_selecionadas.zip",
+                        background=BackgroundTask(_safe_remove, zip_path))
+
 def _cleanup_social_sidecars(filename: str) -> None:
     """Ao deletar uma mídia social (ig_<code>[_N].ext), remove os sidecars
-    ig_<code>.legenda.txt / .meta.json quando não sobra mais nenhuma mídia do
-    mesmo post — senão os arquivos de metadados ficariam órfãos no disco."""
+    ig_<code>.legenda.txt / .meta.json / .capa.jpg quando não sobra mais nenhuma
+    mídia do mesmo post — senão os metadados ficariam órfãos no disco.
+
+    A capa é `<base>.capa.jpg`, cujo stem (`<base>.capa`) não casa com o padrão
+    de mídia `<base>(_N)?` testado abaixo — então ela nunca é confundida com um
+    item de carrossel que ainda restaria."""
     stem = os.path.splitext(filename)[0]
     if not stem.startswith("ig_"):
         return
@@ -1985,7 +2161,7 @@ def _cleanup_social_sidecars(filename: str) -> None:
     except OSError:
         remaining = True
     if not remaining:
-        for ext in (".legenda.txt", ".meta.json"):
+        for ext in (".legenda.txt", ".meta.json", ".capa.jpg"):
             p = os.path.join(UPLOAD_DIR, base + ext)
             if os.path.exists(p):
                 try:
