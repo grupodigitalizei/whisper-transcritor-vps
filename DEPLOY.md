@@ -26,7 +26,8 @@ instalado e **8 GB de RAM**.
 Aba **Domains** → **Add Domain**:
 
 - Host: o seu domínio (ex.: `transcritor.seudominio.com`).
-- **Port: `7860`** ← o padrão do Easypanel é 3000; trocar isto é obrigatório.
+- **Port: `80`** — o container escuta na 80 justamente para casar com o padrão do
+  Easypanel. Se o painel já preencheu 80, não mexa.
 - HTTPS ligado (Let's Encrypt).
 
 No DNS, um registro `A` do host apontando para o IP da VPS.
@@ -36,8 +37,6 @@ No DNS, um registro `A` do host apontando para o IP da VPS.
 Aba **Environment**:
 
 ```
-WHISPER_HOST=0.0.0.0
-WHISPER_PORT=7860
 WHISPER_ADMIN_PASSWORD=troque-esta-senha
 WHISPER_PUBLIC_PASSWORD=troque-esta-tambem
 WHISPER_MAX_CACHED_MODELS=1
@@ -45,8 +44,9 @@ WHISPER_MAX_UPLOAD_MB=4096
 WHISPER_YTDLP_COOKIES=none
 ```
 
-- `WHISPER_HOST=0.0.0.0` é obrigatório. Em `127.0.0.1` o app só responde a si
-  mesmo e o proxy do Easypanel devolve 502.
+- `WHISPER_HOST` e `WHISPER_PORT` não aparecem aqui porque o Dockerfile já os
+  define (`0.0.0.0:80`). Só declare se quiser outra porta — e então o domínio
+  precisa apontar para ela.
 - As duas senhas são lidas **só na primeira execução** (viram hash em
   `.whisper_data/auth.json`). Depois disso, trocar aqui não muda nada — a troca
   se faz dentro do app, em Configurações.
@@ -74,7 +74,7 @@ Botão **Deploy**. O primeiro build demora (uns 10–20 min: torch e as
 dependências). Acompanhe em **Logs**. Quando subir, aparece:
 
 ```
-✅  Whisper Transcritor → http://0.0.0.0:7860
+✅  Whisper Transcritor → http://0.0.0.0:80
 ```
 
 Abra o domínio, faça login com a senha de admin.
@@ -136,7 +136,7 @@ Os volumes sobrevivem ao redeploy — transcrições, histórico e senhas contin
 
 | Sintoma                          | Causa provável                                        |
 | -------------------------------- | ----------------------------------------------------- |
-| 502 no domínio                   | `WHISPER_HOST` não é `0.0.0.0`, ou porta do domínio ≠ 7860 |
+| 502 / "Service is not reachable" | Porta do domínio ≠ porta do container. Confira nos Logs em que porta o app subiu |
 | Container reinicia sozinho       | OOM. Baixe o modelo, ponha `WHISPER_MAX_CACHED_MODELS=1`, adicione swap |
 | Perdeu tudo depois do deploy     | Volume de `/app/.whisper_data` não foi criado          |
 | Baixa 3 GB de modelo toda vez    | Volume de `/root/.cache/whisper` não foi criado        |

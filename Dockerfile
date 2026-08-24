@@ -47,11 +47,17 @@ RUN rm -rf venv venv.nosync .whisper_data .whisper_data.nosync
 
 # 0.0.0.0 é obrigatório: o proxy do Easypanel fala com o container pela rede
 # interna, e em 127.0.0.1 o app só responderia a si mesmo.
+#
+# Porta 80 e não 7860 (o padrão local): o Easypanel aponta o domínio para a 80
+# por default, e errar isso dá "Service is not reachable" — um 502 do proxy que
+# parece o app estar quebrado quando ele está no ar, só noutra porta. Escutando
+# na 80 o container casa com o painel sem configuração nenhuma. Rodamos como
+# root aqui, então portas baixas não são problema.
 ENV WHISPER_HOST=0.0.0.0 \
-    WHISPER_PORT=7860 \
+    WHISPER_PORT=80 \
     WHISPER_YTDLP_COOKIES=none
 
-EXPOSE 7860
+EXPOSE 80
 
 # Dados (transcrições, uploads, senhas, histórico) e o cache dos modelos
 # Whisper (~3 GB no large-v3) precisam sobreviver a um redeploy.
