@@ -1,0 +1,32 @@
+# O contexto de build sobe inteiro para o Docker. Sem isto, o venv (~43 mil
+# arquivos) e as mídias já baixadas viravam gigabytes de upload a cada deploy.
+venv
+venv.nosync
+.venv
+.whisper_data
+.whisper_data.nosync
+".whisper_data 2"
+downloads
+auditoria-render
+
+.git
+.gitignore
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.DS_Store
+.claude
+.vscode
+.idea
+
+# Scripts e docs que só fazem sentido na máquina do dono
+publicar.sh
+auditar-tela.sh
+monitor_redirect.sh
+cooldown_retry.sh
+run_redirect_transcripts.sh
+AUDITORIA-UI-UX.md
+audit-checklist.html
+"static/app 2.js"

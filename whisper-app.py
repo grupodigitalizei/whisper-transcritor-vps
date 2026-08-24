@@ -248,6 +248,33 @@ def _host_allows_cookies(url: str) -> bool:
     host = (urlparse(url).hostname or "").lower()
     return any(host == s or host.endswith("." + s) for s in COOKIE_ALLOWED_SUFFIXES)
 
+# Navegador de onde o yt-dlp lê os cookies do YouTube. Num servidor (container,
+# VPS) não existe Chrome nenhum — e aí o yt-dlp NÃO ignora a opção, ele aborta
+# ("could not find chrome cookies database"). Sem esta checagem, todo download
+# de YouTube quebrava fora do Mac. Vazio/"none" desliga na mão.
+_COOKIES_BROWSER_ENV = os.environ.get("WHISPER_YTDLP_COOKIES", "chrome").strip().lower()
+
+def _chrome_profile_exists() -> bool:
+    for d in ("~/Library/Application Support/Google/Chrome",   # macOS
+              "~/.config/google-chrome", "~/.config/chromium", # Linux
+              "~/AppData/Local/Google/Chrome/User Data"):      # Windows
+        if os.path.isdir(os.path.expanduser(d)):
+            return True
+    return False
+
+def _cookies_browser_for(url: str):
+    """Tupla `cookiesfrombrowser` para esta URL, ou None quando não dá/não deve.
+
+    Só para hosts da allowlist (os cookies do Google nunca vazam para um domínio
+    qualquer) e só quando há perfil de navegador no disco."""
+    if not _COOKIES_BROWSER_ENV or _COOKIES_BROWSER_ENV in ("none", "0", "off"):
+        return None
+    if not _host_allows_cookies(url):
+        return None
+    if _COOKIES_BROWSER_ENV == "chrome" and not _chrome_profile_exists():
+        return None
+    return (_COOKIES_BROWSER_ENV,)
+
 def _build_ydl_opts(url: str, progress_hook, base: dict | None = None) -> dict:
     """Shared yt-dlp options for every download path (dedups the block that was
     copied across the transcribe + download-only flows — finding #11). Attaches
@@ -266,10 +293,11 @@ def _build_ydl_opts(url: str, progress_hook, base: dict | None = None) -> dict:
         # sem erro e sem log — só reiniciar resolvia.
         'socket_timeout': 60,
     }
-    if _host_allows_cookies(url):
-        # YouTube/Google need login cookies for progressive URLs. Only sent to
-        # allowlisted hosts so cookies never leak to arbitrary domains.
-        opts['cookiesfrombrowser'] = ('chrome',)
+    # YouTube/Google need login cookies for progressive URLs. Only sent to
+    # allowlisted hosts so cookies never leak to arbitrary domains.
+    _cookies = _cookies_browser_for(url)
+    if _cookies:
+        opts['cookiesfrombrowser'] = _cookies
     if base:
         opts.update(base)
     return opts
@@ -493,7 +521,11 @@ def _validate_transcribe_params(model: str, task: str) -> None:
 # vários GB de RAM; sem teto, experimentar turbo → large-v3 → medium ao longo da
 # semana deixava os três residentes até o processo morrer, num Mac que também
 # roda ffmpeg e o navegador do ego-lite.
-_MAX_CACHED_MODELS = 2
+# Num servidor com pouca RAM (VPS de 8 GB, por exemplo) dois modelos residentes
+# já são o suficiente para o kernel matar o processo no meio de uma transcrição.
+# WHISPER_MAX_CACHED_MODELS=1 troca a lentidão de recarregar do disco pela
+# garantia de não levar OOM.
+_MAX_CACHED_MODELS = max(1, int(os.environ.get("WHISPER_MAX_CACHED_MODELS", "2")))
 
 def _load_model(name: str):
     # Rede de segurança: qualquer caminho que chegue aqui (upload, URL, retry)
@@ -4469,8 +4501,9 @@ def _discover_youtube(target: str, limit: int) -> list:
         "quiet": True, "nocolor": True, "skip_download": True,
         "extract_flat": "in_playlist", "playlistend": max(1, int(limit)),
     }
-    if _host_allows_cookies(url):
-        opts["cookiesfrombrowser"] = ("chrome",)
+    _cookies = _cookies_browser_for(url)
+    if _cookies:
+        opts["cookiesfrombrowser"] = _cookies
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
     out = []
@@ -4657,5 +4690,11 @@ def _reexec_into_venv_if_needed() -> None:
 
 if __name__ == "__main__":
     _reexec_into_venv_if_needed()
-    print("✅  Whisper Transcritor → http://127.0.0.1:7860")
-    uvicorn.run(app, host="127.0.0.1", port=7860, log_level="warning")
+    # Padrão continua 127.0.0.1: no Mac o app não deve escutar na rede local
+    # sozinho (quem publica é o túnel). Dentro de um container é o oposto — se
+    # não escutar em 0.0.0.0 o proxy do host não alcança nada, então lá o
+    # WHISPER_HOST=0.0.0.0 é obrigatório.
+    host = os.environ.get("WHISPER_HOST", "127.0.0.1")
+    port = int(os.environ.get("WHISPER_PORT", "7860"))
+    print(f"✅  Whisper Transcritor → http://{host}:{port}")
+    uvicorn.run(app, host=host, port=port, log_level="warning")
