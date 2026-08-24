@@ -275,6 +275,40 @@ def _cookies_browser_for(url: str):
         return None
     return (_COOKIES_BROWSER_ENV,)
 
+# Saídas para o bloqueio de IP do YouTube. Num IP de datacenter (VPS, cloud) a
+# extração funciona mas o download dos dados leva 403 — e nenhum player_client
+# resolve, porque o bloqueio é do IP, não do cliente. As duas saídas reais:
+#
+#   WHISPER_YTDLP_COOKIEFILE=/caminho/cookies.txt
+#       Cookies de uma conta logada, no formato Netscape. ATENÇÃO: usar cookies
+#       da sua conta pessoal a partir de um IP de datacenter é um bom jeito de
+#       ela ser bloqueada pelo Google — use uma conta descartável.
+#
+#   WHISPER_YTDLP_PROXY=http://user:senha@host:porta
+#       Faz o yt-dlp sair por outro IP. Mais robusto que cookies e não põe
+#       conta nenhuma em risco, mas proxy residencial é serviço pago.
+#
+# Ambas valem para qualquer URL, não só YouTube.
+_YTDLP_COOKIEFILE = (os.environ.get("WHISPER_YTDLP_COOKIEFILE") or "").strip()
+_YTDLP_PROXY      = (os.environ.get("WHISPER_YTDLP_PROXY") or "").strip()
+
+def _apply_network_opts(opts: dict, url: str) -> dict:
+    """Anexa cookies/proxy configurados por ambiente. Muta e devolve `opts`."""
+    cookies = _cookies_browser_for(url)
+    if cookies:
+        opts["cookiesfrombrowser"] = cookies
+    elif _YTDLP_COOKIEFILE and _host_allows_cookies(url):
+        # Mesma regra do navegador: cookie só vai para host da allowlist, nunca
+        # para uma URL qualquer que o usuário cole.
+        if os.path.isfile(_YTDLP_COOKIEFILE):
+            opts["cookiefile"] = _YTDLP_COOKIEFILE
+        else:
+            print(f"[yt-dlp] WHISPER_YTDLP_COOKIEFILE aponta para um arquivo que "
+                  f"não existe: {_YTDLP_COOKIEFILE}")
+    if _YTDLP_PROXY:
+        opts["proxy"] = _YTDLP_PROXY
+    return opts
+
 def _build_ydl_opts(url: str, progress_hook, base: dict | None = None) -> dict:
     """Shared yt-dlp options for every download path (dedups the block that was
     copied across the transcribe + download-only flows — finding #11). Attaches
@@ -295,9 +329,7 @@ def _build_ydl_opts(url: str, progress_hook, base: dict | None = None) -> dict:
     }
     # YouTube/Google need login cookies for progressive URLs. Only sent to
     # allowlisted hosts so cookies never leak to arbitrary domains.
-    _cookies = _cookies_browser_for(url)
-    if _cookies:
-        opts['cookiesfrombrowser'] = _cookies
+    _apply_network_opts(opts, url)
     if base:
         opts.update(base)
     return opts
@@ -4501,9 +4533,7 @@ def _discover_youtube(target: str, limit: int) -> list:
         "quiet": True, "nocolor": True, "skip_download": True,
         "extract_flat": "in_playlist", "playlistend": max(1, int(limit)),
     }
-    _cookies = _cookies_browser_for(url)
-    if _cookies:
-        opts["cookiesfrombrowser"] = _cookies
+    _apply_network_opts(opts, url)
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
     out = []

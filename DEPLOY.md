@@ -114,6 +114,49 @@ o que exige login, não.
 
 ---
 
+## HTTP 403 ao baixar do YouTube
+
+Sintoma: a extração funciona, mas o download dos dados falha com
+`unable to download video data: HTTP Error 403: Forbidden` — e falha nos quatro
+motores da cascata (padrão, Android, iOS/TV, formato simples).
+
+**Causa: o YouTube bloqueia IPs de datacenter.** Não é o app nem o container: a
+mesma imagem baixa o mesmo vídeo sem erro a partir de um IP residencial.
+Nenhum `player_client` resolve, porque o bloqueio é do IP.
+
+Duas saídas, via variável de ambiente:
+
+### Proxy (mais confiável)
+
+```
+WHISPER_YTDLP_PROXY=http://usuario:senha@host:porta
+```
+
+Faz o yt-dlp sair por outro IP. Não põe conta nenhuma em risco. Precisa de um
+proxy residencial — é serviço pago.
+
+### Arquivo de cookies
+
+```
+WHISPER_YTDLP_COOKIEFILE=/app/.whisper_data/cookies.txt
+```
+
+Cookies de uma conta logada, formato Netscape. Exporte do navegador (extensão
+"Get cookies.txt") e ponha o arquivo dentro do volume de dados, para sobreviver
+ao redeploy.
+
+> **Use uma conta descartável.** Cookies da sua conta pessoal usados a partir de
+> um IP de datacenter são um bom jeito de o Google bloquear a conta.
+
+O cookie só é enviado para hosts da allowlist (YouTube/Google) — colar uma URL
+de outro domínio nunca vaza sua sessão. Se o arquivo não existir, o app avisa no
+log e segue sem ele.
+
+### Sem nenhuma das duas
+
+Baixe no Mac (onde o IP é residencial) e envie o arquivo por upload. As duas
+variáveis são opcionais — o resto do app funciona normalmente sem elas.
+
 ## Redeploy
 
 Este repositório (`whisper-transcritor-vps`) é **só o espelho de deploy**. O
