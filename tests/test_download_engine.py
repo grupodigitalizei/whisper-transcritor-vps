@@ -191,3 +191,60 @@ def test_cleanup_not_called_when_aborted():
                              abort_types=(Paused,),
                              on_before_retry=lambda: cleanups.append(1))
     assert cleanups == []
+
+
+# ── rotação de proxies ───────────────────────────────────────────────────────
+def test_proxies_from_env_aceita_virgula_espaco_e_dedup(monkeypatch):
+    """A lista é colada à mão no painel: vírgula, espaço e repetição acontecem."""
+    monkeypatch.setenv("WHISPER_YTDLP_PROXY",
+                       "http://a:8080, http://b:80  http://a:8080")
+    assert de.proxies_from_env() == ["http://a:8080", "http://b:80"]
+
+
+def test_sem_proxy_configurado_nao_muda_a_cascata(monkeypatch):
+    """Quem não usa proxy não pode ganhar tentativa extra nenhuma."""
+    monkeypatch.delenv("WHISPER_YTDLP_PROXY", raising=False)
+    nomes = [e.name for e in de.engines_for(YT)]
+    assert not any(n.startswith("proxy:") for n in nomes)
+
+
+def test_primeiro_proxy_nao_vira_motor(monkeypatch):
+    """Ele já vem aplicado em base_opts pelo chamador — repetir seria gastar uma
+    tentativa refazendo exatamente o que o motor 1 já fez."""
+    monkeypatch.setenv("WHISPER_YTDLP_PROXY", "http://um:8080 http://dois:8080")
+    nomes = [e.name for e in de.engines_for(YT)]
+    assert "proxy:um" not in nomes
+    assert "proxy:dois" in nomes
+
+
+def test_proxy_morto_cai_para_o_proximo(monkeypatch):
+    """O caso real: proxy público morre e a cascata precisa virar sozinha."""
+    monkeypatch.setenv("WHISPER_YTDLP_PROXY", "http://morto:8080 http://vivo:8080")
+    usados = []
+
+    class _YDL:
+        def __init__(self, opts):
+            self.opts = opts
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+        def extract_info(self, url, download=False):
+            usados.append(self.opts.get("proxy"))
+            if self.opts.get("proxy") != "http://vivo:8080":
+                raise RuntimeError("HTTP Error 403: Forbidden")
+            return {"ok": True}
+
+    info, motor = de.run_with_fallback(YT, {"proxy": "http://morto:8080"}, _YDL)
+    assert info == {"ok": True}
+    assert motor == "proxy:vivo"
+    assert usados[-1] == "http://vivo:8080"
+
+
+def test_credenciais_do_proxy_nao_vazam_no_nome_do_motor(monkeypatch):
+    """O nome vai para log e histórico — senha não pode aparecer ali."""
+    monkeypatch.setenv("WHISPER_YTDLP_PROXY",
+                       "http://p1:1 http://user:senha-secreta@proxy.exemplo:8080")
+    nomes = [e.name for e in de.engines_for(YT)]
+    assert "proxy:proxy.exemplo" in nomes
+    assert not any("senha-secreta" in n for n in nomes)

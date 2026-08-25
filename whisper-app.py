@@ -286,11 +286,18 @@ def _cookies_browser_for(url: str):
 #
 #   WHISPER_YTDLP_PROXY=http://user:senha@host:porta
 #       Faz o yt-dlp sair por outro IP. Mais robusto que cookies e não põe
-#       conta nenhuma em risco, mas proxy residencial é serviço pago.
+#       conta nenhuma em risco. Aceita VÁRIOS, separados por vírgula ou espaço:
+#       a cascata do download_engine tenta o seguinte quando um falha, que é o
+#       que torna proxy público viável (eles morrem o tempo todo).
 #
 # Ambas valem para qualquer URL, não só YouTube.
+#
+# NUNCA use as duas juntas com proxy público: um proxy HTTP vê todo o tráfego,
+# e mandar cookie de sessão por um servidor desconhecido entrega a conta.
 _YTDLP_COOKIEFILE = (os.environ.get("WHISPER_YTDLP_COOKIEFILE") or "").strip()
-_YTDLP_PROXY      = (os.environ.get("WHISPER_YTDLP_PROXY") or "").strip()
+
+def _ytdlp_proxies() -> list[str]:
+    return download_engine.proxies_from_env()
 
 def _apply_network_opts(opts: dict, url: str) -> dict:
     """Anexa cookies/proxy configurados por ambiente. Muta e devolve `opts`."""
@@ -305,8 +312,12 @@ def _apply_network_opts(opts: dict, url: str) -> dict:
         else:
             print(f"[yt-dlp] WHISPER_YTDLP_COOKIEFILE aponta para um arquivo que "
                   f"não existe: {_YTDLP_COOKIEFILE}")
-    if _YTDLP_PROXY:
-        opts["proxy"] = _YTDLP_PROXY
+    # Só o primeiro da lista aqui; os demais viram motores da cascata em
+    # download_engine.engines_for(). Nos caminhos sem cascata (descoberta de
+    # canal, por exemplo) o primeiro é o que vale.
+    proxies = _ytdlp_proxies()
+    if proxies:
+        opts["proxy"] = proxies[0]
     return opts
 
 def _build_ydl_opts(url: str, progress_hook, base: dict | None = None) -> dict:

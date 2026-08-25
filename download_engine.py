@@ -80,6 +80,42 @@ def _yt_client(clients: list[str]):
     return _mut
 
 
+def proxies_from_env() -> list[str]:
+    """Lista de proxies em WHISPER_YTDLP_PROXY, separados por vírgula/espaço.
+
+    Um proxy só já ajuda contra o 403 de IP de datacenter, mas proxy público
+    morre o tempo todo — medimos 8 de 10 fora do ar numa lista recém-publicada.
+    Aceitar vários deixa a cascata trocar sozinha em vez de exigir que alguém
+    edite a variável e reinicie o container toda vez que um cai."""
+    raw = os.environ.get("WHISPER_YTDLP_PROXY", "") or ""
+    vistos, out = set(), []
+    for p in raw.replace(",", " ").split():
+        p = p.strip()
+        if p and p not in vistos:
+            vistos.add(p)
+            out.append(p)
+    return out
+
+
+def _with_proxy(proxy: str):
+    """Troca o proxy. Sem mexer em mais nada: quando o bloqueio é do IP, o
+    player_client é irrelevante — o que muda o resultado é por onde se sai."""
+    def _mut(opts: dict, url: str) -> dict:
+        out = copy.deepcopy(opts)
+        out["proxy"] = proxy
+        return out
+    return _mut
+
+
+def _short(proxy: str) -> str:
+    """Identifica o proxy no log/histórico sem expor usuário e senha."""
+    try:
+        parsed = urlparse(proxy if "://" in proxy else "http://" + proxy)
+        return parsed.hostname or proxy
+    except ValueError:
+        return "proxy"
+
+
 def _degraded_format(opts: dict, url: str) -> dict:
     """Último recurso: pede o formato mais simples que existir. Resolve o caso
     de a combinação pedida (ex.: bestvideo+bestaudio numa altura específica) não
@@ -110,6 +146,14 @@ def engines_for(url: str) -> list[_Engine]:
         ]
     else:
         chain.append(_Engine("sem_cookies", "sem cookies", _no_cookies))
+    # Os proxies seguintes entram DEPOIS das variações de cliente: se o primeiro
+    # proxy está vivo e o vídeo só precisava de outro player_client, resolve sem
+    # gastar uma troca de rota. O primeiro proxy da lista já veio aplicado em
+    # base_opts pelo chamador, por isso começamos do segundo.
+    for proxy in proxies_from_env()[1:]:
+        chain.append(_Engine(f"proxy:{_short(proxy)}",
+                             f"proxy {_short(proxy)}",
+                             _with_proxy(proxy)))
     chain.append(_Engine("formato_simples", "formato simples", _degraded_format))
     return chain
 

@@ -126,14 +126,34 @@ Nenhum `player_client` resolve, porque o bloqueio é do IP.
 
 Duas saídas, via variável de ambiente:
 
-### Proxy (mais confiável)
+### Proxy
 
 ```
 WHISPER_YTDLP_PROXY=http://usuario:senha@host:porta
 ```
 
-Faz o yt-dlp sair por outro IP. Não põe conta nenhuma em risco. Precisa de um
-proxy residencial — é serviço pago.
+Faz o yt-dlp sair por outro IP. Não põe conta nenhuma em risco.
+
+Aceita **vários**, separados por vírgula ou espaço:
+
+```
+WHISPER_YTDLP_PROXY=http://ip1:8080, http://ip2:3128, http://ip3:80
+```
+
+O primeiro é usado direto; os demais viram motores extras da cascata do
+`download_engine` e entram sozinhos quando o anterior falha. Isso existe porque
+proxy público morre o tempo todo — numa lista recém-publicada, 8 de 10 já
+estavam fora do ar no momento do teste, e um que funcionou às 22h estava morto
+20 minutos depois. Com a lista, o app se vira sem ninguém editar variável e
+reiniciar container.
+
+Proxy residencial pago é mais estável (~$1–3/GB), mas com a rotação a rota
+gratuita fica utilizável. Espere lentidão: medimos 84 KB/s num proxy público
+que funcionava, contra download direto em segundos.
+
+> **Nunca combine proxy público com `WHISPER_YTDLP_COOKIEFILE`.** Um proxy HTTP
+> vê todo o tráfego que passa por ele; mandar cookie de sessão através de um
+> servidor desconhecido entrega a conta ao operador.
 
 ### Arquivo de cookies
 
