@@ -117,14 +117,42 @@ o que exige login, não.
 ## HTTP 403 ao baixar do YouTube
 
 Sintoma: a extração funciona, mas o download dos dados falha com
-`unable to download video data: HTTP Error 403: Forbidden` — e falha nos quatro
-motores da cascata (padrão, Android, iOS/TV, formato simples).
+`unable to download video data: HTTP Error 403: Forbidden`.
 
-**Causa: o YouTube bloqueia IPs de datacenter.** Não é o app nem o container: a
-mesma imagem baixa o mesmo vídeo sem erro a partir de um IP residencial.
-Nenhum `player_client` resolve, porque o bloqueio é do IP.
+São **dois problemas diferentes** com o mesmo sintoma, e a distinção está nos
+avisos que aparecem antes do erro.
 
-Duas saídas, via variável de ambiente:
+### 1. PO Token faltando (já resolvido na imagem)
+
+```
+tv_simply client https formats require a GVS PO Token which was not provided
+mweb client https formats require a GVS PO Token which was not provided
+```
+
+Aqui o YouTube não bloqueou o IP: ele exigiu um Proof-of-Origin Token que o
+yt-dlp sozinho não gera. Sem o token, os formatos desses clientes são
+descartados e sobra o 403. Proxy não resolve isto.
+
+A imagem já embute o [bgutil POT provider](https://github.com/Brainicism/bgutil-ytdlp-pot-provider):
+o `docker-entrypoint.sh` sobe o provedor na porta 4416 e o app aponta o plugin
+para ele automaticamente. Não precisa configurar nada.
+
+Para desligar (ou usar um provedor externo):
+
+```
+WHISPER_POT_DISABLE=1
+WHISPER_POT_BASE_URL=http://outro-host:4416
+```
+
+### 2. Bloqueio de IP de datacenter
+
+```
+Sign in to confirm you're not a bot
+```
+
+Aí sim o IP foi barrado, e nenhum `player_client` nem PO Token resolve — a
+mesma imagem baixa o mesmo vídeo sem erro a partir de um IP residencial. As
+saídas são via variável de ambiente:
 
 ### Proxy
 

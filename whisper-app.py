@@ -299,6 +299,24 @@ _YTDLP_COOKIEFILE = (os.environ.get("WHISPER_YTDLP_COOKIEFILE") or "").strip()
 def _ytdlp_proxies() -> list[str]:
     return download_engine.proxies_from_env()
 
+# Provedor de PO Token. Num IP de datacenter o YouTube exige GVS PO Token e, sem
+# ele, o yt-dlp descarta os formatos de tv_simply/mweb e o download morre em 403
+# — sintoma diferente do bloqueio de IP, e que trocar de proxy não resolve.
+# A imagem sobe o provedor local na 4416 (ver docker-entrypoint.sh); fora do
+# container, sem provedor no ar, a variável fica vazia e nada muda.
+_POT_BASE_URL = (os.environ.get("WHISPER_POT_BASE_URL") or "").strip()
+if not _POT_BASE_URL and os.environ.get("WHISPER_POT_DISABLE", "0") != "1" \
+        and os.path.isfile("/opt/bgutil/server/build/main.js"):
+    _POT_BASE_URL = f"http://127.0.0.1:{os.environ.get('WHISPER_POT_PORT', '4416')}"
+
+def _merge_extractor_args(opts: dict) -> None:
+    """Aponta o plugin bgutil para o provedor, sem pisar no que já existe em
+    extractor_args (o player_client do YouTube mora lá)."""
+    if not _POT_BASE_URL:
+        return
+    args = opts.setdefault("extractor_args", {})
+    args.setdefault("youtubepot-bgutilhttp", {})["base_url"] = [_POT_BASE_URL]
+
 def _apply_network_opts(opts: dict, url: str) -> dict:
     """Anexa cookies/proxy configurados por ambiente. Muta e devolve `opts`."""
     cookies = _cookies_browser_for(url)
@@ -318,6 +336,7 @@ def _apply_network_opts(opts: dict, url: str) -> dict:
     proxies = _ytdlp_proxies()
     if proxies:
         opts["proxy"] = proxies[0]
+    _merge_extractor_args(opts)
     return opts
 
 def _build_ydl_opts(url: str, progress_hook, base: dict | None = None) -> dict:
