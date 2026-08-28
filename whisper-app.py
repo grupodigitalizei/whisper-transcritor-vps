@@ -2,7 +2,10 @@
 """Whisper Transcritor — FastAPI + HTML frontend"""
 from __future__ import annotations
 import os, json, shutil, threading, uuid, datetime, re, zipfile, time, tempfile, ipaddress, subprocess
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
+# requests era usado em /api/social/media e no download de imagem sem nunca
+# ter sido importado — a rota levantava NameError ao ser chamada.
+import requests
 from contextlib import asynccontextmanager
 
 # yt-dlp's YouTube extractor needs the Deno runtime (via yt-dlp-ejs) to solve
@@ -2089,11 +2092,13 @@ async def api_stats(request: Request):
 # -- Media
 _VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".wmv", ".mpeg", ".mpg", ".m4v"}
 _AUDIO_EXTS = {".mp3", ".m4a", ".aac", ".wav", ".ogg", ".opus", ".wma", ".flac"}
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".heic", ".avif", ".tiff"}
 
 def _media_type_for(filename: str) -> str:
     ext = os.path.splitext(filename)[1].lower()
     if ext in _VIDEO_EXTS: return "video"
     if ext in _AUDIO_EXTS: return "audio"
+    if ext in _IMAGE_EXTS: return "image"
     return "other"
 
 @app.get("/api/media-history")
@@ -3043,6 +3048,9 @@ def _is_social_dl_url(url: str) -> bool:
     return any(host == s or host.endswith("." + s) for s in _SOCIAL_DL_SUFFIXES)
 
 def _run_social_download_only(task_id, url, media_type, existing_filename=None, visibility=VIS_PRIVATE):
+    # "auto" num link de rede social significa vídeo: é o que essas páginas
+    # entregam. Deixar o valor cru aqui daria o mesmo resultado por acaso —
+    # explícito é melhor que depender de uma comparação que falha em silêncio.
     audio_only = (media_type == "audio")
     prov = existing_filename or f"{task_id[:8]}_social.{'mp3' if audio_only else 'mp4'}"
     state = {"filename": prov}
@@ -3263,9 +3271,10 @@ async def api_transcribe_batch(
     filter_fillers: str  = Form("false"),
     folder:         str  = Form(""),
     transcribe:     str  = Form("true"),   # NEW: "false" = download-only
-    media_type:     str  = Form("video"),  # NEW: used when transcribe=false
+    media_type:     str  = Form("auto"),  # NEW: used when transcribe=false
     quality:        str  = Form("best"),   # NEW: used when transcribe=false
 ):
+    media_type = _validate_media_type(media_type)
     if not YT_DLP_OK:
         raise HTTPException(400, "yt-dlp não instalado. Execute: pip install yt-dlp")
 
@@ -3390,7 +3399,13 @@ def _retry_item(filename: str) -> dict:
             raise HTTPException(400, "Não há URL associada a este item — não é possível tentar de novo.")
         url = _validate_media_url(url)
         ext = os.path.splitext(media_entry.get("name") or filename)[1].lower()
-        media_type = "audio" if ext in _AUDIO_EXT_SET else "video"
+        # Imagem cai aqui também (o item vive em media.json como os outros), e
+        # sem este ramo ela seria tratada como vídeo: o yt-dlp receberia a URL
+        # de um .jpg e falharia com erro incompreensível.
+        if ext in _IMAGE_EXTS:
+            media_type = "image"
+        else:
+            media_type = "audio" if ext in _AUDIO_EXT_SET else "video"
         # Reaproveita a extensão REAL do arquivo como container/formato. Sem
         # isto o retry voltava ao padrão (mp4/mp3): o outtmpl não casava mais
         # com o nome existente e o yt-dlp gravava conteúdo de um formato dentro
@@ -3446,6 +3461,201 @@ async def api_retry_batch(request: Request, files: str = Form(...)):
         "results":   results[:100],
     }
 
+# ── Download de imagem ─────────────────────────────────────────
+# O yt-dlp é feito para streams de áudio/vídeo e não serve para uma imagem
+# solta (JPG, PNG, WebP). Aqui o download é direto, mas com as mesmas defesas
+# do resto do app: URL validada contra SSRF, teto de tamanho, e conferência da
+# assinatura do arquivo — sem isso, uma página de erro HTML seria salva como
+# .jpg e a Biblioteca mostraria um item quebrado.
+
+# ── Download de imagem ─────────────────────────────────────────
+# O yt-dlp é feito para streams de áudio/vídeo e não serve para uma imagem
+# solta (JPG, PNG, WebP). Aqui o download é direto, mas com as mesmas defesas
+# do resto do app: URL validada contra SSRF, teto de tamanho, e conferência da
+# assinatura do arquivo — sem isso, uma página de erro HTML seria salva como
+# .jpg e a Biblioteca mostraria um item quebrado.
+
+# assinatura (magic bytes) -> extensão canônica
+_IMAGE_MAGIC = (
+    (b"\xff\xd8\xff", ".jpg"),
+    (b"\x89PNG\r\n\x1a\n", ".png"),
+    (b"GIF87a", ".gif"),
+    (b"GIF89a", ".gif"),
+    (b"BM", ".bmp"),
+    (b"II*\x00", ".tiff"),
+    (b"MM\x00*", ".tiff"),
+)
+_IMAGE_MAX_BYTES = 80 * 1024 * 1024      # 80 MB: nenhuma imagem legítima passa disso
+
+
+def _extensao_de_imagem(head: bytes, content_type: str, url: str) -> str | None:
+    """Extensão a partir do CONTEÚDO, não do que o servidor promete.
+
+    Ordem de confiança: magic bytes > Content-Type > extensão na URL. Um
+    servidor pode mentir no cabeçalho; os primeiros bytes do arquivo, não.
+    """
+    for assinatura, ext in _IMAGE_MAGIC:
+        if head.startswith(assinatura):
+            return ext
+    # WebP e AVIF/HEIC têm container com o marcador depois do tamanho
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return ".webp"
+    if head[4:8] == b"ftyp":
+        marca = head[8:12]
+        if marca in (b"avif", b"avis"):
+            return ".avif"
+        if marca in (b"heic", b"heix", b"hevc", b"mif1"):
+            return ".heic"
+    tipo = (content_type or "").split(";")[0].strip().lower()
+    por_mime = {
+        "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp",
+        "image/gif": ".gif", "image/bmp": ".bmp", "image/avif": ".avif",
+        "image/heic": ".heic", "image/tiff": ".tiff",
+    }
+    if tipo in por_mime:
+        return por_mime[tipo]
+    ext_url = os.path.splitext(urlparse(url).path)[1].lower()
+    return ext_url if ext_url in _IMAGE_EXTS else None
+
+
+def _baixar_imagem(url: str, destino_sem_ext: str, on_progress=None) -> tuple[str, int]:
+    """Baixa uma imagem. Devolve (caminho_final, bytes).
+
+    Levanta RuntimeError com motivo legível — a mensagem vai direto para a
+    tela, então precisa dizer o que fazer, não só que falhou.
+    """
+    url = _validate_media_url(url)
+    try:
+        # allow_redirects=True é aceitável aqui porque revalidamos o destino
+        # final: sem isso, um encurtador de link legítimo não funcionaria.
+        with requests.get(url, stream=True, timeout=30, headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+            "Accept": "image/*,*/*;q=0.8",
+        }) as r:
+            _validate_media_url(r.url)      # o destino após redirect também precisa passar
+            r.raise_for_status()
+
+            declarado = int(r.headers.get("Content-Length") or 0)
+            if declarado > _IMAGE_MAX_BYTES:
+                raise RuntimeError(
+                    f"A imagem tem {declarado // (1024*1024)} MB, acima do limite de "
+                    f"{_IMAGE_MAX_BYTES // (1024*1024)} MB.")
+
+            head = b""
+            tamanho = 0
+            tmp = destino_sem_ext + ".part"
+            with open(tmp, "wb") as f:
+                for chunk in r.iter_content(1 << 16):
+                    if not chunk:
+                        continue
+                    if len(head) < 32:
+                        head += chunk[:32 - len(head)]
+                    tamanho += len(chunk)
+                    # O teto é conferido durante o streaming: Content-Length é
+                    # opcional e falsificável.
+                    if tamanho > _IMAGE_MAX_BYTES:
+                        f.close()
+                        _safe_remove(tmp)
+                        raise RuntimeError(
+                            f"A imagem passou de {_IMAGE_MAX_BYTES // (1024*1024)} MB "
+                            "durante o download.")
+                    f.write(chunk)
+                    if on_progress and declarado:
+                        on_progress(min(99.0, tamanho / declarado * 100))
+
+            ext = _extensao_de_imagem(head, r.headers.get("Content-Type", ""), r.url)
+            if not ext:
+                _safe_remove(tmp)
+                raise RuntimeError(
+                    "O endereço não devolveu uma imagem. Verifique se o link aponta "
+                    "para o arquivo (terminado em .jpg, .png, .webp…) e não para a "
+                    "página que a exibe.")
+            final = destino_sem_ext + ext
+            os.replace(tmp, final)
+            return final, tamanho
+    except requests.RequestException as e:
+        raise RuntimeError(f"Não foi possível baixar: {e}")
+
+
+# Tipos aceitos no download. "auto" descobre pela URL/servidor — é o padrão,
+# porque quem cola uma lista de links mista não deveria ter que separar antes
+# o que é vídeo, o que é áudio e o que é imagem.
+_VALID_MEDIA_TYPES = {"auto", "video", "audio", "image"}
+
+
+def _validate_media_type(media_type: str) -> str:
+    if media_type not in _VALID_MEDIA_TYPES:
+        raise HTTPException(400, f"Tipo inválido: {media_type!r}")
+    return media_type
+
+
+# Sites cujo conteúdo é sempre uma PÁGINA que embute mídia: aqui o yt-dlp é
+# quem sabe extrair, então nem vale consultar Content-Type (a resposta seria
+# text/html e não diria nada útil).
+_HOSTS_DE_VIDEO = (
+    "youtube.com", "youtu.be", "vimeo.com", "tiktok.com", "instagram.com",
+    "facebook.com", "fb.watch", "twitter.com", "x.com", "twitch.tv",
+    "dailymotion.com", "soundcloud.com", "drive.google.com", "loom.com",
+)
+
+
+def _detectar_tipo_de_midia(url: str, timeout: int = 8) -> str:
+    """Descobre se a URL é vídeo, áudio ou imagem.
+
+    Três etapas, da mais barata para a mais cara:
+      1. host conhecido de vídeo  → vídeo (sem tocar na rede)
+      2. extensão no caminho      → o tipo dela
+      3. Content-Type do servidor → última palavra
+
+    Nunca levanta: qualquer incerteza vira "video", que é o caminho do yt-dlp
+    e cobre a maioria dos links — e ele mesmo já tem cascata de fallback.
+    """
+    try:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        if any(host == h or host.endswith("." + h) for h in _HOSTS_DE_VIDEO):
+            return "video"
+
+        ext = os.path.splitext(parsed.path)[1].lower()
+        if ext in _IMAGE_EXTS:
+            return "image"
+        if ext in _AUDIO_EXTS:
+            return "audio"
+        if ext in _VIDEO_EXTS:
+            return "video"
+
+        # Sem pista no endereço: pergunta ao servidor. HEAD é o suficiente e
+        # não baixa o corpo; se o servidor não implementar, o GET com Range
+        # pede apenas o primeiro byte.
+        cabecalhos = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"}
+        tipo_conteudo = ""
+        try:
+            r = requests.head(url, timeout=timeout, allow_redirects=True, headers=cabecalhos)
+            if r.status_code >= 400 or not r.headers.get("Content-Type"):
+                raise requests.RequestException("head sem resposta útil")
+            tipo_conteudo = r.headers.get("Content-Type", "")
+        except requests.RequestException:
+            try:
+                with requests.get(url, timeout=timeout, stream=True, allow_redirects=True,
+                                  headers={**cabecalhos, "Range": "bytes=0-0"}) as r:
+                    tipo_conteudo = r.headers.get("Content-Type", "")
+            except requests.RequestException:
+                return "video"
+
+        principal = (tipo_conteudo or "").split(";")[0].strip().lower()
+        if principal.startswith("image/"):
+            return "image"
+        if principal.startswith("audio/"):
+            return "audio"
+        if principal.startswith("video/"):
+            return "video"
+        return "video"          # página HTML ou desconhecido → deixa com o yt-dlp
+    except Exception:           # noqa: BLE001 — detecção nunca pode derrubar o download
+        return "video"
+
+
 def _run_download_only(task_id: str, url: str, media_type: str, quality: str,
                        subtitles: bool = False, sub_langs: str = "pt,en",
                        auto_subs: bool = False, thumbnail: bool = False,
@@ -3454,11 +3664,21 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str,
                        visibility: str = VIS_PRIVATE,
                        container: str = "auto", audio_format: str = "mp3",
                        resuming: bool = False, folder: str = ""):
+    # "auto": o tipo é resolvido AQUI, dentro da thread, e não no endpoint —
+    # assim cada URL de um lote misto descobre o seu próprio tipo, e a consulta
+    # de rede não segura a resposta do request.
+    if media_type == "auto":
+        media_type = _detectar_tipo_de_midia(url)
+        _set_task(task_id, detected_type=media_type)
     is_video = media_type == "video"
+    is_image = media_type == "image"
     # Formato de saída escolhido pelo usuário. "auto"/"original" preservam o
     # comportamento histórico (mp4 para vídeo, mp3 para áudio); os demais
     # trocam o container do remux. Já chegam validados pelo endpoint.
-    if is_video:
+    # Imagem é caso à parte: a extensão vem do conteúdo baixado, não de escolha.
+    if is_image:
+        ext = "img"          # provisório; trocado pela extensão real ao gravar
+    elif is_video:
         ext = "mp4" if container in ("auto", "original") else container
     else:
         ext = "mp3" if audio_format in ("auto", "original") else audio_format
@@ -3469,10 +3689,41 @@ def _run_download_only(task_id: str, url: str, media_type: str, quality: str,
     # visibilidade herdada do request é registrada, antes do primeiro _save_media.
     _mark_pending_visibility(filename, visibility)
     try:
-        _save_media(filename, f"Obtendo {'vídeo' if is_video else 'áudio'}...", url=url, is_transcribed=False, status="processing")
+        rotulo = "imagem" if is_image else ("vídeo" if is_video else "áudio")
+        _save_media(filename, f"Obtendo {rotulo}...", url=url, is_transcribed=False, status="processing")
         _set_task(task_id, status="processing", progress=0,
                   phase="download", phase_progress=0,
                   name="Download Media", filename=filename)
+
+        # ── Imagem: caminho próprio, sem yt-dlp ────────────────
+        if is_image:
+            with _download_sem:
+                if _get_task(task_id).get("cancel_requested"):
+                    _set_task(task_id, status="cancelled", progress=0, phase="cancelled")
+                    _remove_media_entry(filename)
+                    return
+                base_sem_ext = os.path.join(UPLOAD_DIR, os.path.splitext(filename)[0])
+                caminho, tamanho = _baixar_imagem(
+                    url, base_sem_ext,
+                    on_progress=lambda pct: _set_task(task_id, phase="download",
+                                                      phase_progress=pct, progress=pct))
+            # O nome final carrega a extensão real descoberta no conteúdo, então
+            # a entrada provisória (…​.img) precisa sair do catálogo.
+            _remove_media_entry(filename)
+            filename = os.path.basename(caminho)
+            _mark_pending_visibility(filename, visibility)
+            titulo = os.path.basename(urlparse(url).path) or "imagem"
+            _save_media(filename, titulo, url=url, is_transcribed=False, status="done")
+            if folder:
+                with _media_lock:
+                    media = _load_media()
+                    for m in media:
+                        if m.get("file") == filename:
+                            m["folder"] = folder
+                    _atomic_write_json(MEDIA_FILE, media)
+            _set_task(task_id, status="done", progress=100, phase="done",
+                      phase_progress=100, name=titulo, filename=filename)
+            return
 
         def _hook(d):
             _t = _get_task(task_id)
@@ -3635,9 +3886,10 @@ async def api_yt_download_only(
     request: Request,
     background_tasks: BackgroundTasks,
     url: str = Form(...),
-    media_type: str = Form("video"),
+    media_type: str = Form("auto"),
     quality: str = Form("best")
 ):
+    media_type = _validate_media_type(media_type)
     if not YT_DLP_OK:
         raise HTTPException(400, "yt-dlp não instalado.")
     url = _validate_media_url(url)   # SSRF + scheme guard (finding #10)
@@ -3712,7 +3964,7 @@ async def api_download_advanced(
     request:    Request,
     url:        str = Form(""),
     urls:       str = Form(""),   # modo lote: uma URL por linha/vírgula
-    media_type: str = Form("video"),
+    media_type: str = Form("auto"),
     quality:    str = Form("best"),
     playlist:   str = Form("false"),
     subtitles:  str = Form("false"),
@@ -3724,6 +3976,7 @@ async def api_download_advanced(
     container:    str = Form("auto"),   # mp4/mkv/webm/original — só vídeo
     audio_format: str = Form("auto"),   # mp3/m4a/wav/opus/original — só áudio
 ):
+    media_type = _validate_media_type(media_type)
     if not YT_DLP_OK:
         raise HTTPException(400, "yt-dlp não instalado.")
     container, audio_format = _validate_output_format(container, audio_format)

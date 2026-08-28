@@ -6,7 +6,7 @@ let selected = new Set();
 let pendingFiles = []; // File objects queued from input
 let _mediaFiles    = [];         // raw list from /api/media-history (last fetch)
 let _mediaSelected = new Set();
-const _mediaView = { type: 'all' }; // 'all' | 'audio' | 'video' | 'image'
+const _mediaView = { type: 'all' }; // 'all' | 'audio' | 'video'
 let _viewerFile  = null;
 let _viewerData  = {};
 let _autoSyncInterval = null;
@@ -1825,29 +1825,20 @@ function estimateRemainingSecs(f, nowTs) {
   nowTs = nowTs || (Date.now() / 1000);
   if (f.status === 'done' || f.status === 'error') return 0;
 
-  // Item que já baixou e espera um slot da fila: para efeito de estimativa ele
-  // é idêntico a um "queued" — a transcrição ainda não começou, então precisa
-  // do tempo cheio. Pular direto para a heurística evita que os cálculos
-  // baseados em elapsed abaixo reaproveitem o started_at/progress da fase de
-  // DOWNLOAD e produzam uma ETA já vencida. A linha de ETA não aparece na
-  // tabela nessa fase (ver renderStatus), mas o resumo da fila no topo somava
-  // esse número — e zerar a contribuição subestimaria o total.
-  const aguardandoSlot = _WAITING_PHASES.has(f._phase);
-
   // PREFERRED: derive remaining time from the percentage the user is actually
   // looking at — phase_progress (0–100 of the current phase). The backend
   // sets `started_at` when the transcribe phase starts, so for that phase
   // `elapsed` is genuinely the transcription elapsed time:
   //   remaining ≈ elapsed * (100 - p) / p
   // This makes ETA self-correct to the real machine speed and match the bar.
-  if (!aguardandoSlot && f.status === 'processing' && f.started_at && f._phase === 'transcribe'
+  if (f.status === 'processing' && f.started_at && f._phase === 'transcribe'
       && typeof f._phaseProgress === 'number' && f._phaseProgress >= 3) {
     const elapsed = nowTs - f.started_at;
     const p = Math.min(99.5, f._phaseProgress);
     if (elapsed > 0 && p > 0) return Math.max(0, elapsed * (100 - p) / p);
   }
   // Same idea, fallback when only overall progress is known.
-  if (!aguardandoSlot && f.status === 'processing' && f.started_at && typeof f._progress === 'number' && f._progress >= 3) {
+  if (f.status === 'processing' && f.started_at && typeof f._progress === 'number' && f._progress >= 3) {
     const elapsed = nowTs - f.started_at;
     const p = Math.min(99.5, f._progress);
     if (elapsed > 0 && p > 0) return Math.max(0, elapsed * (100 - p) / p);
@@ -1860,9 +1851,7 @@ function estimateRemainingSecs(f, nowTs) {
   if (f.dur_secs && rate) total = f.dur_secs * rate;
   else                    total = _avgTotalProcessingSecs(f.mode);
   if (total == null) return null;
-  // Aguardando slot: nada do tempo estimado foi consumido ainda (o elapsed que
-  // existe é da fase de download), então vale o total cheio, como num "queued".
-  if (!aguardandoSlot && f.status === 'processing' && f.started_at) {
+  if (f.status === 'processing' && f.started_at) {
     const elapsed = nowTs - f.started_at;
     return Math.max(0, total - elapsed);
   }
@@ -1894,18 +1883,11 @@ function fmtSecs(s) {
 // Phase labels — show "Baixando 35%" vs "Transcrevendo 67%" so the user
 // can tell download from transcription at a glance.
 const _PHASE_LABEL = {
-  download:            'Baixando',
-  awaiting_transcribe: 'Aguardando transcrição',
-  transcribe:          'Transcrevendo',
-  saving:              'Salvando',
-  compress:            'Comprimindo',
+  download:   'Baixando',
+  transcribe: 'Transcrevendo',
+  saving:     'Salvando',
+  compress:   'Comprimindo',
 };
-
-// Fases que são espera pura, não trabalho em andamento. Não têm porcentagem
-// nem ETA honesta: o item só sai daqui quando um slot da fila vagar, e não
-// dá para prever quando. Mostrar "0%" ou uma estimativa herdada da fase
-// anterior seria pior que não mostrar nada.
-const _WAITING_PHASES = new Set(['awaiting_transcribe']);
 
 function renderStatus(status, f) {
   const s = STATUS_MAP[status] || STATUS_MAP.queued;
@@ -1917,14 +1899,12 @@ function renderStatus(status, f) {
   if (f && status === 'processing') {
     const phaseLabel = _PHASE_LABEL[f._phase];
     if (phaseLabel) label = phaseLabel;
-    if (!_WAITING_PHASES.has(f._phase)) {
-      // Prefer phase_progress (the 0–100 of the CURRENT phase — more intuitive).
-      // Fall back to overall progress if phase_progress isn't reported yet.
-      const pct = (typeof f._phaseProgress === 'number') ? f._phaseProgress
-                : (typeof f._progress === 'number')      ? f._progress
-                : null;
-      if (pct != null) pctLabel = ` <small style="opacity:.7">${Math.floor(pct)}%</small>`;
-    }
+    // Prefer phase_progress (the 0–100 of the CURRENT phase — more intuitive).
+    // Fall back to overall progress if phase_progress isn't reported yet.
+    const pct = (typeof f._phaseProgress === 'number') ? f._phaseProgress
+              : (typeof f._progress === 'number')      ? f._progress
+              : null;
+    if (pct != null) pctLabel = ` <small style="opacity:.7">${Math.floor(pct)}%</small>`;
   }
 
   // ETA só faz sentido para itens REALMENTE em processamento — a estimativa
@@ -1932,10 +1912,7 @@ function renderStatus(status, f) {
   // para 100 itens em fila era enganoso (era a média histórica do modelo).
   // O resumo do total continua visível no topo da tabela via _renderQueueSummary.
   let eta = '';
-  // Numa fase de espera o rótulo já diz tudo ("Aguardando transcrição"). Cair
-  // no "finalizando…" abaixo seria pior que o bug original: sugere que está
-  // quase pronto quando o trabalho sequer começou.
-  if (f && status === 'processing' && !_WAITING_PHASES.has(f._phase)) {
+  if (f && status === 'processing') {
     const est = estimateRemainingSecs(f);
     if (est != null && est > 0) {
       eta = `<div class="row-eta">~${fmtSecs(est)} restante</div>`;
@@ -2321,43 +2298,6 @@ function toggleSelect(id, cb) {
   syncBulkBar();
   syncHeaderCheck();
 }
-
-// ── Shift+clique genérico, para listas de checkbox "soltos" ─────
-// As tabelas de Transcrições e Mídia têm o shift+clique embutido no próprio
-// onclick da linha (handleCheckboxClick / handleMediaCheckboxClick), porque
-// elas mantêm um Set de ids e re-renderizam a cada clique. Já as listas de
-// Armazenamento são checkboxes puros, lidos só na hora de agir — para elas
-// basta este listener delegado: marque o container com `data-shift-range` e
-// o intervalo passa a funcionar, sem precisar de estado próprio.
-//
-// O anchor fica num WeakMap por container (e não numa variável global) para
-// que abrir outra categoria não herde o último clique da categoria anterior —
-// o que faria o shift selecionar um intervalo que o usuário nunca viu.
-const _shiftAnchors = new WeakMap();
-
-document.addEventListener('click', (ev) => {
-  const cb = ev.target.closest?.('input[type="checkbox"]');
-  if (!cb || cb.disabled) return;
-  const container = cb.closest('[data-shift-range]');
-  if (!container) return;
-
-  const anchor = _shiftAnchors.get(container);
-  // `anchor` pode ter sido descartado por um re-render da lista; nesse caso o
-  // clique atual apenas vira o novo ponto de partida.
-  if (ev.shiftKey && anchor && anchor !== cb && container.contains(anchor)) {
-    const boxes = [...container.querySelectorAll('input[type="checkbox"]:not(:disabled)')];
-    const a = boxes.indexOf(anchor), b = boxes.indexOf(cb);
-    if (a !== -1 && b !== -1) {
-      // O clique nativo já alternou `cb`; replicamos esse estado no intervalo,
-      // então shift+clique tanto marca quanto desmarca em lote.
-      const [lo, hi] = a < b ? [a, b] : [b, a];
-      for (let i = lo; i <= hi; i++) boxes[i].checked = cb.checked;
-      // Shift+clique arrasta seleção de texto no navegador — atrapalha a leitura.
-      try { window.getSelection().removeAllRanges(); } catch {}
-    }
-  }
-  _shiftAnchors.set(container, cb);
-});
 
 // Select/deselect respects the current filter — toggleAll only affects the
 // visible rows, and header indeterminate state is computed against visible too.
@@ -3031,7 +2971,7 @@ const _TABLIST_GROUPS = {
   main:  ['main-tab-transcriptions', 'main-tab-public', 'main-tab-media',
           'main-tab-social', 'main-tab-compress', 'main-tab-storage', 'main-tab-subs', 'main-tab-advanced'],
   modal: ['tab-file', 'tab-url', 'tab-batch'],
-  'adv-type':    ['adv-type-auto', 'adv-type-video', 'adv-type-audio', 'adv-type-image'],
+  'adv-type':    ['adv-type-video', 'adv-type-audio'],
   'adv-urlmode': ['adv-urlmode-single', 'adv-urlmode-batch'],
 };
 function onTablistKey(e, group) {
@@ -3156,20 +3096,15 @@ function formatBytes(bytes, decimals = 1) {
 // ═══════════════════════════════════════════════════════════════
 const _VIDEO_EXTS_JS = ['mp4','mov','mkv','avi','webm','wmv','mpeg','mpg','m4v'];
 const _AUDIO_EXTS_JS = ['mp3','m4a','aac','wav','ogg','opus','wma','flac'];
-const _IMAGE_EXTS_JS = ['jpg','jpeg','png','webp','gif','bmp','heic','avif','tiff'];
 
 function _fileTypeFor(filename) {
   const ext = (filename || '').split('.').pop().toLowerCase();
   if (_VIDEO_EXTS_JS.includes(ext)) return 'video';
   if (_AUDIO_EXTS_JS.includes(ext)) return 'audio';
-  if (_IMAGE_EXTS_JS.includes(ext)) return 'image';
   return 'other';
 }
 
 function _mediaTypeIconSvg(type) {
-  if (type === 'image') {
-    return '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
-  }
   return type === 'video'
     ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>'
     : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>';
@@ -3605,25 +3540,14 @@ function toggleAdvanced() {
 //  legendas, metadados e thumbnail embutidos, faixa de áudio por idioma.
 // ═══════════════════════════════════════════════════════════════
 function setAdvType(type) {
-  ['auto', 'video', 'audio', 'image'].forEach(t => {
+  ['video', 'audio'].forEach(t => {
     const btn = document.getElementById('adv-type-' + t);
-    if (!btn) return;
     btn.setAttribute('aria-selected', t === type);
     btn.tabIndex = t === type ? 0 : -1;
   });
-  const ehImagem = type === 'image';
-  const ehAuto   = type === 'auto';
-  // No modo automático o tipo de cada link só é conhecido na hora do download,
-  // então escolher qualidade de vídeo ou formato de áudio aqui não faria
-  // sentido — some com o que depende do tipo e mantém o essencial.
-  const semOpcoesDeTipo = ehImagem || ehAuto;
-
-  // Qualidade não se aplica do mesmo jeito a áudio — troca as opções do select.
-  // Para imagem não existe escolha de qualidade: o arquivo é o que está lá.
+  // Qualidade não se aplica do mesmo jeito a áudio — troca as opções do select
   const q = document.getElementById('adv-quality-select');
-  const qWrap = q?.closest('div');
-  if (qWrap) qWrap.style.display = semOpcoesDeTipo ? 'none' : '';
-  if (q && !semOpcoesDeTipo) {
+  if (q) {
     q.innerHTML = type === 'video'
       ? `<option value="best">Melhor (Máxima)</option>
          <option value="1080p">1080p</option>
@@ -3632,70 +3556,30 @@ function setAdvType(type) {
       : `<option value="best">Melhor Original</option>
          <option value="worst">Menor Espaço</option>`;
   }
-
-  // Faixa de áudio (dublagem) só existe em vídeo/áudio.
-  const langWrap = document.getElementById('adv-audio-lang')?.closest('div');
-  if (langWrap) langWrap.style.display = semOpcoesDeTipo ? 'none' : '';
-
   // Formato de saída: cada tipo mostra só o seu seletor (container de vídeo
-  // não significa nada para áudio, e vice-versa; imagem não tem nenhum).
+  // não significa nada para áudio, e vice-versa).
   const contWrap  = document.getElementById('adv-container-wrap');
   const audioWrap = document.getElementById('adv-audioformat-wrap');
   if (contWrap)  contWrap.style.display  = type === 'video' ? '' : 'none';
   if (audioWrap) audioWrap.style.display = type === 'audio' ? '' : 'none';
-
-  // Os interruptores abaixo dependem de mídia com faixas/metadados. Numa
-  // imagem não há legenda, capítulo, capa nem playlist para buscar — some com
-  // eles em vez de deixar controles que não fazem nada.
-  const opcoes = document.querySelector('.adv-options');
-  if (opcoes) opcoes.style.display = ehImagem ? 'none' : '';   // no auto os toggles seguem valendo
 
   // Legendas só existem embutidas em vídeo — em áudio não há onde colocá-las,
   // então desliga e trava o toggle pra não gerar um .srt órfão no disco.
   const subsToggle = document.getElementById('adv-subs-toggle');
   const subsRow    = subsToggle?.closest('.toggle-row');
   if (subsToggle) {
-    subsToggle.disabled = type !== 'video';
-    if (type !== 'video' && subsToggle.checked) {
+    subsToggle.disabled = type === 'audio';
+    if (type === 'audio' && subsToggle.checked) {
       subsToggle.checked = false;
       _toggleAdvSubOptions();
     }
-    subsRow?.classList.toggle('toggle-row-disabled', type !== 'video');
+    subsRow?.classList.toggle('toggle-row-disabled', type === 'audio');
     const sub = subsRow?.querySelector('.toggle-sub');
     if (sub) {
-      sub.textContent = type === 'video'
-        ? 'Embutidas no arquivo (.srt) — quando o vídeo tiver legendas disponíveis'
-        : 'Só disponível para vídeo';
+      sub.textContent = type === 'audio'
+        ? 'Só disponível para vídeo — áudio não tem onde embutir a legenda'
+        : 'Embutidas no arquivo (.srt) — quando o vídeo tiver legendas disponíveis';
     }
-  }
-
-  // Rótulo e exemplo acompanham o tipo: pedir "URL do vídeo" enquanto o modo
-  // é imagem confunde quem só olha o campo.
-  const rotulo = document.getElementById('adv-url-label');
-  if (rotulo) {
-    rotulo.textContent = ehAuto ? 'Endereço (vídeo, áudio, imagem ou playlist)'
-      : ehImagem ? 'Endereço da imagem'
-      : (type === 'audio' ? 'URL do áudio ou playlist' : 'URL do vídeo, áudio ou playlist');
-  }
-  const campo = document.getElementById('adv-url-input');
-  if (campo) {
-    campo.placeholder = ehImagem
-      ? 'https://site.com/foto.jpg'
-      : 'https://youtube.com/watch?v=... ou link de playlist';
-  }
-
-  // O texto de ajuda muda: para imagem o link precisa apontar para o ARQUIVO,
-  // não para a página que o exibe — é o erro mais provável aqui.
-  const dica = document.getElementById('adv-url-hint');
-  if (dica) {
-    dica.textContent = ehAuto
-      ? 'Descobre sozinho se cada link é vídeo, áudio ou imagem — pode misturar '
-      + 'tipos diferentes na mesma lista.'
-      : ehImagem
-      ? 'Cole o endereço direto da imagem (terminado em .jpg, .png, .webp…). '
-      + 'Clique com o botão direito na imagem e escolha "Copiar endereço da imagem".'
-      : '';
-    dica.style.display = (ehAuto || ehImagem) ? '' : 'none';
   }
 }
 
@@ -3742,8 +3626,7 @@ async function submitAdvancedDownload() {
     if (!/^https?:\/\//i.test(singleUrl)) { showToast('URL inválida — use http:// ou https://', 'error'); return; }
   }
 
-  const mediaType   = ['auto', 'video', 'audio', 'image'].find(t =>
-    document.getElementById('adv-type-' + t)?.getAttribute('aria-selected') === 'true') || 'auto';
+  const mediaType   = document.getElementById('adv-type-video').getAttribute('aria-selected') === 'true' ? 'video' : 'audio';
   const quality     = document.getElementById('adv-quality-select').value;
   const audioLang   = document.getElementById('adv-audio-lang').value.trim();
   const isPlaylist  = document.getElementById('adv-playlist-toggle').checked;
@@ -4760,11 +4643,10 @@ enhanceSelects();
 
     function _renderMediaTypeCounts() {
       const onMachine = _mediaFiles.filter(_isMediaOnMachine);
-      const counts = { all: onMachine.length, audio: 0, video: 0, image: 0,
+      const counts = { all: onMachine.length, audio: 0, video: 0,
                         failed: _mediaFiles.filter(_isMediaFailed).length };
-      for (const m of onMachine) if (counts[m.type] !== undefined) counts[m.type]++;
-      const mtypeLabels = { all: 'Todos', audio: 'Áudio', video: 'Vídeo',
-                            image: 'Imagem', failed: 'Falharam' };
+      for (const m of onMachine) if (m.type === 'audio' || m.type === 'video') counts[m.type]++;
+      const mtypeLabels = { all: 'Todos', audio: 'Áudio', video: 'Vídeo', failed: 'Falharam' };
       for (const k of Object.keys(counts)) {
         const el = document.getElementById('mchip-count-' + k);
         if (el) el.textContent = counts[k];
@@ -5008,56 +4890,6 @@ enhanceSelects();
         await loadMedia();
       } catch {
         showToast('Erro de rede ao tentar novamente.', 'error');
-      }
-    }
-
-    // Baixa os originais selecionados num ZIP só. Disparar um download por
-    // arquivo não serve aqui: o navegador bloqueia downloads múltiplos
-    // automáticos após os primeiros, e a seleção chegaria incompleta sem aviso.
-    async function downloadSelectedMedia() {
-      const ids = _selectedVisibleMediaIds();
-      if (!ids.length) return;
-      // Só o que está fisicamente no disco — o mesmo critério que decide se o
-      // menu de cada linha mostra "Baixar Original". Itens em download ou que
-      // falharam entram na seleção pelos outros botões (ex.: "Tentar novamente").
-      const byId = new Map(_mediaFiles.map(m => [m.id, m]));
-      const prontos = ids.filter(id => byId.get(id)?.on_disk);
-      if (!prontos.length) {
-        showToast('Nenhum dos itens selecionados está disponível para download.', 'error');
-        return;
-      }
-      const ignorados = ids.length - prontos.length;
-
-      const btns = document.querySelectorAll('#media-bulk-bar .bulk-btn');
-      btns.forEach(b => b.disabled = true);
-      showToast(`Preparando ZIP com ${prontos.length} arquivo(s)…`, '');
-      try {
-        const fd = new FormData();
-        fd.append('files', JSON.stringify(prontos));
-        const res = await fetch('/api/download-media-zip', { method: 'POST', body: fd });
-        if (!res.ok) {
-          let msg = 'Não foi possível montar o ZIP.';
-          try { const e = await res.json(); if (e.detail) msg = e.detail; } catch {}
-          showToast(msg, 'error');
-          return;
-        }
-        // O ZIP pode ter centenas de MB; blob + objectURL evita uma segunda ida
-        // ao servidor (que window.location faria, remontando tudo do zero).
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url; a.download = 'midias_selecionadas.zip';
-        document.body.appendChild(a); a.click(); a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 60000);
-        showToast(
-          `${prontos.length} arquivo(s) baixado(s) em ZIP — com legenda, métricas ` +
-          `e capa de quem foi salvo com metadados` +
-          (ignorados ? ` · ${ignorados} sem original no disco` : '') + '.',
-          'success');
-      } catch {
-        showToast('Erro de rede ao baixar.', 'error');
-      } finally {
-        btns.forEach(b => b.disabled = false);
       }
     }
 
@@ -6687,7 +6519,7 @@ async function toggleStorageCat(catId) {
     const d = await r.json();
     if (!d.itens.length) { body.innerHTML = '<div class="storage-skeleton">Nada guardado aqui.</div>'; return; }
     body.innerHTML = `
-      <div class="storage-items" data-shift-range>
+      <div class="storage-items">
         ${d.itens.map(i => `
         <div class="storage-item${i.em_uso ? ' is-busy' : ''}">
           <label class="storage-item-pick">
@@ -6705,7 +6537,6 @@ async function toggleStorageCat(catId) {
         </div>`).join('')}
       </div>
       ${d.truncado ? `<p class="storage-sec-hint">Mostrando os ${d.itens.length} maiores de ${d.total}.</p>` : ''}
-      <p class="storage-sec-hint">Dica: marque um item e use <b>Shift</b>+clique em outro para marcar tudo entre os dois.</p>
       <div class="storage-item-actions">
         <button type="button" class="btn" onclick="storageMarcarTodos('${jsAttr(catId)}', true)">Selecionar todos</button>
         <button type="button" class="btn" onclick="storageMarcarTodos('${jsAttr(catId)}', false)">Limpar seleção</button>
@@ -6789,7 +6620,7 @@ function _renderStorageSobras(sobras) {
   if (!sobras.length) { wrap.style.display = 'none'; return; }
   wrap.style.display = '';
   box.innerHTML = `
-    <div class="storage-items" data-shift-range>
+    <div class="storage-items">
       ${sobras.map(s => `
       <label class="storage-item">
         <input type="checkbox" class="checkbox" value="${jsAttr(s.id)}" data-cat="sobras" />

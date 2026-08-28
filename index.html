@@ -435,6 +435,7 @@
           <option value="all" id="opt-mtype-all" selected>Todos (0)</option>
           <option value="audio" id="opt-mtype-audio">Áudio (0)</option>
           <option value="video" id="opt-mtype-video">Vídeo (0)</option>
+          <option value="image" id="opt-mtype-image">Imagem (0)</option>
           <option value="failed" id="opt-mtype-failed">Falharam (0)</option>
         </select>
       </div>
@@ -845,7 +846,7 @@
 
     <div class="adv-dl-body">
       <p class="adv-dl-intro">
-        Baixe vídeo ou áudio de qualquer URL suportada pelo yt-dlp (YouTube, Vimeo, TikTok, etc.) —
+        Baixe vídeo, áudio ou imagem de qualquer URL suportada pelo yt-dlp (YouTube, Vimeo, TikTok, etc.) —
         com playlist inteira, legendas, metadados, thumbnail e escolha de faixa de áudio.
       </p>
 
@@ -859,11 +860,12 @@
       </div>
 
       <div id="adv-url-single-wrap">
-        <label class="field-label" for="adv-url-input">URL do vídeo, áudio ou playlist</label>
+        <label class="field-label" for="adv-url-input" id="adv-url-label">URL do vídeo, áudio ou playlist</label>
         <input id="adv-url-input" type="url" class="select"
           placeholder="https://youtube.com/watch?v=... ou link de playlist"
           aria-label="URL para download avançado"
-          style="height:40px;padding:0 12px;margin-bottom:16px" />
+          style="height:40px;padding:0 12px;margin-bottom:6px" />
+        <small class="field-hint" id="adv-url-hint" style="display:none;margin-bottom:12px"></small>
       </div>
 
       <div id="adv-url-batch-wrap" style="display:none">
@@ -878,14 +880,22 @@
         </div>
       </div>
 
-      <div class="seg-tabs" role="tablist" aria-label="Tipo de mídia" style="max-width:280px;margin-bottom:16px">
-        <button type="button" id="adv-type-video" class="seg-tab" role="tab" aria-selected="true" tabindex="0" onclick="setAdvType('video')" onkeydown="onTablistKey(event, 'adv-type')">
+      <div class="seg-tabs" role="tablist" aria-label="Tipo de mídia" style="max-width:520px;margin-bottom:16px">
+        <button type="button" id="adv-type-auto" class="seg-tab" role="tab" aria-selected="true" tabindex="0" onclick="setAdvType('auto')" onkeydown="onTablistKey(event, 'adv-type')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right:5px"><path d="M12 3v3m0 12v3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1M3 12h3m12 0h3M5.6 18.4l2.1-2.1m8.6-8.6 2.1-2.1"/></svg>
+          Automático
+        </button>
+        <button type="button" id="adv-type-video" class="seg-tab" role="tab" aria-selected="false" tabindex="-1" onclick="setAdvType('video')" onkeydown="onTablistKey(event, 'adv-type')">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right:5px"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
           Vídeo
         </button>
         <button type="button" id="adv-type-audio" class="seg-tab" role="tab" aria-selected="false" tabindex="-1" onclick="setAdvType('audio')" onkeydown="onTablistKey(event, 'adv-type')">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right:5px"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
           Áudio
+        </button>
+        <button type="button" id="adv-type-image" class="seg-tab" role="tab" aria-selected="false" tabindex="-1" onclick="setAdvType('image')" onkeydown="onTablistKey(event, 'adv-type')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right:5px"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+          Imagem
         </button>
       </div>
 
