@@ -35,3 +35,11 @@ auditoria-render/
 
 # Downloads pontuais (vídeos/áudios baixados manualmente) — nunca vão pro repositório
 downloads/
+
+# Cópias que o iCloud cria ao sincronizar ("app 2.js", "history 2.json").
+# Não são geradas por ninguém do projeto e entram num `git add .` sem aviso.
+* [0-9].*
+*.env
+.env
+.env.*
+!.env.example
